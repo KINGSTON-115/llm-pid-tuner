@@ -33,8 +33,8 @@ MODEL_NAME = "MiniMax-M2.5"
 
 SETPOINT = 100.0          # 目标温度
 INITIAL_TEMP = 0.0        # 初始温度
-BUFFER_SIZE = 20           # 数据缓冲大小 (减少到20行，提高调参效率)
-MAX_ROUNDS = 20           # 最大调参轮数
+BUFFER_SIZE = 25           # 数据缓冲大小 (平衡速度和准确性)
+MAX_ROUNDS = 30           # 最大调参轮数
 CONTROL_INTERVAL = 0.05   # 控制周期 (50ms)
 
 # PID 初始参数
@@ -284,13 +284,13 @@ def run_tuning():
         metrics = calculate_metrics()
         print(f"\n[第 {rounds} 轮] 平均误差: {metrics['avg_error']:.2f}°C, 最大误差: {metrics['max_error']:.2f}°C")
         
-        # 3. 检查是否完成
-        if metrics['avg_error'] < 0.5:
+        # 3. 检查是否完成 (精细调参到 0.3°C)
+        if metrics['avg_error'] < 0.3:
             print("\n✅ 调参完成！误差已达到目标范围")
             break
         
         # 4. 准备数据并调用 LLM
-        recent = list(buffer)[-15:]
+        recent = list(buffer)[-20:]
         
         data_text = f"""当前 PID 参数: P={kp}, I={ki}, D={kd}
 目标温度: {SETPOINT}°C
@@ -298,7 +298,7 @@ def run_tuning():
 平均误差: {metrics['avg_error']:.2f}°C
 最大误差: {metrics['max_error']:.2f}°C
 
-最近 15 条数据 (timestamp, setpoint, input, pwm, error):"""
+最近 20 条数据 (timestamp, setpoint, input, pwm, error):"""
         
         for d in recent:
             data_text += f"\n{d['timestamp']}, {d['setpoint']:.1f}, {d['input']:.2f}, {d['pwm']:.1f}, {d['error']:+.2f}"
@@ -338,8 +338,8 @@ def run_tuning():
         # 清空缓冲
         buffer.clear()
         
-        # 重置仿真以观察新参数效果
-        sim.reset()
+        # 不再重置！让仿真持续运行，这样才能达到稳态
+        # sim.reset()
     
     end_time = time.time()
     duration = end_time - start_time

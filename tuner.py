@@ -45,8 +45,8 @@ API_BASE_URL = "https://api.openai.com/v1"  # 或其他兼容 API
 MODEL_NAME = "gpt-4"                     # 使用的模型
 
 # 调参配置
-BUFFER_SIZE = 20             # 数据缓冲大小 (行数)
-MIN_ERROR_THRESHOLD = 0.5     # 误差阈值 (小于此值认为调参完成)
+BUFFER_SIZE = 25              # 数据缓冲大小 (平衡速度和准确性)
+MIN_ERROR_THRESHOLD = 0.3     # 误差阈值 (精细调参到 0.3°C)
 MAX_TUNING_ROUNDS = 50        # 最大调参轮数
 
 # ============================================================================
