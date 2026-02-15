@@ -1,112 +1,188 @@
-# 基于 LLM 的极简 PID 自动调参系统 (CLI 版)
+# 基于 LLM 的 PID 自动调参系统
 
-一个纯文本交互的闭环调参系统，不需要 GUI 或数据可视化。
+一个纯 CLI 的 PID 自动调参系统，支持本地仿真和真实硬件两种模式。
 
 ## 系统架构
 
 ```
-┌─────────────┐    串口 (CSV)    ┌─────────────┐    API (JSON)    ┌─────────────┐
-│   MCU       │ ───────────────► │   Python    │ ───────────────► │    LLM      │
-│ (firmware)  │                  │  (tuner.py) │                  │ (GPT-4等)   │
-│             │ ◄─────────────── │             │ ◄─────────────── │             │
-└─────────────┘    串口 (CMD)    └─────────────┘    JSON 返回     └─────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        本地仿真模式                               │
+│  ┌─────────────┐    API (JSON)    ┌─────────────┐              │
+│  │ simulator.py │ ───────────────► │    LLM      │              │
+│  │ (纯Python)  │ ◄─────────────── │ (MiniMax)   │              │
+│  └─────────────┘                   └─────────────┘              │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│                        真实硬件模式                              │
+│  ┌─────────────┐    串口 (CSV)    ┌─────────────┐    API      │
+│  │   MCU       │ ───────────────► │  tuner.py   │ ───────────►│
+│  │ (firmware)  │                  │             │ ◄───────────┘│
+│  └─────────────┘                  └─────────────┘              │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-## 数据流
+## 快速开始 (本地仿真模式)
 
-1. **MCU → Python**: 每 50ms 通过串口发送 CSV 格式数据
-2. **Python → LLM**: 收集 100 行数据后，构造 Prompt 发送给 LLM
-3. **LLM → Python**: 返回优化后的 PID 参数 (JSON 格式)
-4. **Python → MCU**: 发送 `SET P:x I:y D:z` 指令更新参数
-
-## 文件说明
-
-| 文件 | 描述 |
-|------|------|
-| `firmware.cpp` | MCU 端固件 (Arduino/PlatformIO) |
-| `tuner.py` | Python 上位机桥接脚本 |
-| `README.md` | 项目说明 |
-
-## 快速开始
-
-### 1. 上传固件到 MCU
-
-使用 Arduino IDE 或 PlatformIO 将 `firmware.cpp` 编译并上传到 Arduino/ESP32。
-
-### 2. 配置 Python 环境
+### 1. 克隆项目
 
 ```bash
-# 安装依赖
-pip install pyserial openai
-
-# 或者仅安装 pyserial (使用 requests 调用 API)
-pip install pyserial requests
+git clone https://github.com/KINGSTON-115/llm-pid-tuner.git
+cd llm-pid-tuner
 ```
 
-### 3. 配置参数
+### 2. 配置 LLM API
 
-编辑 `tuner.py` 顶部的配置：
+编辑 `simulator.py` 顶部的配置：
+
+```python
+# MiniMax API (推荐)
+API_URL = "http://115.190.127.51:19882/v1/chat/completions"
+API_KEY = "your-api-key"
+MODEL_NAME = "MiniMax-M2.5"
+
+# 或使用 OpenAI
+API_URL = "https://api.openai.com/v1/chat/completions"
+API_KEY = "sk-your-key"
+MODEL_NAME = "gpt-4"
+```
+
+### 3. 运行
+
+```bash
+python simulator.py
+```
+
+### 4. 配置目标温度
+
+编辑 `simulator.py`:
+
+```python
+SETPOINT = 80.0    # 目标温度 (默认 100°C)
+```
+
+## 输出示例
+
+```
+============================================================
+开始 PID 自动调参实验 (MiniMax M2.5)
+============================================================
+
+开始采集数据 (目标温度: 100.0°C, 初始温度: 0.0°C)
+============================================================
+[数据] t=50ms T=2.5°C PWM=200.5 Error=+97.5
+[数据] t=550ms T=27.1°C PWM=77.1 Error=+72.9
+[数据] t=1050ms T=43.0°C PWM=65.0 Error=+57.0
+
+[第 1 轮] 平均误差: 71.30°C, 最大误差: 97.54°C
+
+[MiniMax] 调用 API 中...
+[MiniMax] 分析: 温度上升太慢，稳态误差极大...
+[MiniMax] 新参数: P=2.0, I=0.5, D=0.05
+```
+
+## 核心参数配置
+
+编辑 `simulator.py`:
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `SETPOINT` | 100.0 | 目标温度 (°C) |
+| `BUFFER_SIZE` | 25 | 每轮采集数据点数 |
+| `CONTROL_INTERVAL` | 0.05 | 控制周期 (秒) |
+| `MIN_ERROR_THRESHOLD` | 0.3 | 收敛阈值 (°C) |
+
+## 物理模型
+
+系统使用二阶热力学模型：
+
+```
+heater_temp: 加热器温度 (受 PWM 控制)
+     ↓ 热传导
+object_temp: 被控对象温度 (我们要控制的)
+     ↓ 散热
+ ambient: 环境温度
+```
+
+加热过程：
+```python
+target_heater_temp = ambient + (pwm / 255.0) * heater_coeff
+heater_temp += (target_heater_temp - heater_temp) * 0.3  # 热惯性
+object_temp += (heater_temp - object_temp) * 0.1  # 热传导
+object_temp -= (object_temp - ambient) * 0.01  # 散热损失
+```
+
+## 真实硬件模式
+
+### 1. 上传固件
+
+将 `firmware.cpp` 编译上传到 Arduino/ESP32。
+
+### 2. 配置串口
+
+编辑 `tuner.py`:
 
 ```python
 SERIAL_PORT = "/dev/ttyUSB0"  # 串口名称
-API_KEY = "your-api-key"       # LLM API Key
-MODEL_NAME = "gpt-4"          # 使用的模型
 ```
 
-### 4. 运行
+### 3. 运行
 
 ```bash
 python tuner.py
 ```
 
-## 指令格式
+## LLM 调参逻辑
 
-### MCU 端指令 (Python → MCU)
+LLM 根据实时数据调整 PID 参数：
 
-| 指令 | 说明 |
-|------|------|
-| `SET P:1.5 I:0.2 D:0.05` | 设置 PID 参数 |
-| `SETPOINT:150` | 设置目标值 |
-| `RESET` | 重置系统 |
-| `STATUS` | 查询当前状态 |
-
-### LLM 返回格式 (Python ← LLM)
-
-```json
-{
-  "analysis": "超调过大，减少 P",
-  "p": 1.2,
-  "i": 0.1,
-  "d": 0.08,
-  "status": "TUNING"
-}
-```
-
-## 内置仿真模型
-
-`firmware.cpp` 中包含一个虚拟加热系统模型：
-
-```cpp
-// 温度变化率 = 加热输入 - 散热损失
-new_temp = current_temp + (pwm/255 * heating_factor - (temp - ambient) * cooling_factor)
-```
-
-无需连接实际硬件即可测试整个调参流程。
-
-## 调参逻辑
-
-LLM 会根据以下规则调整参数：
-
-| 现象 | 原因 | 调整 |
-|------|------|------|
+| 现象 | 原因 | 调整建议 |
+|------|------|----------|
 | 震荡剧烈 | Kp 过大或 Kd 过小 | 减小 P 或增大 D |
 | 响应太慢 | Kp 过小 | 增大 P |
 | 稳态误差 | Ki 过小 | 增大 I |
 | 超调过大 | Kp 过大 | 减小 P 或增大 D |
 
+## LLM 返回格式
+
+```json
+{
+  "analysis": "温度上升太慢，稳态误差极大",
+  "p": 2.0,
+  "i": 0.5,
+  "d": 0.05,
+  "status": "TUNING"
+}
+```
+
 ## 依赖
 
-- **MCU**: Arduino IDE / PlatformIO
-- **Python**: Python 3.8+
-- **Python 包**: pyserial, openai (可选: requests)
-- **LLM API**: OpenAI / Anthropic / 兼容 OpenAI API 的其他 provider
+- Python 3.8+
+- requests
+
+安装:
+```bash
+pip install requests
+```
+
+## 文件说明
+
+| 文件 | 描述 |
+|------|------|
+| `simulator.py` | 本地仿真模式 (无需硬件) |
+| `tuner.py` | 真实硬件模式 (需要 MCU) |
+| `firmware.cpp` | MCU 端固件 |
+| `PROJECT_DOC.md` | 开发文档 |
+
+## 实验结果
+
+| 目标温度 | 最佳参数 | 平均误差 | 收敛轮次 |
+|----------|----------|----------|----------|
+| 100°C | P=2.3, I=0.8, D=0.1 | 0.45°C | 4 轮 |
+| 80°C | P=3.0, I=0.5, D=0.05 | 0.71°C | 5 轮 |
+
+## 注意事项
+
+1. **连续运行模式**: 系统不再每轮重置仿真，让温度持续运行以达到稳态
+2. **收敛判断**: 误差 < 0.3°C 时可认为已收敛
+3. **API 配置**: 确保 API 可访问，默认使用 MiniMax 国内节点
