@@ -50,6 +50,18 @@ MIN_ERROR_THRESHOLD = 0.5     # 误差阈值 (小于此值认为调参完成)
 MAX_TUNING_ROUNDS = 50        # 最大调参轮数
 
 # ============================================================================
+# 调参器选择 (TUNER_MODE)
+# ============================================================================
+# 可选值:
+#   - "llm":    使用外部 LLM API (OpenAI/Anthropic/自定义)
+#   - "openclaw": 使用本地 OpenClaw (通过 CLI 调用)
+TUNER_MODE = "openclaw"       # 默认使用本地 OpenClaw
+
+# OpenClaw 配置 (当 TUNER_MODE = "openclaw" 时使用)
+OPENCLAW_CLI_PATH = "openclaw"  # OpenClaw CLI 路径
+OPENCLAW_SESSION = "main"     # 使用的会话标签
+
+# ============================================================================
 # AI 核心 Prompt 设计
 # ============================================================================
 
@@ -282,6 +294,99 @@ class LLMTuner:
 
 
 # ============================================================================
+# OpenClaw 调参器类
+# ============================================================================
+
+class OpenClawTuner:
+    """
+    OpenClaw 本地调参器
+    通过 CLI 调用本地 OpenClaw 来分析 PID 数据
+    
+    【数据流】
+    Python -> OpenClaw CLI (消息) -> OpenClaw (LLM 分析) -> 返回 JSON -> Python
+    """
+    def __init__(self, cli_path: str = "openclaw", session: str = "main"):
+        self.cli_path = cli_path
+        self.session = session
+    
+    def analyze_and_suggest(self, data_text: str) -> Optional[Dict[str, Any]]:
+        """
+        将数据发送给 OpenClaw，获取调参建议
+        
+        Args:
+            data_text: 格式化后的数据文本
+            
+        Returns:
+            包含新 PID 参数的字典，或 None (如果失败)
+        """
+        import subprocess
+        
+        # 构建发送给 OpenClaw 的消息
+        openclaw_prompt = f"""你是一个 PID 控制算法专家。请分析以下温度控制系统的时间序列数据，判断当前 PID 参数的表现，并给出优化建议。
+
+## 数据格式
+- setpoint: 目标温度
+- input: 实际温度
+- pwm: 控制输出 (PWM 占空比 0-255)
+- error: 误差 (setpoint - input)
+
+## 判断规则
+- 震荡剧烈 → 减小 Kp 或增大 Kd
+- 响应太慢 → 增大 Kp  
+- 稳态误差 → 增大 Ki
+- 超调过大 → 减小 Kp 或增大 Kd
+
+## 数据内容
+{data_text}
+
+请返回严格的 JSON 格式 (不要有 markdown 代码块):
+{{"analysis": "简短分析", "p": <float>, "i": <float>, "d": <float>, "status": "TUNING 或 DONE"}}"""
+
+        try:
+            # 调用 OpenClaw CLI
+            cmd = [self.cli_path, "chat", "--session", self.session, "--yes"]
+            result = subprocess.run(
+                cmd,
+                input=openclaw_prompt,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            if result.returncode != 0:
+                print(f"[ERROR] OpenClaw 调用失败: {result.stderr}")
+                return None
+            
+            # 解析返回结果
+            output = result.stdout
+            return self._parse_json_response(output)
+            
+        except subprocess.TimeoutExpired:
+            print("[ERROR] OpenClaw 调用超时")
+            return None
+        except Exception as e:
+            print(f"[ERROR] OpenClaw 调用异常: {e}")
+            return None
+    
+    def _parse_json_response(self, text: str) -> Optional[Dict[str, Any]]:
+        """解析返回的 JSON"""
+        # 尝试提取 JSON 块
+        json_match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+        
+        # 尝试直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            print(f"[ERROR] 无法解析 OpenClaw 返回: {text[:200]}")
+            return None
+
+
+# ============================================================================
 # 串口通信类
 # ============================================================================
 
@@ -408,6 +513,7 @@ def main():
     print("=" * 60)
     print("  LLM PID 自动调参系统 - Python 上位机")
     print("=" * 60)
+    print(f"[INFO] 调参模式: {TUNER_MODE}")
     
     # 配置串口
     if not SERIAL_PORT or SERIAL_PORT == "COM3":
@@ -424,13 +530,19 @@ def main():
     if not serial_bridge.connect():
         sys.exit(1)
     
-    # 初始化 LLM
-    if API_KEY == "your-api-key-here":
-        print("[ERROR] 请先配置 API_KEY!")
-        serial_bridge.disconnect()
-        sys.exit(1)
+    # 根据 TUNER_MODE 初始化调参器
+    if TUNER_MODE == "openclaw":
+        print("[INFO] 使用 OpenClaw 本地调参器")
+        tuner = OpenClawTuner(OPENCLAW_CLI_PATH, OPENCLAW_SESSION)
+    else:
+        # 初始化 LLM
+        if API_KEY == "your-api-key-here":
+            print("[ERROR] 请先配置 API_KEY!")
+            serial_bridge.disconnect()
+            sys.exit(1)
+        print("[INFO] 使用外部 LLM API 调参器")
+        tuner = LLMTuner(API_KEY, API_BASE_URL, MODEL_NAME)
     
-    llm_tuner = LLMTuner(API_KEY, API_BASE_URL, MODEL_NAME)
     data_buffer = DataBuffer(max_size=BUFFER_SIZE)
     
     # 等待 MCU 初始化
@@ -468,13 +580,13 @@ def main():
                 round_num += 1
                 metrics = data_buffer.calculate_metrics()
                 
-                print(f"\n[第 {round_num} 轮] 缓冲器已满，开始 LLM 分析...")
+                print(f"\n[第 {round_num} 轮] 缓冲器已满，开始 AI 分析...")
                 print(f"  平均误差: {metrics.get('avg_error', 0):.2f}")
                 print(f"  最大误差: {metrics.get('max_error', 0):.2f}")
                 
-                # 调用 LLM 分析
+                # 调用 AI 分析
                 data_text = data_buffer.to_prompt_data()
-                result = llm_tuner.analyze_and_suggest(data_text)
+                result = tuner.analyze_and_suggest(data_text)
                 
                 if result:
                     analysis = result.get("analysis", "无分析")
@@ -500,7 +612,7 @@ def main():
                         # 发送最终确认
                         serial_bridge.send_command("STATUS")
                 else:
-                    print("[WARNING] LLM 分析失败，继续采集数据...")
+                    print("[WARNING] AI 分析失败，继续采集数据...")
                 
                 # 清空缓冲器，重新开始采集
                 data_buffer.buffer.clear()
