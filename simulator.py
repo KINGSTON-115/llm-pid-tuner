@@ -44,6 +44,59 @@ CONTROL_INTERVAL = 0.05   # 控制周期 (50ms)
 kp, ki, kd = 1.0, 0.1, 0.05
 
 # ============================================================================
+# PID 公式模板选择
+# ============================================================================
+# 可选值: "standard" | "parallel" | "positional" | "velocity" | "incremental" | "custom"
+# ============================================================================
+
+PID_FORMULA = "standard"
+
+# ============================================================================
+# PID 公式模板 (用户可自定义)
+# ============================================================================
+
+# 标准 PID (位置式): u(t) = Kp*e + Ki*∫e + Kd*de/dt
+PID_TEMPLATES = {
+    "standard": {
+        "name": "标准位置式 PID",
+        "formula": "kp * error + ki * integral + kd * derivative",
+        "description": "最常用的 PID 形式，直接输出控制量"
+    },
+    "parallel": {
+        "name": "并行 PID", 
+        "formula": "kp * error + ki * integral + kd * derivative",
+        "description": "与标准 PID 等价，各参数独立调节"
+    },
+    "positional": {
+        "name": "位置式 PID",
+        "formula": "kp * error + ki * integral + kd * derivative",
+        "description": "输出绝对控制量，需注意积分饱和"
+    },
+    "velocity": {
+        "name": "速度式 PID",
+        "formula": "pid_output = kp * (error - prev_error) + ki * error + kd * (error - 2*prev_error + prev_prev_error)",
+        "description": "输出控制量的变化率"
+    },
+    "incremental": {
+        "name": "增量式 PID",
+        "formula": "delta_u = kp * (error - prev_error) + ki * error + kd * (error - 2*prev_error + prev_prev_error); pid_output += delta_u",
+        "description": "计算控制增量，适用于步进电机等"
+    },
+    "custom": {
+        "name": "自定义 PID",
+        "formula": "kp * error + ki * integral + kd * derivative",  # 修改这里定义你的公式
+        "description": "用户自定义公式"
+    }
+}
+
+# 自定义公式 (当 PID_FORMULA = "custom" 时使用)
+# 可用变量: error, integral, derivative, prev_error, prev_prev_error, kp, ki, kd
+# 示例: "kp * error + ki * integral + kd * derivative"  (标准)
+# 示例: "kp * error + kd * derivative"  (PD 控制器)
+# 示例: "kp * error + ki * integral"  (PI 控制器)
+CUSTOM_PID_FORMULA = "kp * error + ki * integral + kd * derivative"
+
+# ============================================================================
 # 仿真模型
 # ============================================================================
 
@@ -66,15 +119,38 @@ class HeatingSimulator:
         self.cooling_coeff = 0.3       # 向环境散热系数
         self.noise_level = 0.3         # 传感器噪声
         
+        # PID 历史值 (用于增量式/速度式)
+        self.prev_prev_error = 0.0
+        self.last_pid_output = 0.0
+    
     def compute_pid(self):
-        """计算 PID 输出"""
+        """计算 PID 输出 - 支持多种公式"""
         error = self.setpoint - self.temp
         self.integral += error * CONTROL_INTERVAL
         self.integral = max(-200, min(200, self.integral))  # 抗饱和
         derivative = (error - self.prev_error) / CONTROL_INTERVAL
         
-        pid_output = kp * error + ki * self.integral + kd * derivative
+        # 根据配置的公式计算 PID 输出
+        if PID_FORMULA == "incremental":
+            # 增量式 PID
+            delta_u = (kp * (error - self.prev_error) + 
+                      ki * error * CONTROL_INTERVAL + 
+                      kd * (error - 2*self.prev_error + self.prev_prev_error) / CONTROL_INTERVAL)
+            self.last_pid_output += delta_u
+            pid_output = self.last_pid_output
+        elif PID_FORMULA == "velocity":
+            # 速度式 PID
+            pid_output = (kp * (error - self.prev_error) + 
+                         ki * error + 
+                         kd * (error - 2*self.prev_error + self.prev_prev_error) / CONTROL_INTERVAL)
+        else:
+            # 标准/位置式 PID (default)
+            pid_output = kp * error + ki * self.integral + kd * derivative
+        
         self.pwm = max(0, min(255, pid_output))
+        
+        # 更新历史值
+        self.prev_prev_error = self.prev_error
         self.prev_error = error
         
     def update(self):

@@ -61,6 +61,35 @@ python simulator.py
 SETPOINT = 80.0    # 目标温度 (默认 100°C)
 ```
 
+### 5. 选择 PID 公式
+
+编辑 `simulator.py` 选择 PID 公式类型:
+
+```python
+PID_FORMULA = "standard"  # 可选: standard, parallel, positional, velocity, incremental, custom
+```
+
+### 6. 自定义 PID 公式 (可选)
+
+如果选择 `custom`，可以修改:
+
+```python
+CUSTOM_PID_FORMULA = "kp * error + ki * integral + kd * derivative"
+```
+
+可用变量: `error`, `integral`, `derivative`, `prev_error`, `prev_prev_error`, `kp`, `ki`, `kd`
+
+### PID 公式类型说明
+
+| 类型 | 说明 | 适用场景 |
+|------|------|----------|
+| `standard` | 标准位置式 PID | 多数温度控制 |
+| `parallel` | 并行 PID | 与 standard 等价 |
+| `positional` | 位置式 PID | 需要绝对输出的场景 |
+| `velocity` | 速度式 PID | 连续变化系统 |
+| `incremental` | 增量式 PID | 步进电机、阀门控制 |
+| `custom` | 自定义 | 高级用户自定义公式 |
+
 ## 输出示例
 
 ```
