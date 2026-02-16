@@ -20,10 +20,13 @@ import sys
 from collections import deque
 
 # ============================================================================
-# MiniMax M2.5 API 配置
+# LLM API 配置
 # ============================================================================
 
-API_BASE_URL = "http://115.190.127.51:19882/v1"
+# 示例：MiniMax 国内节点
+API_BASE_URL = "http://115.190.127.51:19882/v1"  # 替换为你的 API 地址
+# 示例：OpenAI
+# API_BASE_URL = "https://api.openai.com/v1"
 API_KEY = "YOUR_API_KEY_HERE"
 MODEL_NAME = "MiniMax-M2.5"
 
