@@ -24,7 +24,7 @@ from collections import deque
 # ============================================================================
 
 API_BASE_URL = "http://115.190.127.51:19882/v1"
-API_KEY = "sk-cyWHsMGgfUWm4FGxBWj8wxYKXfjMTPzT7T0rKPd8X2ac3XPS"
+API_KEY = "YOUR_API_KEY_HERE"
 MODEL_NAME = "MiniMax-M2.5"
 
 # ============================================================================
