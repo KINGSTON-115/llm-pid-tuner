@@ -27,14 +27,14 @@ from collections import deque
 API_BASE_URL = "http://115.190.127.51:19882/v1"  # 替换为你的 API 地址
 # 示例：OpenAI
 # API_BASE_URL = "https://api.openai.com/v1"
-API_KEY = "YOUR_API_KEY_HERE"
+API_KEY = "sk-cyWHsMGgfUWm4FGxBWj8wxYKXfjMTPzT7T0rKPd8X2ac3XPS"
 MODEL_NAME = "MiniMax-M2.5"
 
 # ============================================================================
 # 配置
 # ============================================================================
 
-SETPOINT = 100.0          # 目标温度
+SETPOINT = 120.0          # 目标温度
 INITIAL_TEMP = 0.0        # 初始温度
 BUFFER_SIZE = 25           # 数据缓冲大小 (平衡速度和准确性)
 MAX_ROUNDS = 30           # 最大调参轮数
@@ -211,17 +211,22 @@ def call_llm(data_text: str) -> dict:
     
     prompt = f"""你是一个 PID 控制算法专家。请分析以下温度控制系统数据，判断当前 PID 参数表现并给出优化建议。
 
+## 重要约束
+- **禁止超调**：严禁让温度超过目标值，一旦发现超调必须立即减小 Kp 和增大 Kd
+- **渐进调整**：每次参数变化幅度不超过 20%，禁止大幅度修改参数
+- **稳态优先**：优先消除稳态误差，再考虑响应速度
+
 ## 规则
 - 震荡剧烈 → 减小 Kp 或增大 Kd
-- 响应太慢 → 增大 Kp
-- 稳态误差 → 增大 Ki
-- 超调过大 → 减小 Kp 或增大 Kd
+- 响应太慢 → 增大 Kp（但不超过当前的 1.2 倍）
+- 稳态误差 → 增大 Ki（但不超过当前的 1.2 倍）
+- 超调过大 → 大幅减小 Kp（至少减少 30%）和增大 Kd（至少增加 50%）
 
 ## 数据
 {data_text}
 
-请直接返回 JSON 格式 (不要有任何其他文字):
-{{"analysis": "简短分析", "p": 数值, "i": 数值, "d": 数值, "status": "TUNING" 或 "DONE"}}"""
+请直接返回严格的 JSON 格式，不要有任何其他文字:
+{{"analysis": "简短分析（必须包含超调判断）", "p": 数值, "i": 数值, "d": 数值, "status": "TUNING" 或 "DONE"}}"""
 
     print("\n[MiniMax] 调用 API 中...")
     
@@ -286,6 +291,20 @@ def call_llm(data_text: str) -> dict:
                 "i": float(i_match.group(1)),
                 "d": float(d_match.group(1)),
                 "status": status_match.group(1) if status_match else "TUNING"
+            }
+        
+        # 方法4: 支持更宽松的格式 (p: 1.0 或 'p': 1.0)
+        p_match = re.search(r'["\']?p["\']?\s*:\s*([0-9.]+)', result_text)
+        i_match = re.search(r'["\']?i["\']?\s*:\s*([0-9.]+)', result_text)
+        d_match = re.search(r'["\']?d["\']?\s*:\s*([0-9.]+)', result_text)
+        
+        if p_match and i_match and d_match:
+            return {
+                "analysis": "解析成功",
+                "p": float(p_match.group(1)),
+                "i": float(i_match.group(1)),
+                "d": float(d_match.group(1)),
+                "status": "TUNING"
             }
         
         print(f"[错误] 无法解析返回内容")
@@ -369,7 +388,7 @@ def run_tuning():
             break
         
         # 4. 准备数据并调用 LLM
-        recent = list(buffer)[-20:]
+        recent = list(buffer)[-10:]  # 减少到 10 个数据点
         
         data_text = f"""当前 PID 参数: P={kp}, I={ki}, D={kd}
 目标温度: {SETPOINT}°C
@@ -377,10 +396,10 @@ def run_tuning():
 平均误差: {metrics['avg_error']:.2f}°C
 最大误差: {metrics['max_error']:.2f}°C
 
-最近 20 条数据 (timestamp, setpoint, input, pwm, error):"""
+最近 10 条数据 (时间ms, 温度°C, PWM, 误差):"""
         
         for d in recent:
-            data_text += f"\n{d['timestamp']}, {d['setpoint']:.1f}, {d['input']:.2f}, {d['pwm']:.1f}, {d['error']:+.2f}"
+            data_text += f"\n{int(d['timestamp'])},{d['input']:.1f},{d['pwm']:.0f},{d['error']:+.1f}"
         
         # 5. 调用 MiniMax API
         result = call_llm(data_text)
@@ -392,8 +411,27 @@ def run_tuning():
             new_d = result.get('d', kd)
             status = result.get('status', 'TUNING')
             
+            # 参数变化幅度限制（每次不超过 20%）
+            MAX_CHANGE = 0.2
+            
+            def limit_change(old_val, new_val, max_change=MAX_CHANGE):
+                """限制参数变化幅度"""
+                if new_val == 0:
+                    return old_val
+                ratio = new_val / old_val
+                if ratio > 1 + max_change:
+                    return old_val * (1 + max_change)
+                elif ratio < 1 - max_change:
+                    return old_val * (1 - max_change)
+                return new_val
+            
+            # 应用变化限制
+            new_p = limit_change(kp, new_p)
+            new_i = limit_change(ki, new_i)
+            new_d = limit_change(kd, new_d)
+            
             print(f"[MiniMax] 分析: {analysis}")
-            print(f"[MiniMax] 新参数: P={new_p}, I={new_i}, D={new_d}")
+            print(f"[MiniMax] 新参数: P={new_p:.4f}, I={new_i:.4f}, D={new_d:.4f}")
             
             # 记录调参过程
             tuning_log.append({
