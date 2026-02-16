@@ -120,17 +120,52 @@ object_temp -= (object_temp - ambient) * 0.01  # 散热损失
 
 ### 2. 配置串口
 
-编辑 `tuner.py`:
+编辑 `tuner.py` 顶部的配置：
 
 ```python
-SERIAL_PORT = "/dev/ttyUSB0"  # 串口名称
+# ============================================================================
+# 配置 (根据你的环境修改)
+# ============================================================================
+
+# 串口配置
+SERIAL_PORT = "COM3"        # Windows: COM3, Linux: /dev/ttyUSB0, macOS: /dev/cu.usbserial-xxx
+SERIAL_BAUD = 115200        # 波特率
+
+# API 配置
+API_URL = "http://115.190.127.51:19882/v1/chat/completions"  # 或使用其他 API
+API_KEY = "your-api-key"
+MODEL_NAME = "MiniMax-M2.5"
 ```
 
-### 3. 运行
+### 3. 各平台串口名称
+
+| 平台 | 示例串口 | 如何查找 |
+|------|----------|----------|
+| **Windows** | `COM3`, `COM4` | 设备管理器 → 端口 (COM 和 LPT) |
+| **Linux** | `/dev/ttyUSB0`, `/dev/ttyACM0` | `ls /dev/tty*` |
+| **macOS** | `/dev/cu.usbserial-*`, `/dev/cu.SLAB_USBtoUART` | `ls /dev/cu.*` |
+
+### 4. 运行
 
 ```bash
+# Windows
 python tuner.py
+
+# Linux / macOS
+python3 tuner.py
 ```
+
+### 5. 可配置参数
+
+编辑 `tuner.py` 或 `firmware.cpp` 可调整：
+
+| 参数 | 文件 | 说明 |
+|------|------|------|
+| `SERIAL_PORT` | tuner.py | 串口名称 |
+| `SERIAL_BAUD` | tuner.py | 波特率 (默认 115200) |
+| `CONTROL_INTERVAL` | firmware.cpp | 控制周期 (ms) |
+| `PWM_PIN` | firmware.cpp | PWM 输出引脚 |
+| `TEMP_SENSOR` | firmware.cpp | 温度传感器类型 |
 
 ## LLM 调参逻辑
 
