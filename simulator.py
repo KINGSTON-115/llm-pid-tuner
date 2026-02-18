@@ -34,11 +34,21 @@ MODEL_NAME = "MiniMax-M2.5"
 # 配置
 # ============================================================================
 
-SETPOINT = 120.0          # 目标温度
+SETPOINT = 110.0          # 目标温度
 INITIAL_TEMP = 0.0        # 初始温度
 BUFFER_SIZE = 25           # 数据缓冲大小 (平衡速度和准确性)
 MAX_ROUNDS = 30           # 最大调参轮数
 CONTROL_INTERVAL = 0.05   # 控制周期 (50ms)
+
+# PWM 输出限制 (电机安全阈值)
+# 仿真模式用 255，温度控制用
+# 电机模式用 6000 (满转10000)
+PWM_MAX = 6000            # 电机安全上限
+PWM_CHANGE_MAX = 500      # 每周期最大 PWM 变化 (防突变)
+
+# 保守模式 (减少超调)
+CONSERVATIVE_MODE = True   # True: 用 PI + 0.5倍增益 | False: 激进 PID
+Z_N_GAIN_FACTOR = 0.5      # Z-N 增益折扣 (保守模式用 0.5)
 
 # PID 初始参数
 kp, ki, kd = 1.0, 0.1, 0.05
@@ -96,6 +106,9 @@ PID_TEMPLATES = {
 # 示例: "kp * error + ki * integral"  (PI 控制器)
 CUSTOM_PID_FORMULA = "kp * error + ki * integral + kd * derivative"
 
+# 全局变量
+system_id_output = ""  # 系统辨识结果
+
 # ============================================================================
 # 仿真模型
 # ============================================================================
@@ -147,7 +160,14 @@ class HeatingSimulator:
             # 标准/位置式 PID (default)
             pid_output = kp * error + ki * self.integral + kd * derivative
         
-        self.pwm = max(0, min(255, pid_output))
+        # PWM 变化率限制 (防突变)
+        if hasattr(self, 'prev_pwm'):
+            pwm_delta = pid_output - self.prev_pwm
+            if abs(pwm_delta) > PWM_CHANGE_MAX:
+                pid_output = self.prev_pwm + (PWM_CHANGE_MAX if pwm_delta > 0 else -PWM_CHANGE_MAX)
+        
+        self.pwm = max(0, min(PWM_MAX, pid_output))  # PWM_MAX=6000 for motor, 255 for sim
+        self.prev_pwm = self.pwm
         
         # 更新历史值
         self.prev_prev_error = self.prev_error
@@ -206,10 +226,46 @@ class HeatingSimulator:
 # MiniMax API 调用
 # ============================================================================
 
-def call_llm(data_text: str) -> dict:
+def call_llm(data_text: str, rounds: int = 1, metrics: dict = None) -> dict:
     """调用 MiniMax M2.5 API 分析 PID 数据"""
     
+    # 检查是否需要调用系统辨识
+    use_system_id = (rounds <= 3 and metrics.get('avg_error', 0) > 50)
+    
+    global system_id_output
+    system_id_info = ""
+    system_id_output = ""
+    if use_system_id:
+        # 自动执行系统辨识
+        print("\n[系统] 误差较大，自动执行系统辨识...")
+        import subprocess
+        try:
+            # 准备数据：time,temp,pwm 格式
+            data_str = ""
+            for d in buffer:
+                data_str += f"{int(d['timestamp'])},{d['input']:.1f},{d['pwm']:.0f} "
+            
+            result = subprocess.run(
+                ['python3', 'system_id.py', '--data', data_str],
+                capture_output=True, text=True, timeout=30,
+                cwd='/home/KINGSTON/.openclaw/workspace/llm-pid-tuner'
+            )
+            system_id_output = result.stdout
+            if result.stderr:
+                system_id_output += f"\n错误: {result.stderr}"
+            print(f"[系统辨识] 结果:\n{system_id_output[:500]}")
+            system_id_info = f"\n\n## 系统辨识结果\n{system_id_output}\n\n请根据系统辨识的Z-N建议来调整PID参数。"
+        except Exception as e:
+            print(f"[系统辨识] 错误: {e}")
+    
     prompt = f"""你是一个 PID 控制算法专家。请分析以下温度控制系统数据，判断当前 PID 参数表现并给出优化建议。
+
+## 可用工具
+你可以通过执行系统命令来调用系统辨识工具:
+```bash
+python3 system_id.py --mode demo
+```
+这将使用阶跃响应分析来识别系统参数(K, τ, θ)并给出Ziegler-Nichols整定建议。
 
 ## 重要约束
 - **禁止超调**：严禁让温度超过目标值，一旦发现超调必须立即减小 Kp 和增大 Kd
@@ -221,12 +277,14 @@ def call_llm(data_text: str) -> dict:
 - 响应太慢 → 增大 Kp（但不超过当前的 1.2 倍）
 - 稳态误差 → 增大 Ki（但不超过当前的 1.2 倍）
 - 超调过大 → 大幅减小 Kp（至少减少 30%）和增大 Kd（至少增加 50%）
+- **误差>50°C时**：必须采用Z-N建议参数，不要渐进调整！直接使用 Kp, Ki, Kd 的建议值
 
 ## 数据
 {data_text}
+{system_id_info}
 
 请直接返回严格的 JSON 格式，不要有任何其他文字:
-{{"analysis": "简短分析（必须包含超调判断）", "p": 数值, "i": 数值, "d": 数值, "status": "TUNING" 或 "DONE"}}"""
+{{"analysis": "简短分析", "p": 数值, "i": 数值, "d": 数值, "status": "TUNING" 或 "DONE"}}"""
 
     print("\n[MiniMax] 调用 API 中...")
     
@@ -256,25 +314,37 @@ def call_llm(data_text: str) -> dict:
             print(f"[错误] API 调用失败: {resp.status_code} - {resp.text[:200]}")
             return None
         
-        result_text = resp.json()["choices"][0]["message"]["content"]
+        resp_data = resp.json()["choices"][0]["message"]
+        
+        # MiniMax M2.5 可能使用 reasoning 模式，内容在 reasoning_content 中
+        result_text = resp_data.get("content", "")
+        if not result_text or result_text.strip() == "":
+            result_text = resp_data.get("reasoning_content", "")
+        
         print(f"[MiniMax] 原始返回: {result_text[:200]}...")
         
         # 尝试多种方式解析 JSON
         import re
         
-        # 方法1: 提取 JSON 块
-        json_match = re.search(r'\{[^{}]*\}', result_text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError as e:
-                print(f"[解析] JSON 块解析失败: {e}")
-        
-        # 方法2: 尝试直接解析
+        # 方法1: 尝试直接解析（如果返回的是纯JSON）
         try:
             return json.loads(result_text)
         except json.JSONDecodeError:
             pass
+        
+        # 方法2: 提取 JSON 块（支持嵌套 - 找最外层的{}）
+        # 找到第一个 { 和最后一个 }
+        start = result_text.find('{')
+        end = result_text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            json_str = result_text[start:end+1]
+            try:
+                parsed = json.loads(json_str)
+                # 检查是否有所需字段
+                if 'p' in parsed or 'i' in parsed:
+                    return parsed
+            except json.JSONDecodeError as e:
+                print(f"[解析] JSON 块解析失败: {e}")
         
         # 方法3: 尝试提取 key-value 对
         p_match = re.search(r'"p"\s*:\s*([0-9.]+)', result_text)
@@ -299,11 +369,40 @@ def call_llm(data_text: str) -> dict:
         d_match = re.search(r'["\']?d["\']?\s*:\s*([0-9.]+)', result_text)
         
         if p_match and i_match and d_match:
+            # 提取 analysis
+            analysis_match = re.search(r'[Aa]nalysis[:\s]+([^0-9"]+)', result_text)
+            status_match = re.search(r'[Ss]tatus[:\s]+["\']?(\w+)', result_text)
+            
+            return {
+                "analysis": analysis_match.group(1).strip() if analysis_match else "解析成功",
+                "p": float(p_match.group(1)),
+                "i": float(i_match.group(1)),
+                "d": float(d_match.group(1)),
+                "status": status_match.group(1) if status_match else "TUNING"
+            }
+        
+        # 方法5: 支持纯数字格式 "p 1.0" 或 "p=1.0"
+        p_match = re.search(r'[Pp]\s*[=:]\s*([0-9.]+)', result_text)
+        i_match = re.search(r'[Ii]\s*[=:]\s*([0-9.]+)', result_text)
+        d_match = re.search(r'[Dd]\s*[=:]\s*([0-9.]+)', result_text)
+        
+        if p_match and i_match and d_match:
             return {
                 "analysis": "解析成功",
                 "p": float(p_match.group(1)),
                 "i": float(i_match.group(1)),
                 "d": float(d_match.group(1)),
+                "status": "TUNING"
+            }
+        
+        # 方法6: 查找 Z-N 建议参数
+        zn_match = re.search(r'Z-N[建议建议:：]+\s*[Pp]ID[:\s]+.*?Kp=([0-9.]+).*?Ki=([0-9.]+).*?Kd=([0-9.]+)', result_text, re.DOTALL)
+        if zn_match:
+            return {
+                "analysis": "采用Z-N建议参数",
+                "p": float(zn_match.group(1)),
+                "i": float(zn_match.group(2)),
+                "d": float(zn_match.group(3)),
                 "status": "TUNING"
             }
         
@@ -402,7 +501,7 @@ def run_tuning():
             data_text += f"\n{int(d['timestamp'])},{d['input']:.1f},{d['pwm']:.0f},{d['error']:+.1f}"
         
         # 5. 调用 MiniMax API
-        result = call_llm(data_text)
+        result = call_llm(data_text, rounds, metrics)
         
         if result:
             analysis = result.get('analysis', '无')
@@ -411,13 +510,21 @@ def run_tuning():
             new_d = result.get('d', kd)
             status = result.get('status', 'TUNING')
             
-            # 参数变化幅度限制（每次不超过 20%）
-            MAX_CHANGE = 0.2
+            # 根据误差大小调整变化限制
+            avg_error = metrics.get('avg_error', 0)
+            
+            # 误差大时允许更大变化 (50%=0.5, 100%=1.0)
+            if avg_error > 100:
+                MAX_CHANGE = 1.0  # 第一轮可以用任何值
+            elif avg_error > 50:
+                MAX_CHANGE = 0.8  # 误差大时允许80%变化
+            else:
+                MAX_CHANGE = 0.2  # 正常微调20%
             
             def limit_change(old_val, new_val, max_change=MAX_CHANGE):
                 """限制参数变化幅度"""
-                if new_val == 0:
-                    return old_val
+                if old_val == 0 or new_val == 0:
+                    return new_val if new_val != 0 else old_val
                 ratio = new_val / old_val
                 if ratio > 1 + max_change:
                     return old_val * (1 + max_change)
@@ -425,10 +532,36 @@ def run_tuning():
                     return old_val * (1 - max_change)
                 return new_val
             
-            # 应用变化限制
-            new_p = limit_change(kp, new_p)
-            new_i = limit_change(ki, new_i)
-            new_d = limit_change(kd, new_d)
+            # 如果前2轮误差>50，强制使用系统辨识的Z-N建议
+            # 重要：必须在 limit_change 之前执行，否则参数已被裁剪
+            zg_nichols_override = False
+            if rounds <= 2 and metrics['avg_error'] > 50 and system_id_output:
+                import re
+                zn_match = re.search(r'PID:\s*Kp=([0-9.]+).*?Ki=([0-9.]+).*?Kd=([0-9.]+)', system_id_output, re.DOTALL)
+                if zn_match:
+                    # 直接采用 Z-N 建议，绕过 LLM 返回值和 limit_change
+                    new_p = float(zn_match.group(1))
+                    new_i = float(zn_match.group(2))
+                    new_d = float(zn_match.group(3))
+                    
+                    # 保守模式：降低增益 + 用 PI
+                    if CONSERVATIVE_MODE:
+                        new_p *= Z_N_GAIN_FACTOR
+                        new_i *= Z_N_GAIN_FACTOR
+                        new_d = 0  # 去掉 D，用 PI 控制器
+                        analysis = f"保守模式: PI, 0.5x增益 P={new_p:.1f}, I={new_i:.2f}"
+                        print(f"[保守模式] {analysis}")
+                    else:
+                        analysis = f"激进模式: PID P={new_p:.1f}, I={new_i:.2f}, D={new_d:.3f}"
+                        print(f"[激进采纳] {analysis}")
+                    
+                    zg_nichols_override = True
+            
+            # 普通参数才应用变化限制
+            if not zg_nichols_override:
+                new_p = limit_change(kp, new_p)
+                new_i = limit_change(ki, new_i)
+                new_d = limit_change(kd, new_d)
             
             print(f"[MiniMax] 分析: {analysis}")
             print(f"[MiniMax] 新参数: P={new_p:.4f}, I={new_i:.4f}, D={new_d:.4f}")

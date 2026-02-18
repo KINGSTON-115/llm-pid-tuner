@@ -39,7 +39,14 @@ float kd = 0.05f; // 微分系数
 // ---------------------------------------------------------------------------
 float setpoint = 100.0f;      // 目标温度
 float current_temp = 20.0f;   // 当前温度 (初始环境温度)
-float pwm_output = 0.0f;      // PWM 输出 (0-255)
+float pwm_output = 0.0f;      // PWM 输出
+
+// ---------------------------------------------------------------------------
+// PWM 安全限制 (电机保护)
+// ---------------------------------------------------------------------------
+const float PWM_MAX = 6000.0f;       // PWM 上限 (满转10000)
+const float PWM_CHANGE_MAX = 500.0f; // 每周期最大 PWM 变化量
+float prev_pwm_output = 0.0f;        // 上一次 PWM 输出
 float prev_error = 0.0f;      // 上一次误差 (用于微分计算)
 float integral = 0.0f;        // 积分项
 
@@ -122,8 +129,15 @@ void computePID() {
     // PID 输出计算
     float pid_output = kp * error + ki * integral + kd * derivative;
     
-    // 限制 PWM 输出范围 (0-255)
-    pwm_output = constrain(pid_output, 0.0f, 255.0f);
+    // PWM 变化率限制 (防突变)
+    float pwm_delta = pid_output - prev_pwm_output;
+    if (fabs(pwm_delta) > PWM_CHANGE_MAX) {
+        pid_output = prev_pwm_output + (pwm_delta > 0 ? PWM_CHANGE_MAX : -PWM_CHANGE_MAX);
+    }
+    
+    // 限制 PWM 输出范围 (0-PWM_MAX)
+    pwm_output = constrain(pid_output, 0.0f, PWM_MAX);
+    prev_pwm_output = pwm_output;
     
     // 保存当前误差作为下一次微分的输入
     prev_error = error;

@@ -49,6 +49,16 @@ BUFFER_SIZE = 25              # 数据缓冲大小 (平衡速度和准确性)
 MIN_ERROR_THRESHOLD = 0.3     # 误差阈值 (精细调参到 0.3°C)
 MAX_TUNING_ROUNDS = 50        # 最大调参轮数
 
+# 保守模式配置 (减少超调)
+# True: 初始用 PI 控制器 + 0.5x 增益，更稳定但收敛稍慢
+# False: 激进 PID，可能超调但收敛快
+CONSERVATIVE_MODE = True
+Z_N_GAIN_FACTOR = 0.5         # Z-N 增益折扣 (保守模式用 0.5)
+
+# PWM 限制 (电机安全)
+PWM_MAX = 6000               # PWM 上限 (满转10000)
+PWM_CHANGE_MAX = 500          # 每周期最大 PWM 变化量
+
 # ============================================================================
 # 调参器选择 (TUNER_MODE)
 # ============================================================================
@@ -594,6 +604,15 @@ def main():
                     new_i = result.get("i", data_buffer.current_pid["i"])
                     new_d = result.get("d", data_buffer.current_pid["d"])
                     status = result.get("status", "TUNING")
+                    
+                    # 保守模式：前2轮误差大时，强制采用保守参数
+                    if CONSERVATIVE_MODE and round_num <= 2 and metrics.get('avg_error', 0) > 50:
+                        # 初始参数乘以折扣
+                        new_p = data_buffer.current_pid["p"] * Z_N_GAIN_FACTOR
+                        new_i = data_buffer.current_pid["i"] * Z_N_GAIN_FACTOR
+                        new_d = 0  # 保守模式初始不用 D
+                        analysis = f"保守模式: PI, {Z_N_GAIN_FACTOR}x增益"
+                        print(f"  [保守模式] {analysis}")
                     
                     print(f"  AI 分析: {analysis}")
                     print(f"  新参数: P={new_p}, I={new_i}, D={new_d}")
