@@ -24,17 +24,17 @@ from collections import deque
 # ============================================================================
 
 # 示例：MiniMax 国内节点
-API_BASE_URL = ""  # 替换为你的 API 地址
+API_BASE_URL = "http://115.190.127.51:19882/v1"  # 替换为你的 API 地址
 # 示例：OpenAI
 # API_BASE_URL = "https://api.openai.com/v1"
-API_KEY = ""
+API_KEY = "sk-cyWHsMGgfUWm4FGxBWj8wxYKXfjMTPzT7T0rKPd8X2ac3XPS"
 MODEL_NAME = "MiniMax-M2.5"
 
 # ============================================================================
 # 配置
 # ============================================================================
 
-SETPOINT = 110.0          # 目标温度
+SETPOINT = 200.0          # 目标温度
 INITIAL_TEMP = 0.0        # 初始温度
 BUFFER_SIZE = 25           # 数据缓冲大小 (平衡速度和准确性)
 MAX_ROUNDS = 30           # 最大调参轮数
@@ -260,31 +260,23 @@ def call_llm(data_text: str, rounds: int = 1, metrics: dict = None) -> dict:
     
     prompt = f"""你是一个 PID 控制算法专家。请分析以下温度控制系统数据，判断当前 PID 参数表现并给出优化建议。
 
-## 可用工具
-你可以通过执行系统命令来调用系统辨识工具:
-```bash
-python3 system_id.py --mode demo
-```
-这将使用阶跃响应分析来识别系统参数(K, τ, θ)并给出Ziegler-Nichols整定建议。
-
 ## 重要约束
 - **禁止超调**：严禁让温度超过目标值，一旦发现超调必须立即减小 Kp 和增大 Kd
-- **渐进调整**：每次参数变化幅度不超过 20%，禁止大幅度修改参数
 - **稳态优先**：优先消除稳态误差，再考虑响应速度
+- **请直接给出参数**：不要建议我运行其他脚本，直接根据你的经验给出新的 PID 参数
+- **输出格式**：只输出纯 JSON，不要有任何 Markdown 标记或解释文字
 
 ## 规则
 - 震荡剧烈 → 减小 Kp 或增大 Kd
-- 响应太慢 → 增大 Kp（但不超过当前的 1.2 倍）
-- 稳态误差 → 增大 Ki（但不超过当前的 1.2 倍）
+- 响应太慢 → 增大 Kp（可以大胆增加，如 +50%）
+- 稳态误差 → 增大 Ki（可以大胆增加，如 +50%）
 - 超调过大 → 大幅减小 Kp（至少减少 30%）和增大 Kd（至少增加 50%）
-- **误差>50°C时**：必须采用Z-N建议参数，不要渐进调整！直接使用 Kp, Ki, Kd 的建议值
 
 ## 数据
 {data_text}
-{system_id_info}
 
-请直接返回严格的 JSON 格式，不要有任何其他文字:
-{{"analysis": "简短分析", "p": 数值, "i": 数值, "d": 数值, "status": "TUNING" 或 "DONE"}}"""
+请直接返回 JSON 格式:
+{{"analysis": "简短分析原因", "p": 数值, "i": 数值, "d": 数值, "status": "TUNING"}}"""
 
     print("\n[MiniMax] 调用 API 中...")
     
@@ -322,6 +314,9 @@ python3 system_id.py --mode demo
             result_text = resp_data.get("reasoning_content", "")
         
         print(f"[MiniMax] 原始返回: {result_text[:200]}...")
+        
+        # 预处理：去掉 Markdown 代码块标记
+        result_text = result_text.replace("```json", "").replace("```", "").strip()
         
         # 尝试多种方式解析 JSON
         import re
