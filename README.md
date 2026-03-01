@@ -122,7 +122,7 @@ AI 会像经验丰富的工程师一样思考：
 
 | 适配对象 | API 地址示例 | 说明 |
 | :--- | :--- | :--- |
-| **Ollama** | `http://localhost:11434/v1` | **完全免费**！本地运行，推荐 `llama3` 或 `qwen2` |
+| **Ollama** | `http://localhost:11434/v1` | **完全免费**！本地运行,自选模型 |
 | **LM Studio** | `http://localhost:1234/v1` | 本地运行，界面友好 |
 | **Claude 原生** | `https://api.anthropic.com/v1` | 需设置 `$env:LLM_PROVIDER="anthropic"` |
 | **国产大模型** | `https://api.deepseek.com` | 极高性价比，推荐 DeepSeek-V3 |
