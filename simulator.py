@@ -1,121 +1,61 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import sys
-import os
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)  # 行缓冲
-
 """
 ===============================================================================
-simulator.py - PID 调参模拟器 (调用 MiniMax M2.5)
+simulator.py - 增强版 PID 调参模拟器 (PRO)
+===============================================================================
 
-用于本地模拟调参实验，调用 MiniMax M2.5 模型分析 PID 参数
+功能：
+1. 使用 tuner.py 中的增强逻辑 (History-Aware, CoT, Advanced Metrics)
+2. 运行 HeatingSimulator 物理模型
+3. 生成对比报告
 
 ===============================================================================
 """
 
 import time
-import json
-import requests
+import os
 import sys
+import json
+import math
+import random
 from collections import deque
-
-# ============================================================================
-# LLM API 配置
-# ============================================================================
-
-# 示例：MiniMax 国内节点
-API_BASE_URL = os.getenv("LLM_API_BASE_URL", "http://115.190.127.51:19882/v1")  # 替换为你的 API 地址
-# 示例：OpenAI 或 本地 Ollama (http://localhost:11434/v1)
-# API_BASE_URL = "https://api.openai.com/v1"
-API_KEY = os.getenv("LLM_API_KEY", "sk-cyWHsMGgfUWm4FGxBWj8wxYKXfjMTPzT7T0rKPd8X2ac3XPS")
-MODEL_NAME = os.getenv("LLM_MODEL_NAME", "MiniMax-M2.5")
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")  # [openai | anthropic]
 
 # ============================================================================
 # 配置
 # ============================================================================
 
+# LLM 配置
+API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.openai.com/v1")
+API_KEY = os.getenv("LLM_API_KEY", "your-api-key-here")
+MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")
+
+BUFFER_SIZE = 100         # 增加缓冲以提供更多上下文
+MAX_ROUNDS = 20           # 调参轮数
+MIN_ERROR = 0.3           # 目标误差
+CONTROL_INTERVAL = 0.2    # 仿真步长 (200ms)
+
 SETPOINT = 200.0          # 目标温度
-INITIAL_TEMP = 0.0        # 初始温度
-BUFFER_SIZE = 25           # 数据缓冲大小 (平衡速度和准确性)
-MAX_ROUNDS = 30           # 最大调参轮数
-CONTROL_INTERVAL = 0.05   # 控制周期 (50ms)
+INITIAL_TEMP = 20.0       # 初始温度
+PWM_MAX = 6000            # PWM 上限
 
-# PWM 输出限制 (电机安全阈值)
-# 仿真模式用 255，温度控制用
-# 电机模式用 6000 (满转10000)
-PWM_MAX = 6000            # 电机安全上限
-PWM_CHANGE_MAX = 500      # 每周期最大 PWM 变化 (防突变)
-
-# 保守模式 (减少超调)
-CONSERVATIVE_MODE = True   # True: 用 PI + 0.5倍增益 | False: 激进 PID
-Z_N_GAIN_FACTOR = 0.5      # Z-N 增益折扣 (保守模式用 0.5)
-
-# PID 初始参数
+# 初始 PID
 kp, ki, kd = 1.0, 0.1, 0.05
 
-# ============================================================================
-# PID 公式模板选择
-# ============================================================================
-# 可选值: "standard" | "parallel" | "positional" | "velocity" | "incremental" | "custom"
-# ============================================================================
-
-PID_FORMULA = "standard"
-
-# ============================================================================
-# PID 公式模板 (用户可自定义)
-# ============================================================================
-
-# 标准 PID (位置式): u(t) = Kp*e + Ki*∫e + Kd*de/dt
-PID_TEMPLATES = {
-    "standard": {
-        "name": "标准位置式 PID",
-        "formula": "kp * error + ki * integral + kd * derivative",
-        "description": "最常用的 PID 形式，直接输出控制量"
-    },
-    "parallel": {
-        "name": "并行 PID", 
-        "formula": "kp * error + ki * integral + kd * derivative",
-        "description": "与标准 PID 等价，各参数独立调节"
-    },
-    "positional": {
-        "name": "位置式 PID",
-        "formula": "kp * error + ki * integral + kd * derivative",
-        "description": "输出绝对控制量，需注意积分饱和"
-    },
-    "velocity": {
-        "name": "速度式 PID",
-        "formula": "pid_output = kp * (error - prev_error) + ki * error + kd * (error - 2*prev_error + prev_prev_error)",
-        "description": "输出控制量的变化率"
-    },
-    "incremental": {
-        "name": "增量式 PID",
-        "formula": "delta_u = kp * (error - prev_error) + ki * error + kd * (error - 2*prev_error + prev_prev_error); pid_output += delta_u",
-        "description": "计算控制增量，适用于步进电机等"
-    },
-    "custom": {
-        "name": "自定义 PID",
-        "formula": "kp * error + ki * integral + kd * derivative",  # 修改这里定义你的公式
-        "description": "用户自定义公式"
-    }
-}
-
-# 自定义公式 (当 PID_FORMULA = "custom" 时使用)
-# 可用变量: error, integral, derivative, prev_error, prev_prev_error, kp, ki, kd
-# 示例: "kp * error + ki * integral + kd * derivative"  (标准)
-# 示例: "kp * error + kd * derivative"  (PD 控制器)
-# 示例: "kp * error + ki * integral"  (PI 控制器)
-CUSTOM_PID_FORMULA = "kp * error + ki * integral + kd * derivative"
-
-# 全局变量
-system_id_output = ""  # 系统辨识结果
+# 导入增强版调参器组件
+try:
+    from tuner import LLMTuner, AdvancedDataBuffer, TuningHistory
+except ImportError:
+    print("[ERROR] 找不到 tuner.py，请确保文件存在")
+    sys.exit(1)
 
 # ============================================================================
-# 仿真模型
+# 仿真模型 (内置)
 # ============================================================================
 
 class HeatingSimulator:
-    """加热系统仿真器"""
+    """加热系统仿真器 (更真实的物理模型)"""
     def __init__(self):
         self.temp = INITIAL_TEMP
         self.pwm = 0
@@ -124,84 +64,44 @@ class HeatingSimulator:
         self.prev_error = 0.0
         self.timestamp = 0
         
-        # 仿真参数 - 更真实的加热系统模型
-        # 二阶系统：加热器温度 + 环境温度
-        self.heater_temp = 20.0       # 加热器温度 (PWM 加热)
-        self.ambient_temp = 20.0       # 环境温度
-        self.heater_coeff = 300.0      # 加热器加热系数 (最高可达 320°C)
+        # 二阶系统参数
+        self.heater_temp = INITIAL_TEMP       # 加热器温度
+        self.ambient_temp = INITIAL_TEMP      # 环境温度
+        self.heater_coeff = 300.0      # 加热器加热系数
         self.heat_transfer = 0.5       # 加热器到物体的传热系数
-        self.cooling_coeff = 0.3       # 向环境散热系数
-        self.noise_level = 0.3         # 传感器噪声
+        self.cooling_coeff = 0.05      # 向环境散热系数 (略微降低以模拟保温)
+        self.noise_level = 0.1         # 传感器噪声
         
-        # PID 历史值 (用于增量式/速度式)
-        self.prev_prev_error = 0.0
-        self.last_pid_output = 0.0
-    
     def compute_pid(self):
-        """计算 PID 输出 - 支持多种公式"""
+        """计算 PID 输出"""
         error = self.setpoint - self.temp
         self.integral += error * CONTROL_INTERVAL
-        self.integral = max(-200, min(200, self.integral))  # 抗饱和
+        self.integral = max(-500, min(500, self.integral))  # 抗饱和
         derivative = (error - self.prev_error) / CONTROL_INTERVAL
         
-        # 根据配置的公式计算 PID 输出
-        if PID_FORMULA == "incremental":
-            # 增量式 PID
-            delta_u = (kp * (error - self.prev_error) + 
-                      ki * error * CONTROL_INTERVAL + 
-                      kd * (error - 2*self.prev_error + self.prev_prev_error) / CONTROL_INTERVAL)
-            self.last_pid_output += delta_u
-            pid_output = self.last_pid_output
-        elif PID_FORMULA == "velocity":
-            # 速度式 PID
-            pid_output = (kp * (error - self.prev_error) + 
-                         ki * error + 
-                         kd * (error - 2*self.prev_error + self.prev_prev_error) / CONTROL_INTERVAL)
-        else:
-            # 标准/位置式 PID (default)
-            pid_output = kp * error + ki * self.integral + kd * derivative
+        # 使用全局 kp, ki, kd
+        pid_output = kp * error + ki * self.integral + kd * derivative
         
-        # PWM 变化率限制 (防突变)
-        if hasattr(self, 'prev_pwm'):
-            pwm_delta = pid_output - self.prev_pwm
-            if abs(pwm_delta) > PWM_CHANGE_MAX:
-                pid_output = self.prev_pwm + (PWM_CHANGE_MAX if pwm_delta > 0 else -PWM_CHANGE_MAX)
-        
-        self.pwm = max(0, min(PWM_MAX, pid_output))  # PWM_MAX=6000 for motor, 255 for sim
-        self.prev_pwm = self.pwm
-        
-        # 更新历史值
-        self.prev_prev_error = self.prev_error
+        self.pwm = max(0, min(255, pid_output))  # 仿真限制在 0-255
         self.prev_error = error
         
     def update(self):
-        """更新温度 - 更真实的物理模型"""
-        import random
-        
-        # 1. 加热器温度由 PWM 决定 (更高功率)
+        """更新温度状态"""
+        # 1. 加热器升温
         target_heater_temp = self.ambient_temp + (self.pwm / 255.0) * self.heater_coeff
-        self.heater_temp += (target_heater_temp - self.heater_temp) * 0.3  # 加热器热惯性
+        self.heater_temp += (target_heater_temp - self.heater_temp) * 0.1 * CONTROL_INTERVAL
         
-        # 2. 物体温度变化：吸收加热器热量 - 向环境散热
-        # 热流从加热器到物体
-        heat_from_heater = (self.heater_temp - self.temp) * self.heat_transfer
-        # 热流向环境散失
-        heat_to_ambient = (self.temp - self.ambient_temp) * self.cooling_coeff
+        # 2. 热传递
+        heat_in = (self.heater_temp - self.temp) * self.heat_transfer
+        heat_out = (self.temp - self.ambient_temp) * self.cooling_coeff
         
-        # 净热量
-        net_heat = heat_from_heater - heat_to_ambient
+        self.temp += (heat_in - heat_out) * CONTROL_INTERVAL
         
-        # 温度变化 = 净热量 / 热容
-        self.temp += net_heat * CONTROL_INTERVAL
-        
-        # 3. 添加传感器噪声
-        noise = random.gauss(0, self.noise_level)
-        self.temp += noise
-        
+        # 3. 噪声
+        self.temp += random.gauss(0, self.noise_level)
         self.timestamp += int(CONTROL_INTERVAL * 1000)
         
     def get_data(self):
-        """获取当前数据"""
         return {
             "timestamp": self.timestamp,
             "setpoint": self.setpoint,
@@ -212,372 +112,105 @@ class HeatingSimulator:
             "i": ki,
             "d": kd
         }
-    
-    def reset(self):
-        """重置仿真状态"""
-        self.temp = INITIAL_TEMP
-        self.heater_temp = 20.0
-        self.pwm = 0
-        self.integral = 0.0
-        self.prev_error = 0.0
-        self.timestamp = 0
-
 
 # ============================================================================
-# 调参器类 (复用 tuner.py 逻辑)
+# 模拟主程序
 # ============================================================================
 
-class BaseTuner:
-    """调参器基类，提供公共的 JSON 解析逻辑"""
-    def _parse_json_response(self, text: str) -> Optional[Dict[str, Any]]:
-        """解析返回内容中的 JSON"""
-        if not text:
-            return None
-            
-        # 尝试提取 JSON 块
-        json_match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
-        
-        # 尝试直接解析整个文本
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            print(f"[ERROR] 无法解析 JSON 内容: {text[:200]}...")
-            return None
-
-class LLMTuner(BaseTuner):
-    """LLM 调参器"""
-    def __init__(self, api_key: str, base_url: str, model: str, provider: str = "openai"):
-        self.api_key = api_key
-        self.base_url = base_url
-        self.model = model
-        self.provider = provider
-        
-        if "anthropic" in base_url.lower() or "claude" in model.lower():
-            self.provider = "anthropic"
-
-    def analyze_and_suggest(self, data_text: str, system_prompt: str) -> Optional[Dict[str, Any]]:
-        """调用 LLM API"""
-        user_prompt = f"{data_text}\n\n请直接返回 JSON 格式。"
-        
-        try:
-            if self.provider == "openai":
-                headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-                payload = {
-                    "model": self.model,
-                    "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                    "temperature": 0.3, "max_tokens": 500
-                }
-                url = f"{self.base_url}/chat/completions"
-            else: # anthropic
-                headers = {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
-                payload = {
-                    "model": self.model, "system": system_prompt,
-                    "messages": [{"role": "user", "content": user_prompt}],
-                    "temperature": 0.3, "max_tokens": 500
-                }
-                url = f"{self.base_url}/messages"
-            
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
-            resp.raise_for_status()
-            
-            resp_data = resp.json()
-            if self.provider == "openai":
-                result_text = resp_data["choices"][0]["message"].get("content", "") or resp_data["choices"][0]["message"].get("reasoning_content", "")
-            else:
-                result_text = resp_data["content"][0]["text"]
-            
-            return self._parse_json_response(result_text)
-        except Exception as e:
-            print(f"[错误] LLM 调用失败: {e}")
-            return None
-
-# ============================================================================
-# AI 核心 Prompt 设计
-# ============================================================================
-
-SYSTEM_PROMPT = """你是一个 PID 控制算法专家，精通 PID 控制理论和自动调参技术。
-
-## 你的任务
-分析传入的时间序列数据，判断当前 PID 参数的表现并给出优化建议。
-
-## 重要约束
-- **禁止超调**：严禁让温度/位置超过目标值，一旦发现超调必须立即减小 Kp 和增大 Kd。
-- **稳态优先**：优先消除稳态误差，再考虑响应速度。
-- **输出格式**：只输出严格的 JSON 格式，严禁包含 Markdown 代码块标记或其他解释文字。
-- **参数步长**：建议每次调整幅度在 10-30% 之间，除非误差极大。
-
-## 判断逻辑
-- **震荡剧烈** (Oscillation)：error 在目标值上下大幅波动 -> 减小 Kp 或增大 Kd。
-- **响应太慢** (Slow Response)：input 接近 setpoint 速度太慢 -> 增大 Kp。
-- **稳态误差** (Steady-State Error)：长时间后误差无法归零 -> 增大 Ki。
-- **超调过大** (Overshoot)：超过目标值后回落 -> 大幅减小 Kp 或增大 Kd。
-
-## 输出 JSON 格式
-{
-  "analysis": "简短分析结论 (20字以内)",
-  "p": <float>,
-  "i": <float>,
-  "d": <float>,
-  "status": "TUNING" // 如果已收敛则返回 "DONE"
-}"""
-
-# ============================================================================
-# 数据缓冲
-# ============================================================================
-
-buffer = deque(maxlen=BUFFER_SIZE)
-sim = HeatingSimulator()
-tuner = LLMTuner(API_KEY, API_BASE_URL, MODEL_NAME, LLM_PROVIDER)
-
-def call_llm(data_text: str, rounds: int = 1, metrics: dict = None) -> dict:
-    """调用 LLM API 分析 PID 数据"""
-    # 系统辨识逻辑保留
-    use_system_id = (rounds <= 3 and metrics.get('avg_error', 0) > 50)
-    global system_id_output
-    if use_system_id:
-        print("\n[系统] 误差较大，自动执行系统辨识...")
-        import subprocess
-        try:
-            data_str = "".join([f"{int(d['timestamp'])},{d['input']:.1f},{d['pwm']:.0f} " for d in buffer])
-            result = subprocess.run(['python3', 'system_id.py', '--data', data_str], capture_output=True, text=True, timeout=30)
-            system_id_output = result.stdout
-            print(f"[系统辨识] 结果:\n{system_id_output[:500]}")
-        except Exception as e:
-            print(f"[系统辨识] 错误: {e}")
-
-    print(f"\n[{tuner.provider}] 调用 API 中...")
-    return tuner.analyze_and_suggest(data_text, SYSTEM_PROMPT)
-
-
-# ============================================================================
-# 模拟主循环
-# ============================================================================
-
-def collect_data():
-    """收集仿真数据"""
+def run_simulation():
     global kp, ki, kd
     
-    print("\n" + "="*60)
-    print(f"开始采集数据 (目标温度: {SETPOINT}°C, 初始温度: {INITIAL_TEMP}°C)")
     print("="*60)
+    print("  LLM PID Tuner PRO - 仿真测试")
+    print("="*60)
+    print(f"目标: {SETPOINT}, 模型: {MODEL_NAME}")
     
-    for i in range(BUFFER_SIZE):
-        sim.compute_pid()
-        sim.update()
-        data = sim.get_data()
-        buffer.append(data)
-        
-        if i % 10 == 0:
-            print(f"[数据] t={data['timestamp']}ms T={data['input']:.1f}°C PWM={data['pwm']:.1f} Error={data['error']:+.1f}")
-        
-        time.sleep(CONTROL_INTERVAL)
-
-
-def calculate_metrics():
-    """计算指标"""
-    if not buffer:
-        return {}
+    # 初始化组件
+    sim = HeatingSimulator()
+    tuner = LLMTuner(API_KEY, API_BASE_URL, MODEL_NAME, LLM_PROVIDER)
+    buffer = AdvancedDataBuffer(max_size=BUFFER_SIZE)
+    history = TuningHistory(max_history=5)
     
-    errors = [abs(d['error']) for d in buffer]
-    return {
-        'avg_error': sum(errors) / len(errors),
-        'max_error': max(errors),
-        'latest_temp': buffer[-1]['input']
-    }
-
-
-def run_tuning():
-    """运行调参主循环"""
-    global kp, ki, kd
-    
+    round_num = 0
     start_time = time.time()
-    rounds = 0
-    tuning_log = []  # 记录调参过程
     
-    print("\n" + "="*60)
-    print("开始 PID 自动调参实验 (MiniMax M2.5)")
-    print("="*60)
+    # 设置初始 PID 到 buffer
+    buffer.current_pid = {"p": kp, "i": ki, "d": kd}
+    buffer.setpoint = SETPOINT
     
-    while rounds < MAX_ROUNDS:
-        rounds += 1
-        
-        # 1. 收集数据
-        collect_data()
-        
-        # 2. 计算指标
-        metrics = calculate_metrics()
-        print(f"\n[第 {rounds} 轮] 平均误差: {metrics['avg_error']:.2f}°C, 最大误差: {metrics['max_error']:.2f}°C")
-        
-        # 3. 检查是否完成 (精细调参到 0.3°C)
-        if metrics['avg_error'] < 0.3:
-            print("\n✅ 调参完成！误差已达到目标范围")
-            break
-        
-        # 4. 准备数据并调用 LLM
-        recent = list(buffer)[-10:]  # 减少到 10 个数据点
-        
-        data_text = f"""当前 PID 参数: P={kp}, I={ki}, D={kd}
-目标温度: {SETPOINT}°C
-当前温度: {recent[-1]['input']:.2f}°C
-平均误差: {metrics['avg_error']:.2f}°C
-最大误差: {metrics['max_error']:.2f}°C
-
-最近 10 条数据 (时间ms, 温度°C, PWM, 误差):"""
-        
-        for d in recent:
-            data_text += f"\n{int(d['timestamp'])},{d['input']:.1f},{d['pwm']:.0f},{d['error']:+.1f}"
-        
-        # 5. 调用 MiniMax API
-        result = call_llm(data_text, rounds, metrics)
-        
-        if result:
-            analysis = result.get('analysis', '无')
-            new_p = result.get('p', kp)
-            new_i = result.get('i', ki)
-            new_d = result.get('d', kd)
-            status = result.get('status', 'TUNING')
+    try:
+        while round_num < MAX_ROUNDS:
+            # 1. 运行仿真并采集数据
+            sim_steps = 0
+            print(f"\n[第 {round_num + 1} 轮] 数据采集中...", end="")
             
-            # 根据误差大小调整变化限制
-            avg_error = metrics.get('avg_error', 0)
+            # 采集 BUFFER_SIZE 个数据点
+            while not buffer.is_full():
+                sim.compute_pid()
+                sim.update()
+                data = sim.get_data()
+                buffer.add(data)
+                sim_steps += 1
             
-            # 误差大时允许更大变化 (50%=0.5, 100%=1.0)
-            if avg_error > 100:
-                MAX_CHANGE = 1.0  # 第一轮可以用任何值
-            elif avg_error > 50:
-                MAX_CHANGE = 0.8  # 误差大时允许80%变化
-            else:
-                MAX_CHANGE = 0.2  # 正常微调20%
+            print(f" 完成 ({sim_steps} 步)")
             
-            def limit_change(old_val, new_val, max_change=MAX_CHANGE):
-                """限制参数变化幅度"""
-                if old_val == 0 or new_val == 0:
-                    return new_val if new_val != 0 else old_val
-                ratio = new_val / old_val
-                if ratio > 1 + max_change:
-                    return old_val * (1 + max_change)
-                elif ratio < 1 - max_change:
-                    return old_val * (1 - max_change)
-                return new_val
+            # 2. 计算指标
+            metrics = buffer.calculate_advanced_metrics()
+            print(f"  当前状态: AvgErr={metrics['avg_error']:.2f}, MaxErr={metrics['max_error']:.2f}, "
+                  f"Overshoot={metrics['overshoot']:.1f}%, Status={metrics['status']}")
             
-            # 如果前2轮误差>50，强制使用系统辨识的Z-N建议
-            # 重要：必须在 limit_change 之前执行，否则参数已被裁剪
-            zg_nichols_override = False
-            if rounds <= 2 and metrics['avg_error'] > 50 and system_id_output:
-                import re
-                zn_match = re.search(r'PID:\s*Kp=([0-9.]+).*?Ki=([0-9.]+).*?Kd=([0-9.]+)', system_id_output, re.DOTALL)
-                if zn_match:
-                    # 直接采用 Z-N 建议，绕过 LLM 返回值和 limit_change
-                    new_p = float(zn_match.group(1))
-                    new_i = float(zn_match.group(2))
-                    new_d = float(zn_match.group(3))
-                    
-                    # 保守模式：降低增益 + 用 PI
-                    if CONSERVATIVE_MODE:
-                        new_p *= Z_N_GAIN_FACTOR
-                        new_i *= Z_N_GAIN_FACTOR
-                        new_d = 0  # 去掉 D，用 PI 控制器
-                        analysis = f"保守模式: PI, 0.5x增益 P={new_p:.1f}, I={new_i:.2f}"
-                        print(f"[保守模式] {analysis}")
-                    else:
-                        analysis = f"激进模式: PID P={new_p:.1f}, I={new_i:.2f}, D={new_d:.3f}"
-                        print(f"[激进采纳] {analysis}")
-                    
-                    zg_nichols_override = True
-            
-            # 普通参数才应用变化限制
-            if not zg_nichols_override:
-                new_p = limit_change(kp, new_p)
-                new_i = limit_change(ki, new_i)
-                new_d = limit_change(kd, new_d)
-            
-            print(f"[MiniMax] 分析: {analysis}")
-            print(f"[MiniMax] 新参数: P={new_p:.4f}, I={new_i:.4f}, D={new_d:.4f}")
-            
-            # 记录调参过程
-            tuning_log.append({
-                "round": rounds,
-                "old_pid": {"p": kp, "i": ki, "d": kd},
-                "new_pid": {"p": new_p, "i": new_i, "d": new_d},
-                "analysis": analysis,
-                "avg_error": metrics['avg_error'],
-                "status": status
-            })
-            
-            # 更新参数
-            kp, ki, kd = new_p, new_i, new_d
-            
-            if status == 'DONE':
-                print("\n✅ MiniMax 标记调参完成")
+            # 检查是否达标
+            if metrics['avg_error'] < MIN_ERROR and metrics['status'] == "STABLE":
+                print("\n[SUCCESS] 调参成功！系统已稳定。")
                 break
-        else:
-            print("[警告] LLM 分析失败，继续当前参数")
-        
-        # 清空缓冲
-        buffer.clear()
-        
-        # 不再重置！让仿真持续运行，这样才能达到稳态
-        # sim.reset()
+            
+            round_num += 1
+            
+            # 3. 准备 Prompt
+            prompt_data = buffer.to_prompt_data()
+            history_text = history.to_prompt_text()
+            
+            # 4. 调用 LLM
+            print("  [LLM] 正在思考...")
+            result = tuner.analyze(prompt_data, history_text)
+            
+            if result:
+                analysis = result.get('analysis_summary', '无分析')
+                thought = result.get('thought_process', '无思考过程')
+                action = result.get('tuning_action', 'UNKNOWN')
+                
+                print(f"  [思考] {thought[:100]}...")
+                print(f"  [分析] {analysis}")
+                
+                # 更新参数
+                old_p, old_i, old_d = kp, ki, kd
+                kp = float(result.get('p', kp))
+                ki = float(result.get('i', ki))
+                kd = float(result.get('d', kd))
+                
+                print(f"  [动作] {action}: P {old_p:.4f}->{kp:.4f}, I {old_i:.4f}->{ki:.4f}, D {old_d:.4f}->{kd:.4f}")
+                
+                # 记录历史
+                history.add_record(round_num, {"p": kp, "i": ki, "d": kd}, metrics, analysis)
+                buffer.current_pid = {"p": kp, "i": ki, "d": kd}
+                
+                if result.get('status') == "DONE":
+                    print("\n[LLM] 认为调参已完成。")
+                    break
+            else:
+                print("  [ERROR] LLM 调用失败")
+            
+            # 清空缓冲，准备下一轮
+            buffer.buffer.clear()
+            
+            # 注意：不重置仿真器状态 (sim.reset())，因为我们要模拟连续调参过程
+    
+    except KeyboardInterrupt:
+        print("\n用户中断")
     
     end_time = time.time()
-    duration = end_time - start_time
-    
-    # 最终评估
-    # 再跑一次获取最终指标
-    for _ in range(BUFFER_SIZE):
-        sim.compute_pid()
-        sim.update()
-        buffer.append(sim.get_data())
-    
-    final_metrics = calculate_metrics()
-    
-    return {
-        "duration": duration,
-        "rounds": rounds,
-        "initial_pid": {"p": 1.0, "i": 0.1, "d": 0.05},
-        "final_pid": {"p": kp, "i": ki, "d": kd},
-        "final_temp": final_metrics['latest_temp'],
-        "final_avg_error": final_metrics['avg_error'],
-        "final_max_error": final_metrics['max_error'],
-        "tuning_log": tuning_log
-    }
-
-
-def print_report(report: dict):
-    """打印详细测试报告"""
-    print("\n" + "="*70)
-    print("                    PID 自动调参实验报告")
-    print("="*70)
-    
-    print(f"\n📊 实验概况:")
-    print(f"   目标温度: {SETPOINT}°C")
-    print(f"   初始温度: {INITIAL_TEMP}°C")
-    print(f"   模型: {MODEL_NAME}")
-    
-    print(f"\n⏱️  时间统计:")
-    print(f"   总耗时: {report['duration']:.1f} 秒")
-    print(f"   调参轮数: {report['rounds']} 轮")
-    
-    print(f"\n🔧 参数变化:")
-    print(f"   初始参数: P={report['initial_pid']['p']}, I={report['initial_pid']['i']}, D={report['initial_pid']['d']}")
-    print(f"   最终参数: P={report['final_pid']['p']:.4f}, I={report['final_pid']['i']:.4f}, D={report['final_pid']['d']:.4f}")
-    
-    print(f"\n📈 控制效果:")
-    print(f"   最终温度: {report['final_temp']:.2f}°C (目标: {SETPOINT}°C)")
-    print(f"   平均误差: {report['final_avg_error']:.2f}°C")
-    print(f"   最大误差: {report['final_max_error']:.2f}°C")
-    
-    print(f"\n📝 调参过程:")
-    for log in report['tuning_log']:
-        print(f"   第{log['round']:2d}轮: {log['old_pid']} → {log['new_pid']} | 分析: {log['analysis']} | 误差: {log['avg_error']:.1f}°C")
-    
-    print("\n" + "="*70)
-
+    print(f"\n测试结束，耗时 {end_time - start_time:.1f} 秒")
+    print(f"最终参数: P={kp}, I={ki}, D={kd}")
 
 if __name__ == "__main__":
-    report = run_tuning()
-    print_report(report)
+    run_simulation()
