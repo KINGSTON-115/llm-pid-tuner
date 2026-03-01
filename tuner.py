@@ -27,6 +27,7 @@ import time
 import json
 import re
 import sys
+import os
 import threading
 from collections import deque
 from typing import Optional, List, Dict, Any
@@ -36,13 +37,17 @@ from typing import Optional, List, Dict, Any
 # ============================================================================
 
 # 串口配置
-SERIAL_PORT = "COM3"          # Windows: "COM3" | Linux: "/dev/ttyUSB0" | macOS: "/dev/cu.usbserial-*"
-BAUD_RATE = 115200
+SERIAL_PORT = os.getenv("SERIAL_PORT", "COM3")  # Windows: "COM3" | Linux: "/dev/ttyUSB0" | macOS: "/dev/cu.usbserial-*"
+BAUD_RATE = int(os.getenv("BAUD_RATE", "115200"))
 
 # LLM API 配置 (支持 OpenAI 兼容 API)
-API_KEY = "your-api-key-here"           # 替换为你的 API Key
-API_BASE_URL = "https://api.openai.com/v1"  # 或其他兼容 API
-MODEL_NAME = "gpt-4"                     # 使用的模型
+# 本地模型示例:
+#   Ollama:    API_BASE_URL="http://localhost:11434/v1" | MODEL_NAME="llama3" (或 qwen2, deepseek-v2 等)
+#   LM Studio: API_BASE_URL="http://localhost:1234/v1"  | MODEL_NAME="model-identifier"
+#   昇腾 Ascend: 如果使用昇腾推理框架 (如 MindSpore Serving), 请提供对应的 OpenAI 兼容端点
+API_KEY = os.getenv("LLM_API_KEY", "your-api-key-here")           # 替换为你的 API Key
+API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.openai.com/v1")  # 或其他兼容 API
+MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4")                     # 使用的模型
 
 # 调参配置
 BUFFER_SIZE = 25              # 数据缓冲大小 (平衡速度和准确性)
