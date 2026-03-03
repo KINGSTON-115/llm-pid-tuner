@@ -3,6 +3,7 @@
 [![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
 
 > 📺 [B站教程视频](https://b23.tv/WVUuIFb) - 详细视频教程手把手教你使用
+> 📺 [YouTube 教程视频](https://youtu.be/Giruc9kN53Y)
 
 [中文](README.md) | [English](README_EN.md)
 
