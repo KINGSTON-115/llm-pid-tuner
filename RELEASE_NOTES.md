@@ -1,37 +1,95 @@
-# Release v2.0 PRO - 硬件调参专用版
+# Release v2.1.0 PRO - 新手可直接上手的硬件调参版
 
-🎉 我们非常高兴地发布 LLM-PID-Tuner v2.0 PRO 的独立可执行版本！
+发布日期：2026-03-06
 
-## 📦 这个版本包含什么？
+这个版本的重点不是堆功能，而是把项目整理成一个**更稳、更好懂、更适合真实调参**的形态。
 
-此 Release 包含打包好的 `llm-pid-tuner.exe`，它是专为**真实硬件调参**设计的上位机程序。
-*   **无需 Python 环境**：直接双击运行，不再需要安装 Python 或任何依赖库。
-*   **交互式串口选择**：程序会自动扫描并列出当前连接的串口设备，您可以轻松选择目标设备。
-*   **增强版内核**：内置了最新的 History-Aware 和 Chain-of-Thought 调参逻辑。
+## 这次更新了什么
 
-## 🚀 快速开始
+### 1. 发布了新的 `exe`
 
-1.  **下载**：点击下方 Assets 中的 `llm-pid-tuner.exe` 进行下载。
-2.  **准备硬件**：将您的单片机（如 Arduino, ESP32）连接到电脑。
-3.  **运行**：双击 `llm-pid-tuner.exe`。
-    *   如果是首次运行，程序会自动生成一个 `config.json` 文件。
-4.  **配置**：用记事本打开 `config.json`，填入您的 API Key 和其他设置：
-    ```json
-    {
-        "SERIAL_PORT": "AUTO",
-        "BAUD_RATE": 115200,
-        "LLM_API_KEY": "sk-您的Key",
-        "LLM_API_BASE_URL": "https://api.openai.com/v1",
-        "LLM_MODEL_NAME": "gpt-4"
-    }
-    ```
-5.  **重启**：保存文件后，重新运行程序即可。
+- Release 资产里的 `llm-pid-tuner.exe` 已更新到最新构建
+- 对应的是整理后的主流程版本，更适合直接给 Windows 用户使用
 
-## 📝 配置说明
+### 2. 调参流程更稳
 
-*   **`SERIAL_PORT`**: 默认为 `"AUTO"`（自动扫描），也可指定如 `"COM3"`。
-*   **`LLM_API_BASE_URL`**: 支持 OpenAI, DeepSeek, MiniMax 等所有兼容 OpenAI 格式的接口。
-*   **环境变量**: 依然支持环境变量（优先级高于配置文件），方便脚本调用。
+- 加入了 PID 护栏，避免参数一口气跑飞
+- LLM 给不出可用结果时，会使用保底建议继续工作
+- 会记录历史最佳稳定结果
+- 如果后续某轮建议让效果明显变差，会自动回退到更好的历史参数
+- 当系统已经“够好”时，会尽量提前停止，避免越调越坏
+
+### 3. LLM 接口兼容性更好
+
+- 对 OpenAI 兼容接口更友好
+- SDK 路径不顺时，会尝试更直接的 HTTP 路径
+- 对返回 JSON 的解析更稳，减少格式抖动导致的失败
+
+### 4. 文档重写为“小白优先”
+
+- `README.md` 现在把 `exe` 用法放在最前面
+- 明确说明 `config.json` 怎么填
+- 加入更清晰的串口、API、常见报错排查说明
+- 补充 `PROJECT_DOC.md` 方便后续维护和二次开发
+
+## 最适合谁下载这个版本
+
+- 想直接调 Arduino / ESP32 / 其他串口控制板
+- 不想先安装 Python 环境
+- 想先用起来，再决定要不要看源码
+
+## 打包版的推荐使用方式
+
+1. 从本 Release 下载 `llm-pid-tuner.exe`
+2. 准备好你的硬件，并尽量从 `firmware.cpp` 开始适配
+3. 首次运行 exe，让程序生成 `config.json`
+4. 填好 API 配置和串口配置
+5. 再运行 exe，开始调参
+
+## 配置示例
+
+```json
+{
+  "SERIAL_PORT": "AUTO",
+  "BAUD_RATE": 115200,
+  "LLM_API_KEY": "sk-your-key",
+  "LLM_API_BASE_URL": "https://api.openai.com/v1",
+  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+如果你使用 MiniMax / DeepSeek / Ollama / LM Studio 这类 OpenAI 兼容接口，通常只需要改：
+
+- `LLM_API_BASE_URL`
+- `LLM_MODEL_NAME`
+- `LLM_API_KEY`
+
+并保持：
+
+```json
+{
+  "LLM_PROVIDER": "openai"
+}
+```
+
+## 升级说明
+
+- 如果你之前下载过四天前的旧 Release，请重新下载本次新的 `llm-pid-tuner.exe`
+- 如果你之前已经有旧的 `config.json`，建议对照新的 `README.md` 检查字段是否完整
+- 如果你是源码用户，建议同步更新 `README.md`、`README_EN.md` 和 `PROJECT_DOC.md`
+
+## 仍然要提醒的事
+
+这个项目的目标是**帮你更轻松地找到可用 PID 参数**，不是替代硬件安全保护。
+
+真实硬件调参时，请务必做好：
+
+- 超温保护
+- 传感器异常保护
+- 功率级失控保护
+- 人工值守
 
 ---
-*Happy Tuning!* 🎛️
+
+下载后建议先看 `README.md:1`，按“3 分钟上手：Windows 打包版”那一节直接开始。

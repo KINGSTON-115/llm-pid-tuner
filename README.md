@@ -1,199 +1,325 @@
-# 基于 LLM 的 PID 自动调参系统 (LLM-PID-Tuner)
+# LLM-PID-Tuner
 
-[![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
+一个用大语言模型辅助 PID 调参的实用工具。
 
-> 📺 [B站教程视频](https://b23.tv/WVUuIFb) - 详细视频教程手把手教你使用
-> 📺 [YouTube 教程视频](https://youtu.be/Giruc9kN53Y)
+它的目标很直接：**把反复试错、靠感觉拧 PID 参数的痛苦过程，尽量变成一个可观察、可回退、可复现的自动流程。**
 
 [中文](README.md) | [English](README_EN.md)
 
-这是一个结合了大型语言模型 (LLM) 的 PID 自动调参系统。它通过分析控制系统的实时数据，利用 AI 的逻辑推理能力自动优化 PID 参数（Kp, Ki, Kd），支持**本地仿真测试**和**真实硬件调参**。
+> 如果你是第一次接触这个项目，**不要先折腾 Python**。
+> **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
+
+## 先看你该怎么用
+
+- **只想调硬件，不想配开发环境**：走 `exe` 路线，见下方“3 分钟上手”。
+- **想先看看这个项目到底有没有用**：运行 `simulator.py` 做本地热系统仿真。
+- **想接自己的 Arduino / ESP32 / 其他控制板**：使用 `firmware.cpp` + `tuner.py` / `llm-pid-tuner.exe`。
+- **想二次开发或看内部设计**：看 `PROJECT_DOC.md`。
+
+## 这个项目适合什么场景
+
+- 恒温控制：加热板、热端、恒温箱、水浴、烘箱
+- 电机 / 执行器：需要 PID 闭环调节的对象
+- 已经能跑，但参数不好：响应慢、超调大、抖动、稳态误差明显
+- 没有成熟整定经验，希望让 LLM 先帮你缩小试错范围
+
+## 它不是做什么的
+
+- 它**不是**“一键保证完美控制”的魔法程序
+- 它**不是**替代硬件保护的安全系统
+- 它**不是**为了漂亮 benchmark 分数而设计的玩具
+
+这个项目更在意的是：**真实调参时少走弯路、少炸参数、调差了还能回退。**
 
 ---
 
-## 🚀 最新更新 (v2.0 PRO)
+## 3 分钟上手：Windows 打包版（推荐给小白）
 
-我们刚刚发布了增强版内核，显著提升了调参效率和稳定性：
+### 第 1 步：下载打包版
 
-1.  **历史感知 (History-Aware)**: AI 现在能“记住”之前的尝试，避免重复错误（例如：上次加 P 导致震荡，这次就会更谨慎）。
-2.  **思维链 (Chain-of-Thought)**: 强制 AI 先进行深度逻辑推理，再给出参数，决策更科学。
-3.  **高级指标**: 引入了超调量 (Overshoot)、稳态误差、震荡检测等专业控制指标。
-4.  **全局视野**: 采样窗口从 30 增加到 100，AI 能看到更完整的波形趋势。
+打开 Release 页面：
+`https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest`
 
-**效果对比**:
-*   旧版: 20 轮左右收敛，容易震荡。
-*   **新版**: 仅需 **8 轮** 即可收敛，稳态误差 **<0.3%**，速度提升 2-3 倍。
+下载资产里的 `llm-pid-tuner.exe`。
 
----
+### 第 2 步：准备硬件
 
-## 🏗️ 系统架构
+你需要一个能通过串口持续上报控制数据的板子。
 
-无论是在电脑上仿真还是连接真实硬件，系统的工作流如下：
+最简单的方式是直接参考仓库里的 `firmware.cpp`，它已经实现了这个项目默认使用的串口协议。
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        本地仿真模式 (Simulator)                  │
-│  ┌─────────────┐    API (JSON)    ┌─────────────┐              │
-│  │ simulator.py │ ───────────────► │    LLM      │              │
-│  │ (热力学模型)  │ ◄─────────────── │ (AI 调参器)  │              │
-│  └─────────────┘                   └─────────────┘              │
-└──────────────────────────────────────────────────────────────────┘
+程序默认希望设备通过串口持续输出类似下面的 CSV 数据：
 
-┌──────────────────────────────────────────────────────────────────┐
-│                        真实硬件模式 (Hardware)                   │
-│  ┌─────────────┐    串口 (CSV)    ┌─────────────┐    API      │
-│  │   MCU       │ ───────────────► │  tuner.py   │ ───────────►│
-│  │ (Arduino等)  │                  │ (上位机)     │ ◄───────────┘│
-│  └─────────────┘                  └─────────────┘              │
-└──────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 📂 项目结构：我该运行哪个文件？
-
-如果你是第一次使用，请根据你的目的选择对应的脚本：
-
-| 文件名 | 适用人群 | 核心作用 | 需要硬件吗？ |
-| :--- | :--- | :--- | :--- |
-| **`simulator.py`** | **新手/学习者** | **推荐起点**。在电脑上模拟一个加热器，演示 AI 如何自动调参。 | **不需要** |
-| **`tuner.py`** | **开发者/创客** | 作为一个“上位机”，通过串口连接你的 Arduino/ESP32 进行实机调参。 | **需要** |
-| **`firmware.cpp`** | **硬件工程师** | 烧录到单片机（MCU）里的代码，负责接收指令并控制电机/加热器。 | **需要** |
-| **`system_id.py`** | **进阶用户** | 辅助工具，自动计算系统的初始 PID 建议值。 | 可选 |
-| **`benchmark.py`** | **进阶用户/研究者** | 用固定随机种子对比 baseline、兜底策略和真实 LLM 调参效果。 | 不需要 |
-
----
-
-## 🛠️ 快速上手 (以本地仿真为例)
-
-即使你没有硬件，也可以在 1 分钟内跑通演示：
-
-### 1. 克隆项目并准备环境
-确保你的电脑安装了 Python 3.8+。
-```bash
-# 克隆代码仓库
-git clone https://github.com/KINGSTON-115/llm-pid-tuner.git
-
-# 进入项目文件夹
-cd llm-pid-tuner
-
-# 安装必要的库
-pip install -r requirements.txt
-
-# 或手动安装最小依赖
-pip install requests pyserial
+```text
+timestamp_ms,setpoint,input,pwm,error,p,i,d
 ```
 
-### 2. 获取并配置 API Key
-项目支持 **GPT-4, DeepSeek, Claude, MiniMax, Ollama** 等。
+如果你不想自己适配协议，**最省事的办法就是直接从 `firmware.cpp` 开始。**
 
-**推荐方式（环境变量）：**
-在终端（PowerShell 或 CMD）执行：
+### 第 3 步：第一次运行 exe
+
+双击运行 `llm-pid-tuner.exe`。
+
+第一次运行时，如果当前目录下没有 `config.json`，程序会自动生成一份默认配置。
+
+### 第 4 步：填写 `config.json`
+
+打开 `config.json`，至少把这几个字段改掉：
+
+```json
+{
+  "SERIAL_PORT": "AUTO",
+  "BAUD_RATE": 115200,
+  "LLM_API_KEY": "sk-your-key",
+  "LLM_API_BASE_URL": "https://api.openai.com/v1",
+  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+如果你要用 **MiniMax / DeepSeek / Ollama / LM Studio** 这类 OpenAI 兼容接口，通常这样配就行：
+
+```json
+{
+  "LLM_API_KEY": "你的 key",
+  "LLM_API_BASE_URL": "你的 /v1 地址",
+  "LLM_MODEL_NAME": "你的模型名",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+比如 MiniMax 兼容接口可以是：
+
+```json
+{
+  "LLM_API_BASE_URL": "http://你的地址/v1",
+  "LLM_MODEL_NAME": "MiniMax-M2.5",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+如果你使用 Claude 原生接口，再把 `LLM_PROVIDER` 改成 `anthropic`。
+
+### 第 5 步：重新运行 exe
+
+保存 `config.json` 后重新运行程序。
+
+- 如果 `SERIAL_PORT` 填的是 `AUTO`，程序会扫描串口并让你选择
+- 如果你已经知道端口号，比如 `COM5`，也可以直接写死，省掉选择步骤
+
+### 第 6 步：观察调参结果
+
+程序会持续：
+
+- 读取串口数据
+- 分析当前响应质量
+- 请求 LLM 给出新的 PID 建议
+- 必要时使用保底策略
+- 如果后续结果变差，会回退到之前更稳的参数
+- 当系统“已经够好”时，会尽量提前停止，避免过调
+
+你最终需要做的事通常只有一件：**把收敛后的 PID 参数写回你的固件。**
+
+---
+
+## `config.json` 字段说明
+
+下面是实际程序会读取的关键配置项。
+
+| 字段 | 作用 | 新手建议 |
+| :--- | :--- | :--- |
+| `SERIAL_PORT` | 串口号，支持 `AUTO` 或具体端口 | 不确定就先用 `AUTO` |
+| `BAUD_RATE` | 串口波特率 | 与你的单片机保持一致，默认 `115200` |
+| `LLM_API_KEY` | 模型服务密钥 | 必填 |
+| `LLM_API_BASE_URL` | 模型接口地址 | OpenAI 兼容接口一般都以 `/v1` 结尾 |
+| `LLM_MODEL_NAME` | 具体模型名 | 例如 `gpt-4`、`MiniMax-M2.5` |
+| `LLM_PROVIDER` | 提供商类型 | OpenAI 兼容接口填 `openai` |
+| `BUFFER_SIZE` | 每轮分析采样点数 | 一般不要乱改，先用默认 |
+| `MIN_ERROR_THRESHOLD` | 判定足够接近目标的阈值 | 先用默认 |
+| `MAX_TUNING_ROUNDS` | 最大调参轮数 | 新手保持默认 |
+| `LLM_REQUEST_TIMEOUT` | LLM 请求超时秒数 | 网络慢时可适当加大 |
+| `LLM_DEBUG_OUTPUT` | 是否打印更详细的 LLM 输出 | 排查问题时再开 |
+
+### 关于环境变量
+
+程序也支持环境变量，并且**环境变量优先级高于 `config.json`**。
+
+例如：
+
 ```powershell
-# 以 MiniMax 为例
-$env:LLM_API_BASE_URL="http://115.190.127.51:19882/v1"
-$env:LLM_MODEL_NAME="MiniMax-M2.5"
-$env:LLM_API_KEY="你的API_KEY"
+$env:LLM_API_KEY="sk-xxx"
+$env:LLM_API_BASE_URL="http://127.0.0.1:11434/v1"
+$env:LLM_MODEL_NAME="qwen2.5:7b"
+$env:LLM_PROVIDER="openai"
 ```
-*或者直接修改 `simulator.py` 或 `tuner.py` 文件顶部的配置区域。*
 
-### 3. 运行仿真
+如果你是小白，**优先用 `config.json`，更直观。**
+
+---
+
+## 推荐模型与接口填写方式
+
+| 方案 | `LLM_API_BASE_URL` 示例 | `LLM_PROVIDER` | 说明 |
+| :--- | :--- | :--- | :--- |
+| OpenAI | `https://api.openai.com/v1` | `openai` | 最省心 |
+| DeepSeek 兼容接口 | 对应服务商的 `/v1` 地址 | `openai` | 常见且便宜 |
+| MiniMax 兼容接口 | 对应服务商的 `/v1` 地址 | `openai` | 推理能力适合调参 |
+| Ollama | `http://localhost:11434/v1` | `openai` | 本地免费部署 |
+| LM Studio | `http://localhost:1234/v1` | `openai` | 本地可视化较友好 |
+| Anthropic Claude | `https://api.anthropic.com` | `anthropic` | 原生接口用这个 |
+
+这个项目现在做了更稳的解析和回退处理，**对 OpenAI 兼容接口更友好**。如果 SDK 路径不顺，它也会尽量走更直接的 HTTP 路径，减少“能调通 API 但程序不工作”的情况。
+
+---
+
+## 如果你还没有硬件，先跑仿真
+
+如果你只是想确认这个项目到底在干什么，先跑这个：
+
+```bash
+pip install -r requirements.txt
+python simulator.py
+```
+
+`simulator.py` 会在本地模拟一个热系统，然后让 LLM 自动调参。
+这条路线最适合先理解项目，而不是直接上真实硬件。
+
+---
+
+## 进阶：源码方式运行
+
+如果你不想用 exe，也可以直接跑源码。
+
+### 安装依赖
+
+```bash
+git clone https://github.com/KINGSTON-115/llm-pid-tuner.git
+cd llm-pid-tuner
+pip install -r requirements.txt
+```
+
+### 运行仿真
+
 ```bash
 python simulator.py
 ```
 
-### 4. 运行基准对比（可选）
+### 连接真实硬件
+
 ```bash
-python benchmark.py --cases baseline fallback llm --rounds 8
+python tuner.py
 ```
 
-### 📝 运行结果示例：
-```text
-[第 1 轮] 数据采集中... 完成 (100 步)
-  当前状态: AvgErr=99.04, MaxErr=187.84, Overshoot=0.0%, Status=SLOW_RESPONSE
-  [LLM] 正在思考...
-  [思考] 第一轮分析：系统存在严重稳态误差（95.06）... 策略：大幅增加积分作用...
-  [分析] 严重稳态误差（95%），积分作用不足导致无法达到设定值。需大幅增加I和P。
-  [动作] INCREASE_I_AND_P: P 1.0000->3.0000, I 0.1000->0.8000, D 0.0500->0.0500
+### 做系统辨识（可选）
 
-... (经过几轮迭代) ...
+你可以先采一段阶跃响应数据，再用 `system_id.py` 给出一组初值建议：
 
-[第 8 轮] 数据采集中... 完成 (100 步)
-  当前状态: AvgErr=0.26, MaxErr=0.71, Overshoot=0.3%, Status=STABLE
-[SUCCESS] 调参成功！系统已稳定。
+```bash
+python system_id.py --file sample_step.csv
 ```
 
+这适合想先拿到一组“不会太离谱”的初始参数，再交给 LLM 继续细调的用户。
+
 ---
 
-## 🔬 核心技术细节
+## 主要文件是干什么的
 
-### 1. 物理模型 (物理世界的简化)
-仿真模式使用了二阶热力学模型，模拟了“加热器 -> 被控对象 -> 环境散热”的真实过程：
-```python
-target_heater_temp = ambient + (pwm / 255.0) * heater_coeff
-heater_temp += (target_heater_temp - heater_temp) * 0.1 * CONTROL_INTERVAL  # 热惯性
-object_temp += (heater_temp - object_temp) * 0.5         # 热传导
-object_temp -= (object_temp - ambient) * 0.05            # 散热损失
+| 文件 | 用途 |
+| :--- | :--- |
+| `tuner.py` | 真实硬件调参主程序，也是 exe 的核心入口 |
+| `simulator.py` | 本地热系统仿真，适合演示和验证策略 |
+| `pid_safety.py` | 参数保护、保底策略、最佳结果记录、回退逻辑 |
+| `firmware.cpp` | 单片机侧示例固件，负责串口上报与执行 PID |
+| `system_id.py` | 利用阶跃响应做系统辨识，给出初始 PID 建议 |
+| `benchmark.py` | 固定随机种子的对比工具，更偏开发验证用途 |
+| `config.json` | 运行配置文件 |
+| `PROJECT_DOC.md` | 面向开发者的内部说明文档 |
+
+---
+
+## 常见问题
+
+### 1）双击 exe 后一闪而过
+
+常见原因：
+
+- `config.json` 还没填好
+- API Key 无效
+- 串口打不开
+- 当前目录没有写入权限，导致配置文件生成失败
+
+建议直接在 PowerShell 里运行，这样错误信息不会消失：
+
+```powershell
+.\llm-pid-tuner.exe
 ```
 
-### 2. AI 调参的逻辑是什么？
-AI 会像经验丰富的工程师一样思考（Chain-of-Thought）：
-1.  **观察**：看最近 100 个点的波形，计算超调量、稳态误差、震荡频率。
-2.  **回忆**：查阅历史记录（“上次加了 P 导致震荡，这次不能加了”）。
-3.  **诊断**：判断当前主要矛盾（是响应慢？还是有稳态误差？还是在震荡？）。
-4.  **决策**：给出调整方向（如 `INCREASE_I`）和具体参数。
+### 2）程序找不到串口
+
+检查下面几件事：
+
+- 设备是否真的连上电脑
+- 驱动是否安装正确
+- 其他上位机是否已经占用了串口
+- `BAUD_RATE` 是否和单片机一致
+
+### 3）程序连上了，但一直没有数据
+
+大概率是你的固件输出格式和项目默认协议不一致。
+最稳妥的办法是先按 `firmware.cpp` 的格式对齐。
+
+### 4）LLM 能聊天，但程序调不动
+
+多数时候是这几类问题：
+
+- `LLM_API_BASE_URL` 写错
+- 模型名写错
+- 你用的是 OpenAI 兼容接口，但 `LLM_PROVIDER` 填成了 `anthropic`
+- 服务端虽然可用，但返回 JSON 风格不稳定
+
+### 5）调着调着结果变差怎么办
+
+现在的程序会：
+
+- 给 PID 做基本护栏限制
+- LLM 异常时启用保底建议
+- 记录历史最佳稳定参数
+- 后续结果明显变差时自动回退
+
+也就是说，它的设计目标不是“每一轮都更激进”，而是**优先把系统留在一个更稳、更可用的位置。**
+
+### 6）能不能完全离线使用
+
+可以，但前提是你本地起了兼容 OpenAI 接口的模型服务，比如：
+
+- Ollama
+- LM Studio
+
+然后把 `LLM_API_BASE_URL` 指向本地地址即可。
 
 ---
 
-## 🤖 调参适配指南
+## 安全提醒
 
-| 适配对象 | API 地址示例 | 说明 |
-| :--- | :--- | :--- |
-| **Ollama** | `http://localhost:11434/v1` | **完全免费**！本地运行,自选模型 |
-| **LM Studio** | `http://localhost:1234/v1` | 本地运行，界面友好 |
-| **Claude 原生** | `https://api.anthropic.com/v1` | 需设置 `$env:LLM_PROVIDER="anthropic"` |
-| **国产大模型** | `https://api.deepseek.com` | 极高性价比，推荐 DeepSeek-V3 |
-| **MiniMax** | `https://api.minimax.chat/v1` | 逻辑推理能力强，适合调参 |
+**在真实硬件上调参时，请务必有人值守。**
 
----
+尤其是加热类系统，一定要有：
 
-## 🏗️ 进阶：连接真实硬件调参
+- 硬件级限温
+- 传感器异常保护
+- 继电器 / MOS 管失控保护
+- 必要时的物理断电手段
 
-如果你想用它来调试自己的硬件（如 3D 打印机喷头、恒温水箱）：
-
-### 🚀 推荐方式：使用可执行程序 (Windows)
-我们在 [Releases](https://github.com/KINGSTON-115/llm-pid-tuner/releases) 中提供了打包好的 `llm-pid-tuner.exe`。
-1.  **下载**：从 Release 页面下载 exe 文件。
-2.  **配置**：设置环境变量 `$env:LLM_API_KEY="您的Key"`。
-3.  **运行**：双击运行，程序会自动扫描串口供您选择。
-
-### 源码运行方式
-1.  打开 `tuner.py`，配置好 API Key。
-2.  运行 `python tuner.py`。
-3.  按提示选择串口即可。
-
-### 固件准备
-请参考 `firmware.cpp` 将代码烧录到您的 Arduino/ESP32。
+这个项目能帮你减少调参痛苦，但**不能替代硬件安全设计**。
 
 ---
 
-## ❓ 常见问题 (FAQ)
+## 补充说明
 
-**Q: 我运行 simulator.py 报错 `ModuleNotFoundError`？**
-A: 请执行 `pip install requests pyserial`。
+- 最新打包版请看 Release：`https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest`
+- 想看项目内部设计，请看 `PROJECT_DOC.md:1`
+- 想看英文说明，请看 `README_EN.md:1`
 
-**Q: 为什么 AI 调参很慢？**
-A: AI 需要收集足够的数据（默认 100 组）才能做出准确判断。我们有意加大了观察窗口以提高准确率。你可以修改 `BUFFER_SIZE`，但不建议低于 50。
+## License
 
-**Q: 本地模型效果不好怎么办？**
-A: PID 调参需要较强的逻辑推理能力。建议本地模型至少使用 7B 以上规模（如 Qwen2.5-7B-Instruct），或者使用云端模型（GPT-4o, Claude 3.5, DeepSeek-V3）。
-
----
-
-## ⚠️ 安全警告
-**在真实硬件上使用时，请务必在场监控！** 虽然 AI 很聪明，但传感器故障或程序死机可能导致持续加热。请确保硬件端有物理级别的断电保护。
-
----
-
-## 📜 许可证
-[MIT License](LICENSE)
+`MIT`

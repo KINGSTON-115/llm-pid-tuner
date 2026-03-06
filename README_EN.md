@@ -1,144 +1,221 @@
-# LLM-Based PID Auto-Tuner (LLM-PID-Tuner)
+# LLM-PID-Tuner
 
-[![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
-
-> 📺 [Video Tutorial (Bilibili)](https://b23.tv/WVUuIFb)
-> 📺 [YouTube Tutorial](https://youtu.be/Giruc9kN53Y)
+An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error process of real controller tuning.
 
 [中文](README.md) | [English](README_EN.md)
 
-This is a PID auto-tuning system powered by Large Language Models (LLM). By analyzing real-time data from control systems, it leverages the logical reasoning capabilities of AI to automatically optimize PID parameters (Kp, Ki, Kd). It supports both **local simulation** and **real hardware tuning**.
+> New here? The easiest path is **not** Python.
+> Download the packaged `llm-pid-tuner.exe` from Releases and start there.
+
+## Best starting path
+
+- **Just want to tune hardware**: use the packaged `exe`
+- **Want to see the idea first**: run `simulator.py`
+- **Want to integrate your own board**: use `firmware.cpp` + `tuner.py`
+- **Want internals / maintenance notes**: read `PROJECT_DOC.md`
 
 ---
 
-## 🚀 Latest Update (v2.0 PRO)
+## 3-minute quick start for beginners
 
-We have just released the enhanced kernel, significantly improving tuning efficiency and stability:
+### 1. Download the packaged app
 
-1.  **History-Aware**: The AI now "remembers" previous attempts to avoid repeating mistakes (e.g., "Increasing P caused oscillation last time, so I'll be more cautious this time").
-2.  **Chain-of-Thought (CoT)**: Forces the AI to perform deep logical reasoning before providing parameters, resulting in more scientific decisions.
-3.  **Advanced Metrics**: Introduces professional control metrics such as Overshoot, Steady-State Error, and Oscillation Detection.
-4.  **Global Vision**: Sampling window increased from 30 to 100 points, allowing the AI to see more complete waveform trends.
+Latest Release:
 
-**Performance Comparison**:
-*   Old Version: Converged in ~20 rounds, prone to oscillation.
-*   **New Version**: Converges in just **8 rounds**, with steady-state error **<0.3%**, 2-3x faster speed.
+`https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest`
 
----
+Download `llm-pid-tuner.exe` from the Assets section.
 
-## 🏗️ System Architecture
+### 2. Prepare hardware
 
-Whether simulating on a PC or connecting to real hardware, the workflow is as follows:
+Your board should stream CSV data over serial.
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Local Simulation Mode                     │
-│  ┌─────────────┐    API (JSON)    ┌─────────────┐              │
-│  │ simulator.py │ ───────────────► │    LLM      │              │
-│  │ (Thermal Model)│ ◄─────────────── │ (AI Tuner)  │              │
-│  └─────────────┘                   └─────────────┘              │
-└──────────────────────────────────────────────────────────────────┘
+The easiest route is to start from `firmware.cpp`, which already matches the protocol expected by this project.
 
-┌──────────────────────────────────────────────────────────────────┐
-│                        Real Hardware Mode                        │
-│  ┌─────────────┐    Serial (CSV)  ┌─────────────┐    API      │
-│  │   MCU       │ ───────────────► │  tuner.py   │ ───────────►│
-│  │ (Arduino etc)│                  │ (Host App)  │ ◄───────────┘│
-│  └─────────────┘                  └─────────────┘              │
-└──────────────────────────────────────────────────────────────────┘
+Expected CSV format:
+
+```text
+timestamp_ms,setpoint,input,pwm,error,p,i,d
 ```
 
+### 3. Run the exe once
+
+Double-click `llm-pid-tuner.exe`.
+
+If `config.json` does not exist, the program generates a default one automatically.
+
+### 4. Edit `config.json`
+
+At minimum, set these fields:
+
+```json
+{
+  "SERIAL_PORT": "AUTO",
+  "BAUD_RATE": 115200,
+  "LLM_API_KEY": "sk-your-key",
+  "LLM_API_BASE_URL": "https://api.openai.com/v1",
+  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+For OpenAI-compatible providers such as MiniMax, DeepSeek, Ollama, or LM Studio, keep `LLM_PROVIDER` as `openai` and point `LLM_API_BASE_URL` to the provider's `/v1` endpoint.
+
+Example:
+
+```json
+{
+  "LLM_API_BASE_URL": "http://your-endpoint/v1",
+  "LLM_MODEL_NAME": "MiniMax-M2.5",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+For native Claude APIs, use `LLM_PROVIDER: "anthropic"`.
+
+### 5. Run it again
+
+- If `SERIAL_PORT` is `AUTO`, the app scans ports and lets you choose
+- If you already know the port, set something like `COM5`
+
+### 6. Watch the tuning loop
+
+The app will:
+
+- collect serial data
+- evaluate response quality
+- ask the LLM for new PID values
+- fall back to safer suggestions when needed
+- remember the best stable result
+- roll back when a later suggestion clearly makes things worse
+- stop early when the system is already “good enough”
+
+In practice, this means the tool tries to be useful on real hardware, not just aggressive.
+
 ---
 
-## 📂 Project Structure: Which file should I run?
+## Key config fields
 
-| File Name | Target Audience | Core Function | Hardware Required? |
-| :--- | :--- | :--- | :--- |
-| **`simulator.py`** | **Beginners/Learners** | **Recommended Start**. Simulates a heater on PC to demonstrate AI auto-tuning. | **No** |
-| **`tuner.py`** | **Developers/Makers** | Acts as a "Host App", connecting to your Arduino/ESP32 via serial for real tuning. | **Yes** |
-| **`firmware.cpp`** | **Hardware Engineers** | Code to flash into the MCU, responsible for receiving commands and controlling motors/heaters. | **Yes** |
-| **`system_id.py`** | **Advanced Users** | Utility tool to automatically calculate initial PID suggestions using step response. | Optional |
-| **`benchmark.py`** | **Advanced Users/Researchers** | Reproducibly compares baseline, fallback, and real LLM tuning with a fixed random seed. | No |
+| Field | Meaning | Beginner advice |
+| :--- | :--- | :--- |
+| `SERIAL_PORT` | Serial port or `AUTO` | Start with `AUTO` |
+| `BAUD_RATE` | Serial baud rate | Match your firmware |
+| `LLM_API_KEY` | Model API key | Required |
+| `LLM_API_BASE_URL` | API base URL | OpenAI-compatible endpoints usually end with `/v1` |
+| `LLM_MODEL_NAME` | Model name | Example: `gpt-4`, `MiniMax-M2.5` |
+| `LLM_PROVIDER` | Provider type | Use `openai` for OpenAI-compatible APIs |
+| `BUFFER_SIZE` | Samples per tuning round | Keep the default first |
+| `MAX_TUNING_ROUNDS` | Maximum rounds | Keep the default first |
+
+Environment variables are also supported and override `config.json`, but beginners usually find `config.json` easier.
 
 ---
 
-## 🛠️ Quick Start (Local Simulation)
+## Recommended providers
 
-Even without hardware, you can run a demo in 1 minute:
+| Provider | `LLM_API_BASE_URL` example | `LLM_PROVIDER` |
+| :--- | :--- | :--- |
+| OpenAI | `https://api.openai.com/v1` | `openai` |
+| MiniMax-compatible | provider `/v1` URL | `openai` |
+| DeepSeek-compatible | provider `/v1` URL | `openai` |
+| Ollama | `http://localhost:11434/v1` | `openai` |
+| LM Studio | `http://localhost:1234/v1` | `openai` |
+| Anthropic Claude | `https://api.anthropic.com` | `anthropic` |
 
-### 1. Clone and Setup
-Ensure Python 3.8+ is installed.
+The current runtime is hardened for OpenAI-compatible endpoints and includes a more direct HTTP fallback path when SDK behavior is not enough.
+
+---
+
+## No hardware yet? Run the simulator first
+
+```bash
+pip install -r requirements.txt
+python simulator.py
+```
+
+`simulator.py` models a heating system locally and lets the LLM tune it. This is the easiest way to understand the project before touching real hardware.
+
+---
+
+## Run from source
+
 ```bash
 git clone https://github.com/KINGSTON-115/llm-pid-tuner.git
 cd llm-pid-tuner
 pip install -r requirements.txt
-
-# Or install the minimal dependencies manually
-pip install requests pyserial
+python tuner.py
 ```
 
-### 2. Configure API Key
-Supports **GPT-4, DeepSeek, Claude, MiniMax, Ollama**, etc.
+Optional tools:
 
-**Recommended (Environment Variables):**
+- `python simulator.py`
+- `python system_id.py --file sample_step.csv`
+- `python benchmark.py --cases baseline fallback llm --rounds 8`
+
+---
+
+## Main files
+
+| File | Purpose |
+| :--- | :--- |
+| `tuner.py` | Main hardware tuning runtime and exe entry |
+| `simulator.py` | Local thermal simulation |
+| `pid_safety.py` | Guardrails, fallback logic, best-result tracking, rollback |
+| `firmware.cpp` | Example MCU firmware |
+| `system_id.py` | Step-response based system identification |
+| `benchmark.py` | Fixed-seed comparison utility |
+| `PROJECT_DOC.md` | Developer-oriented project notes |
+
+---
+
+## FAQ
+
+### The exe closes immediately
+
+Common reasons:
+
+- `config.json` is incomplete
+- invalid API key
+- serial port cannot be opened
+- current directory is not writable
+
+Run it from PowerShell to keep the error message visible:
+
 ```powershell
-# Example for OpenAI
-$env:LLM_API_BASE_URL="https://api.openai.com/v1"
-$env:LLM_MODEL_NAME="gpt-4"
-$env:LLM_API_KEY="sk-..."
-```
-*Or modify the configuration section at the top of `simulator.py` or `tuner.py`.*
-
-### 3. Run Simulation
-```bash
-python simulator.py
+.\llm-pid-tuner.exe
 ```
 
-### 4. Run Benchmark (Optional)
-```bash
-python benchmark.py --cases baseline fallback llm --rounds 8
-```
+### The app cannot find my serial port
+
+Check:
+
+- cable / driver
+- whether another tool already opened the port
+- whether your baud rate matches the firmware
+
+### I get a connection but no useful data
+
+Usually the board is not sending the expected CSV protocol. Start from `firmware.cpp` if possible.
+
+### Can I use it fully offline?
+
+Yes, if you run a local model server such as Ollama or LM Studio and expose an OpenAI-compatible endpoint.
 
 ---
 
-## 🏗️ Advanced: Real Hardware Tuning
+## Safety
 
-If you want to tune your own hardware (e.g., 3D printer hotend, water bath):
+**Always supervise real hardware during tuning.**
 
-### 🚀 Recommended: Use Executable (Windows)
-We provide a pre-built `llm-pid-tuner.exe` in [Releases](https://github.com/KINGSTON-115/llm-pid-tuner/releases).
-1.  **Download**: Get the exe from the Release page.
-2.  **Run**: Double-click it. It will auto-generate a `config.json` on first run.
-3.  **Config**: Edit `config.json` with your API Key.
-4.  **Connect**: The program will auto-scan serial ports for you to select.
+Especially for heating systems, you still need hardware-level protection such as:
 
-### Source Code Method
-1.  Open `tuner.py`, configure your API Key.
-2.  Run `python tuner.py`.
-3.  Select the serial port as prompted.
+- over-temperature cutoff
+- sensor failure handling
+- power-stage fault protection
+- physical power disconnect if necessary
 
-### Firmware Preparation
-Refer to `firmware.cpp` to flash the code onto your Arduino/ESP32.
+This tool reduces tuning pain. It does not replace hardware safety design.
 
----
+## License
 
-## ❓ FAQ
-
-**Q: `ModuleNotFoundError` when running simulator.py?**
-A: Run `pip install requests pyserial`.
-
-**Q: Why is AI tuning slow?**
-A: The AI needs sufficient data (default 100 points) to make accurate judgments. We intentionally increased the observation window to improve accuracy. You can modify `BUFFER_SIZE`, but <50 is not recommended.
-
-**Q: Local model performance is poor?**
-A: PID tuning requires strong logical reasoning. We recommend local models at least 7B size (e.g., Qwen2.5-7B-Instruct), or cloud models (GPT-4o, Claude 3.5).
-
----
-
-## ⚠️ Safety Warning
-**Always monitor the system when tuning real hardware!** Although the AI is smart, sensor failures or program crashes could lead to continuous heating. Ensure hardware-level thermal runaway protection is in place.
-
----
-
-## 📜 License
-[MIT License](LICENSE)
+`MIT`

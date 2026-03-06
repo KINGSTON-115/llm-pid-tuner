@@ -1,218 +1,188 @@
-# 基于 LLM 的 PID 自动调参系统 - 开发文档
+# LLM-PID-Tuner 项目说明
 
-## 一、项目概述
+这份文档面向维护者、二次开发者，以及想快速理解项目内部结构的人。
 
-### 1.1 目标
-构建一个基于 LLM 的闭环 PID 自动调参系统，不需要 GUI 界面，通过纯文本 CLI 实现：
-- MCU 产生数据 → Python 转发 → LLM 分析 → 参数下发 → MCU 实时调整
+如果你只是想直接使用打包版，请先看 `README.md:1`。
 
-### 1.2 系统架构
-```
-┌─────────────┐    串口 (CSV)    ┌─────────────┐    API (JSON)    ┌─────────────┐
-│   MCU       │ ───────────────► │   Python    │ ───────────────► │    LLM      │
-│ (firmware)  │                  │  (tuner.py) │                  │ (MiniMax)   │
-│             │ ◄─────────────── │             │ ◄─────────────── │             │
-└─────────────┘    串口 (CMD)    └─────────────┘    JSON 返回     └─────────────┘
-```
+## 1. 项目目标
 
----
+本项目的核心目标不是跑出好看的 benchmark，而是：
 
-## 二、初始版本 (第一版)
+- 用 LLM 帮用户减少 PID 手工整定的试错成本
+- 在真实硬件上尽量减少“参数越调越离谱”的情况
+- 让系统在可用后尽量早点停，而不是过度调参
+- 出现异常时仍然保留一条可继续工作的保底路径
 
-### 2.1 核心文件
+换句话说，项目更偏向“**可落地的调参助手**”，而不是“学术型最优控制框架”。
 
-| 文件 | 说明 |
-|------|------|
-| `firmware.cpp` | MCU 端 Arduino 固件 |
-| `tuner.py` | Python 上位机桥接脚本 |
+## 2. 主要组件
 
-### 2.2 firmware.cpp 功能
-- 内置简单仿真模型：`output += (pwm - output) * 0.1`
-- 50ms 周期通过串口打印 CSV 数据
-- 监听串口接收 PID 参数指令
+### `tuner.py`
 
-### 2.3 tuner.py 功能
-- 串口读取数据
-- 数据缓冲池：100 行触发一次 LLM 分析
-- 调用外部 LLM API 分析并返回新参数
+真实硬件调参主程序。
 
----
+职责：
 
-## 三、遇到的问题
+- 读取 `config.json` / 环境变量
+- 扫描并连接串口
+- 读取 MCU 上报的 CSV 数据
+- 计算当前调参指标
+- 调用 LLM 获取新的 PID 建议
+- 应用 PID 护栏、保底逻辑、最佳结果记录和回退逻辑
 
-### 3.1 问题 1：仿真模型太简陋
+### `simulator.py`
 
-**现象**：PWM 持续饱和 255，温度上升缓慢，LLM 持续建议增大 Kp 但无效
+本地热系统仿真器，用来验证调参策略，不依赖真实硬件。
 
-**原因**：原始仿真模型过于简单
-```python
-# 原始模型
-new_temp = current_temp + (pwm/255 * heating_factor - (temp - ambient) * cooling_factor)
-# 参数：heating_factor=2.0, cooling_factor=0.02
-```
+职责：
 
-每 50ms 最多升温 2°C，从 0°C 到 100°C 需要很长时间，且很快达到稳态。
+- 模拟被控对象的热惯性和散热过程
+- 用与 `tuner.py` 类似的逻辑跑自动调参
+- 便于快速验证策略是否明显跑偏
 
-### 3.2 问题 2：数据量太大
+### `pid_safety.py`
 
-**现象**：每轮需要 100 行数据 (~5秒) 才触发一次 LLM 分析
+稳定性与保底逻辑集中模块。
 
-**原因**：BUFFER_SIZE = 100
+职责：
 
-**影响**：调参效率低
+- PID 参数护栏
+- LLM 失效时的 fallback 建议
+- “已经够好”判断
+- 最佳结果记录
+- 结果恶化时的回退判断
 
-### 3.3 问题 3：LLM 返回格式不稳定
+### `firmware.cpp`
 
-**现象**：有时返回空内容，有时带 markdown 代码块
+单片机侧示例固件。
 
-**原因**：MiniMax 模型返回格式不统一
+职责：
 
----
+- 按固定周期计算 PID
+- 通过串口输出 CSV 数据
+- 接收上位机下发的新 PID 参数
 
-## 四、改进方案
+### `system_id.py`
 
-### 4.1 仿真模型改进 (simulator.py)
+系统辨识辅助工具。
 
-**新模型**：二阶加热系统
-```python
-class HeatingSimulator:
-    def __init__(self):
-        # 加热器温度 (受 PWM 控制)
-        self.heater_temp = 20.0
-        # 环境温度
-        self.ambient_temp = 20.0
-        # 加热器功率系数
-        self.heater_coeff = 300.0
-        # 传热系数
-        self.heat_transfer = 0.5
-        # 散热系数
-        self.cooling_coeff = 0.3
-        # 传感器噪声
-        self.noise_level = 0.3
-    
-    def update(self):
-        # 1. 加热器温度由 PWM 决定
-        target_heater_temp = self.ambient_temp + (self.pwm / 255.0) * self.heater_coeff
-        self.heater_temp += (target_heater_temp - self.heater_temp) * 0.3
-        
-        # 2. 物体温度变化
-        heat_from_heater = (self.heater_temp - self.temp) * self.heat_transfer
-        heat_to_ambient = (self.temp - self.ambient_temp) * self.cooling_coeff
-        net_heat = heat_from_heater - heat_to_ambient
-        self.temp += net_heat * CONTROL_INTERVAL
-        
-        # 3. 添加噪声
-        self.temp += random.gauss(0, self.noise_level)
-```
+职责：
 
-**效果**：
-- 加热到 ~62°C 达到稳态（有明显稳态误差）
-- LLM 能通过调整 Ki 消除稳态误差
-- 展现真实的 PID 控制特性
+- 读取串口或 CSV 文件中的阶跃响应数据
+- 估计一阶惯性 + 纯滞后近似参数
+- 给出 Ziegler-Nichols 风格的初始 PID 建议
 
-### 4.2 数据量优化
+### `benchmark.py`
 
-| 参数 | 原值 | 新值 | 效果 |
-|------|------|------|------|
-| BUFFER_SIZE | 100 | 20 | 每轮 1 秒 |
-| LLM 分析数据 | 30 行 | 15 行 | 减少 token 消耗 |
+固定随机种子的开发验证工具。
 
-### 4.3 LLM 返回解析优化
+职责：
 
-增加多种解析方式：
-```python
-# 方法1: 提取 JSON 块
-json_match = re.search(r'\{[^{}]*\}', result_text, re.DOTALL)
+- 对比 `baseline` / `fallback` / `llm` 三条路径
+- 用较可复现的方式观察策略变化
 
-# 方法2: 直接解析
-json.loads(result_text)
+它是开发辅助工具，不是项目的核心价值本身。
 
-# 方法3: 提取 key-value 对
-p_match = re.search(r'"p"\s*:\s*([0-9.]+)', result_text)
+## 3. 真实硬件工作流
+
+整体流程如下：
+
+1. MCU 使用 `firmware.cpp` 风格协议输出过程数据
+2. `tuner.py` 通过串口读取并缓存数据
+3. 累积到一定采样窗口后，计算误差、超调、稳定性等指标
+4. 把当前摘要 + 历史结果发给 LLM
+5. LLM 返回新的 PID 建议
+6. 建议先经过 `pid_safety.py` 的护栏与校验
+7. 程序把新 PID 发回设备，进入下一轮
+8. 如果结果恶化，优先回退到历史最佳结果
+9. 如果结果已经够好，则提前停止
+
+## 4. 配置来源与优先级
+
+运行时配置主要来自两个地方：
+
+- `config.json`
+- 环境变量
+
+优先级：
+
+1. 默认配置
+2. `config.json`
+3. 环境变量覆盖
+
+也就是说，环境变量优先级最高。
+
+对小白来说，推荐使用 `config.json`；对自动化脚本来说，环境变量更方便。
+
+## 5. 串口协议约定
+
+当前项目默认 MCU 输出一行 CSV，字段顺序为：
+
+```text
+timestamp_ms,setpoint,input,pwm,error,p,i,d
 ```
 
----
+其中：
 
-## 五、测试结果
+- `timestamp_ms`：毫秒时间戳
+- `setpoint`：设定值
+- `input`：当前测量值
+- `pwm`：控制输出
+- `error`：误差
+- `p/i/d`：当前使用的 PID 参数
 
-### 5.1 优化后测试
+如果你的硬件协议和这个不一致，优先建议从 `firmware.cpp` 同步，而不是在上位机里临时打补丁。
 
-| 轮次 | PID 参数 | 平均误差 | LLM 判断 |
-|------|----------|----------|----------|
-| 1 | P:1.0→3.0, I:0.1→0.5 | 75°C | 响应太慢 ↑ |
-| 2 | → 4.0, 1.0 | 52°C | P/I 偏小 ↑ |
-| 3 | → 8.0, 0.5, 0.2 | 47°C | 接近目标 ↑ |
-| 4 | → 9.0, 0.8 | 44°C | 有稳态误差 |
-| 5 | → 12.0, 1.2, 0.3 | 44°C | 继续调整 |
-| 6 | → 15.0, 1.8 | 43°C | 快到位 |
-| 7 | → 14.0, 1.8, 0.5 | ~1°C | **DONE** |
+## 6. 关键设计取向
 
-### 5.2 最终指标
+### 6.1 优先可用，而不是盲目激进
 
-- **总耗时**: 159.6 秒 (~2.5 分钟)
-- **调参轮数**: 8 轮
-- **最终 PID**: P=14.0, I=1.8, D=0.5
-- **稳态误差**: ~1.5°C
-- **效率提升**: 5 倍 (100行→20行)
+项目不是要求每一轮都把参数改得更猛，而是优先：
 
----
+- 让系统逐步逼近可用状态
+- 尽量避免明显震荡和劣化
+- 保留回退空间
 
-## 六、文件结构
+### 6.2 LLM 是调参助手，不是唯一真理
 
-```
-llm-pid-tuner/
-├── firmware.cpp      # MCU 端固件 (Arduino)
-├── tuner.py         # 上位机桥接 (支持 LLM/OpenClaw 双模式)
-├── simulator.py     # 本地模拟器 (测试用)
-└── README.md       # 项目说明
-```
+LLM 的建议很有价值，但模型输出可能不稳定，因此需要：
 
----
+- JSON 清洗与解析保护
+- provider / API 兼容处理
+- fallback 逻辑
+- best-so-far 和记忆回退
 
-## 七、使用方法
+### 6.3 “已经够好”比“继续追分”更重要
 
-### 7.1 本地模拟测试
-```bash
-cd llm-pid-tuner
-python3 simulator.py
-```
+在真实控制里，很多时候系统已经满足需求。
+继续追求极小误差，可能反而带来更大风险。
 
-### 7.2 串口连接 MCU
-```bash
-python3 tuner.py
-```
+因此运行时加入了提前停止和稳定轮次判断。
 
-### 7.3 配置 LLM
-编辑 `tuner.py` 顶部：
-```python
-API_KEY = "your-api-key"
-MODEL_NAME = "gpt-4"  # 或 "MiniMax-M2.5"
-TUNER_MODE = "llm"   # 或 "openclaw"
-```
+## 7. 打包说明
 
----
+Windows 可执行文件由 `PyInstaller` 打包生成，入口是 `tuner.py`。
 
-## 八、LLM Prompt 设计
+当前发布策略更适合面向终端用户：
 
-```python
-SYSTEM_PROMPT = """你是一个 PID 控制算法专家。
+- 源码保留给开发者
+- `exe` 保留给直接使用者
 
-## 判断规则
-- 震荡剧烈 → 减小 Kp 或增大 Kd
-- 响应太慢 → 增大 Kp
-- 稳态误差 → 增大 Ki
-- 超调过大 → 减小 Kp 或增大 Kd
+## 8. 推荐维护原则
 
-## 输出格式
-{"analysis": "简短分析", "p": <float>, "i": <float>, "d": <float>, "status": "TUNING 或 DONE"}
-"""
-```
+后续继续演进时，优先保持这几条原则：
 
----
+- 每一段逻辑都要有明确目的
+- 优先修根因，不堆表面补丁
+- 不为了“跑分更好看”牺牲真实可用性
+- 不新增体积庞大但价值不高的复杂层
+- 优先保证真实硬件调参链路稳定
 
-## 九、总结
+## 9. 新手文档入口
 
-1. **仿真模型**：从简单一阶模型改为二阶加热系统，更真实
-2. **调参效率**：数据量减少 5 倍，从 5 秒/轮 → 1 秒/轮
-3. **LLM 能力**：能正确识别响应速度、稳态误差、过冲等问题
-4. **最终效果**：8 轮调参达到稳态误差 ~1.5°C
+如果你要把项目交给不熟悉 Python / PID / 串口的人，请优先让对方看：
+
+- `README.md:1`
+- `RELEASE_NOTES.md:1`
+
+这两份文档已经按“先下载 exe，再配置，再连接硬件”的顺序写好了。
