@@ -6,8 +6,31 @@
 
 [中文](README.md) | [English](README_EN.md)
 
+[![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
+
+> 📺 [B站教程视频](https://b23.tv/WVUuIFb)
+> 📺 [YouTube 教程视频](https://youtu.be/Giruc9kN53Y)
+
 > 如果你是第一次接触这个项目，**不要先折腾 Python**。
 > **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
+
+## 系统结构图
+
+```text
+┌──────────────────────── 本地仿真模式 (Simulator) ────────────────────────┐
+│                                                                        │
+│  simulator.py  ───────────── API(JSON) ─────────────>  LLM / AI Tuner   │
+│  (热系统仿真)                                           (生成 PID 建议) │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────── 真实硬件模式 (Hardware) ────────────────────────┐
+│                                                                        │
+│  MCU / firmware.cpp ── Serial(CSV) ──> tuner.py ── API ──> LLM         │
+│  (Arduino / ESP32)                    (上位机 / exe)                    │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
 ## 先看你该怎么用
 

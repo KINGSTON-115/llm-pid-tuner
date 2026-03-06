@@ -4,8 +4,31 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 
 [中文](README.md) | [English](README_EN.md)
 
+[![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
+
+> 📺 [Video Tutorial (Bilibili)](https://b23.tv/WVUuIFb)
+> 📺 [YouTube Tutorial](https://youtu.be/Giruc9kN53Y)
+
 > New here? The easiest path is **not** Python.
 > Download the packaged `llm-pid-tuner.exe` from Releases and start there.
+
+## System Architecture
+
+```text
+┌──────────────────────── Local Simulation Mode ──────────────────────────┐
+│                                                                        │
+│  simulator.py  ───────────── API(JSON) ─────────────>  LLM / AI Tuner   │
+│  (thermal model)                                        (PID decisions) │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────── Real Hardware Mode ─────────────────────────────┐
+│                                                                        │
+│  MCU / firmware.cpp ── Serial(CSV) ──> tuner.py ── API ──> LLM         │
+│  (Arduino / ESP32)                    (host app / exe)                  │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Best starting path
 
