@@ -2,14 +2,11 @@
 
 一个用大语言模型辅助 PID 调参的实用工具。
 
-它的目标很直接：**把反复试错、靠感觉拧 PID 参数的痛苦过程，尽量变成一个可观察、可回退、可复现的自动流程。**
+> 💬 QQ 群：1082281492 - 欢迎加入交流讨论
+> 📺 [B站教程视频](https://b23.tv/WVUuIFb) - 详细视频教程手把手教你使用
+> 📺 [YouTube 教程视频](https://youtu.be/Giruc9kN53Y)
 
 [中文](README.md) | [English](README_EN.md)
-
-[![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
-
-> 📺 [B站教程视频](https://b23.tv/WVUuIFb)
-> 📺 [YouTube 教程视频](https://youtu.be/Giruc9kN53Y)
 
 > 如果你是第一次接触这个项目，**不要先折腾 Python**。
 > **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
