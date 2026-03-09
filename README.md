@@ -120,6 +120,18 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 }
 ```
 
+如果你用的是 **Claude 中转站 / OneAPI / New API 这类 OpenAI 兼容接口**，现在也可以更明确地写成：
+
+```json
+{
+  "LLM_API_BASE_URL": "https://你的中转站/v1",
+  "LLM_MODEL_NAME": "claude-3-7-sonnet",
+  "LLM_PROVIDER": "openai_claude"
+}
+```
+
+`openai_claude` 和 `openai` 都会走 OpenAI 兼容协议；前者只是专门给 Claude 中转站准备的显式选项。
+
 如果你使用 Claude 原生接口，再把 `LLM_PROVIDER` 改成 `anthropic`。
 
 ### 第 5 步：重新运行 exe
@@ -155,7 +167,7 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 | `LLM_API_KEY` | 模型服务密钥 | 必填 |
 | `LLM_API_BASE_URL` | 模型接口地址 | OpenAI 兼容接口一般都以 `/v1` 结尾 |
 | `LLM_MODEL_NAME` | 具体模型名 | 例如 `gpt-4`、`MiniMax-M2.5` |
-| `LLM_PROVIDER` | 提供商类型 | OpenAI 兼容接口填 `openai` |
+| `LLM_PROVIDER` | 提供商类型 | OpenAI 兼容接口填 `openai`；Claude 中转站可选 `openai_claude`；Claude 原生接口填 `anthropic` |
 | `BUFFER_SIZE` | 每轮分析采样点数 | 一般不要乱改，先用默认 |
 | `MIN_ERROR_THRESHOLD` | 判定足够接近目标的阈值 | 先用默认 |
 | `MAX_TUNING_ROUNDS` | 最大调参轮数 | 新手保持默认 |
@@ -186,6 +198,7 @@ $env:LLM_PROVIDER="openai"
 | OpenAI | `https://api.openai.com/v1` | `openai` | 最省心 |
 | DeepSeek 兼容接口 | 对应服务商的 `/v1` 地址 | `openai` | 常见且便宜 |
 | MiniMax 兼容接口 | 对应服务商的 `/v1` 地址 | `openai` | 推理能力适合调参 |
+| Claude 中转站 / OneAPI / New API | 对应服务商的 `/v1` 地址 | `openai_claude` | Claude 模型走 OpenAI 兼容协议时用这个最直观 |
 | Ollama | `http://localhost:11434/v1` | `openai` | 本地免费部署 |
 | LM Studio | `http://localhost:1234/v1` | `openai` | 本地可视化较友好 |
 | Anthropic Claude | `https://api.anthropic.com` | `anthropic` | 原生接口用这个 |
@@ -297,6 +310,7 @@ python system_id.py --file sample_step.csv
 - `LLM_API_BASE_URL` 写错
 - 模型名写错
 - 你用的是 OpenAI 兼容接口，但 `LLM_PROVIDER` 填成了 `anthropic`
+- 你用的是 Claude 中转站，但把它当成了 Anthropic 原生接口；这时应该用 `openai_claude` 或 `openai`
 - 服务端虽然可用，但返回 JSON 风格不稳定
 
 ### 5）调着调着结果变差怎么办

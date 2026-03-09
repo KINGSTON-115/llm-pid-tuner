@@ -94,6 +94,18 @@ Example:
 }
 ```
 
+If you use Claude through an OpenAI-compatible relay such as OneAPI or New API, you can now make that explicit:
+
+```json
+{
+  "LLM_API_BASE_URL": "https://your-relay.example.com/v1",
+  "LLM_MODEL_NAME": "claude-3-7-sonnet",
+  "LLM_PROVIDER": "openai_claude"
+}
+```
+
+Both `openai` and `openai_claude` use the OpenAI-compatible transport. `openai_claude` is just the clearer choice for Claude relays.
+
 For native Claude APIs, use `LLM_PROVIDER: "anthropic"`.
 
 ### 5. Run it again
@@ -126,7 +138,7 @@ In practice, this means the tool tries to be useful on real hardware, not just a
 | `LLM_API_KEY` | Model API key | Required |
 | `LLM_API_BASE_URL` | API base URL | OpenAI-compatible endpoints usually end with `/v1` |
 | `LLM_MODEL_NAME` | Model name | Example: `gpt-4`, `MiniMax-M2.5` |
-| `LLM_PROVIDER` | Provider type | Use `openai` for OpenAI-compatible APIs |
+| `LLM_PROVIDER` | Provider type | Use `openai` for OpenAI-compatible APIs, `openai_claude` for Claude relays, and `anthropic` for native Claude APIs |
 | `BUFFER_SIZE` | Samples per tuning round | Keep the default first |
 | `MAX_TUNING_ROUNDS` | Maximum rounds | Keep the default first |
 
@@ -141,6 +153,7 @@ Environment variables are also supported and override `config.json`, but beginne
 | OpenAI | `https://api.openai.com/v1` | `openai` |
 | MiniMax-compatible | provider `/v1` URL | `openai` |
 | DeepSeek-compatible | provider `/v1` URL | `openai` |
+| Claude relay / OneAPI / New API | provider `/v1` URL | `openai_claude` |
 | Ollama | `http://localhost:11434/v1` | `openai` |
 | LM Studio | `http://localhost:1234/v1` | `openai` |
 | Anthropic Claude | `https://api.anthropic.com` | `anthropic` |

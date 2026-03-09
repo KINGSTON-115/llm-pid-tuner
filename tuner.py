@@ -61,22 +61,6 @@ CONFIG = {
 
 CONFIG_PATH = "config.json"
 
-SERIAL_PORT = CONFIG["SERIAL_PORT"]
-BAUD_RATE = CONFIG["BAUD_RATE"]
-API_KEY = CONFIG["LLM_API_KEY"]
-API_BASE_URL = CONFIG["LLM_API_BASE_URL"]
-MODEL_NAME = CONFIG["LLM_MODEL_NAME"]
-LLM_PROVIDER = CONFIG["LLM_PROVIDER"]
-BUFFER_SIZE = CONFIG["BUFFER_SIZE"]
-MIN_ERROR_THRESHOLD = CONFIG["MIN_ERROR_THRESHOLD"]
-MAX_TUNING_ROUNDS = CONFIG["MAX_TUNING_ROUNDS"]
-LLM_REQUEST_TIMEOUT = CONFIG["LLM_REQUEST_TIMEOUT"]
-LLM_DEBUG_OUTPUT = CONFIG["LLM_DEBUG_OUTPUT"]
-GOOD_ENOUGH_AVG_ERROR = CONFIG["GOOD_ENOUGH_AVG_ERROR"]
-GOOD_ENOUGH_STEADY_STATE_ERROR = CONFIG["GOOD_ENOUGH_STEADY_STATE_ERROR"]
-GOOD_ENOUGH_OVERSHOOT = CONFIG["GOOD_ENOUGH_OVERSHOOT"]
-REQUIRED_STABLE_ROUNDS = CONFIG["REQUIRED_STABLE_ROUNDS"]
-
 def _parse_env_value(default_value: Any, raw_value: str) -> Any:
     if isinstance(default_value, bool):
         return raw_value.strip().lower() in {"1", "true", "yes", "on"}
@@ -124,26 +108,23 @@ def load_config(create_if_missing: bool = True, verbose: bool = True):
                     print(f"[WARN] 环境变量 {key} 值无效，已忽略。")
 
 def apply_runtime_config():
-    global SERIAL_PORT, BAUD_RATE, API_KEY, API_BASE_URL, MODEL_NAME
-    global LLM_PROVIDER, BUFFER_SIZE, MIN_ERROR_THRESHOLD, MAX_TUNING_ROUNDS
-    global LLM_REQUEST_TIMEOUT, LLM_DEBUG_OUTPUT
-    global GOOD_ENOUGH_AVG_ERROR, GOOD_ENOUGH_STEADY_STATE_ERROR, GOOD_ENOUGH_OVERSHOOT, REQUIRED_STABLE_ROUNDS
-
-    SERIAL_PORT = CONFIG["SERIAL_PORT"]
-    BAUD_RATE = CONFIG["BAUD_RATE"]
-    API_KEY = CONFIG["LLM_API_KEY"]
-    API_BASE_URL = CONFIG["LLM_API_BASE_URL"]
-    MODEL_NAME = CONFIG["LLM_MODEL_NAME"]
-    LLM_PROVIDER = CONFIG["LLM_PROVIDER"]
-    BUFFER_SIZE = CONFIG["BUFFER_SIZE"]
-    MIN_ERROR_THRESHOLD = CONFIG["MIN_ERROR_THRESHOLD"]
-    MAX_TUNING_ROUNDS = CONFIG["MAX_TUNING_ROUNDS"]
-    LLM_REQUEST_TIMEOUT = CONFIG["LLM_REQUEST_TIMEOUT"]
-    LLM_DEBUG_OUTPUT = CONFIG["LLM_DEBUG_OUTPUT"]
-    GOOD_ENOUGH_AVG_ERROR = CONFIG["GOOD_ENOUGH_AVG_ERROR"]
-    GOOD_ENOUGH_STEADY_STATE_ERROR = CONFIG["GOOD_ENOUGH_STEADY_STATE_ERROR"]
-    GOOD_ENOUGH_OVERSHOOT = CONFIG["GOOD_ENOUGH_OVERSHOOT"]
-    REQUIRED_STABLE_ROUNDS = CONFIG["REQUIRED_STABLE_ROUNDS"]
+    globals().update(
+        SERIAL_PORT=CONFIG["SERIAL_PORT"],
+        BAUD_RATE=CONFIG["BAUD_RATE"],
+        API_KEY=CONFIG["LLM_API_KEY"],
+        API_BASE_URL=CONFIG["LLM_API_BASE_URL"],
+        MODEL_NAME=CONFIG["LLM_MODEL_NAME"],
+        LLM_PROVIDER=CONFIG["LLM_PROVIDER"],
+        BUFFER_SIZE=CONFIG["BUFFER_SIZE"],
+        MIN_ERROR_THRESHOLD=CONFIG["MIN_ERROR_THRESHOLD"],
+        MAX_TUNING_ROUNDS=CONFIG["MAX_TUNING_ROUNDS"],
+        LLM_REQUEST_TIMEOUT=CONFIG["LLM_REQUEST_TIMEOUT"],
+        LLM_DEBUG_OUTPUT=CONFIG["LLM_DEBUG_OUTPUT"],
+        GOOD_ENOUGH_AVG_ERROR=CONFIG["GOOD_ENOUGH_AVG_ERROR"],
+        GOOD_ENOUGH_STEADY_STATE_ERROR=CONFIG["GOOD_ENOUGH_STEADY_STATE_ERROR"],
+        GOOD_ENOUGH_OVERSHOOT=CONFIG["GOOD_ENOUGH_OVERSHOOT"],
+        REQUIRED_STABLE_ROUNDS=CONFIG["REQUIRED_STABLE_ROUNDS"],
+    )
 
 def initialize_runtime_config(create_if_missing: bool = True, verbose: bool = True):
     load_config(create_if_missing=create_if_missing, verbose=verbose)
@@ -325,28 +306,48 @@ class AdvancedDataBuffer:
 class LLMTuner:
     def __init__(self, api_key: str, base_url: str, model: str, provider: str = "openai"):
         self.api_key = api_key
-        self.base_url = base_url
+        self.base_url = (base_url or "").rstrip("/")
         self.model = model
-        self.provider = (provider or "openai").lower()
-        
-        # 自动识别 provider
-        if self.provider == "anthropic" or "anthropic" in base_url.lower() or "claude" in model.lower():
-            self.provider = "anthropic"
-        else:
-            self.provider = "openai"
+        self.provider_choice = self._normalize_provider_choice(provider)
+        self.provider = self._resolve_transport()
 
         try:
             if self.provider == "openai":
                 import openai
-                self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+                self.client = openai.OpenAI(api_key=api_key, base_url=self.base_url)
             elif self.provider == "anthropic":
                 import anthropic
-                self.client = anthropic.Anthropic(api_key=api_key, base_url=base_url)
+                self.client = anthropic.Anthropic(api_key=api_key, base_url=self.base_url)
         except ImportError:
             self.requests = self._import_requests()
             self.use_sdk = False
         else:
             self.use_sdk = True
+
+    @staticmethod
+    def _normalize_provider_choice(provider: Optional[str]) -> str:
+        provider_choice = str(provider or "").strip().lower()
+        provider_choice = provider_choice.replace("-", "_").replace(" ", "_")
+        return provider_choice or "openai"
+
+    def _resolve_transport(self) -> str:
+        if self.provider_choice in (
+            "openai",
+            "openai_compat",
+            "openai_compatible",
+            "openai_claude",
+            "claude_openai",
+            "claude_relay",
+        ):
+            return "openai"
+        if self.provider_choice in ("anthropic", "anthropic_native", "claude_native"):
+            return "anthropic"
+
+        base_url_lower = self.base_url.lower()
+        if self.provider_choice == "auto" and "api.anthropic.com" in base_url_lower:
+            return "anthropic"
+
+        return "openai"
 
     def _import_requests(self):
         import requests
