@@ -2,7 +2,7 @@
 
 This document is for maintainers, contributors, and anyone who wants a quick understanding of the project internals.
 
-If you just want to use the packaged build, start with [README_EN.md](../../README_EN.md).
+If you just want to use the packaged build, start with [README.md](README.md).
 
 ## 1. Project Goals
 
@@ -183,4 +183,3 @@ If you are handing this project to someone unfamiliar with Python, PID, or seria
 - [RELEASE_NOTES.md](RELEASE_NOTES.md)
 
 Both documents are written in the order: download the exe first, then configure, then connect hardware.
-`
