@@ -24,17 +24,17 @@ DEFAULT_PID_LIMITS: Dict[str, Dict[str, float]] = {
 }
 
 DEFAULT_CONVERGENCE_RULES: Dict[str, float] = {
-    "avg_error_threshold": 1.2,
+    "avg_error_threshold"         : 1.2,
     "steady_state_error_threshold": 0.3,
-    "overshoot_threshold": 2.0,
+    "overshoot_threshold"         : 2.0,
 }
 
 DEFAULT_ROLLBACK_RULES: Dict[str, float] = {
-    "avg_error_ratio": 1.5,
-    "avg_error_margin": 0.5,
-    "steady_state_error_ratio": 1.8,
+    "avg_error_ratio"          : 1.5,
+    "avg_error_margin"         : 0.5,
+    "steady_state_error_ratio" : 1.8,
     "steady_state_error_margin": 0.25,
-    "overshoot_margin": 1.0,
+    "overshoot_margin"         : 1.0,
 }
 
 
@@ -129,14 +129,14 @@ def build_fallback_suggestion(current_pid: Dict[str, float], metrics: Dict[str, 
 
     return {
         "analysis_summary": f"LLM 不可用，已启用保守兜底：{summary}",
-        "thought_process": "基于控制基础规则生成保守建议，仅用于兜底，不替代正常 LLM 调参。",
-        "tuning_action": action,
-        "p": safe_pid["p"],
-        "i": safe_pid["i"],
-        "d": safe_pid["d"],
-        "status": "TUNING",
-        "guardrail_notes": notes,
-        "fallback_used": True,
+        "thought_process" : "基于控制基础规则生成保守建议，仅用于兜底，不替代正常 LLM 调参。",
+        "tuning_action"   : action,
+        "p"               : safe_pid["p"],
+        "i"               : safe_pid["i"],
+        "d"               : safe_pid["d"],
+        "status"          : "TUNING",
+        "guardrail_notes" : notes,
+        "fallback_used"   : True,
     }
 
 
