@@ -24,6 +24,7 @@ import re
 import sys
 import os
 import math
+import traceback
 from collections import deque
 from typing import Optional, List, Dict, Any
 
@@ -366,7 +367,13 @@ class LLMTuner:
                 self.client = anthropic.Anthropic(
                     api_key=api_key, base_url=self.base_url
                 )
-        except (ImportError, Exception):
+        except ImportError:
+            # SDK 未安装或导入失败：回退到 requests
+            self.requests = self._import_requests()
+        except Exception:
+            # 其他初始化错误：调试模式下打印堆栈，然后回退
+            if self.debug_output:
+                traceback.print_exc()
             self.requests = self._import_requests()
         else:
             self.use_sdk = True

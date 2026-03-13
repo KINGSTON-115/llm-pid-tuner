@@ -61,7 +61,15 @@ def normalize_time_axis(time_data: List[float]) -> List[float]:
             if normalized[i] >= normalized[i - 1]
         ]
         avg_delta = sum(deltas) / len(deltas) if deltas else 0.0
+        # 检测时间单位是否可能为毫秒:
+        # 平均采样间隔大于 10
+        # 时间轴最大值大于 1000
+        is_milliseconds = False
         if avg_delta > 10.0:
+            is_milliseconds = True
+        elif max(normalized) > 1000.0:
+            is_milliseconds = True
+        if is_milliseconds:
             normalized = [value / 1000.0 for value in normalized]
 
     origin = normalized[0]

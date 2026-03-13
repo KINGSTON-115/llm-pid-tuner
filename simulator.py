@@ -17,11 +17,9 @@ import time
 import sys
 import random
 
-# 导入增强版调参器组件（必须在配置之前，以便读取 config.json）
+# 导入增强版调参器组件
 try:
     import tuner as _tuner_mod
-
-    _tuner_mod.initialize_runtime_config(create_if_missing=True, verbose=True)
     from tuner import LLMTuner, AdvancedDataBuffer, TuningHistory, CONFIG
     from pid_safety import (
         apply_pid_guardrails,
@@ -34,6 +32,27 @@ try:
 except ImportError:
     print("[ERROR] 找不到 tuner.py，请确保文件存在")
     sys.exit(1)
+
+
+def ensure_runtime_config(
+    verbose: bool = False, create_if_missing: bool = True
+) -> None:
+    """
+    确保运行时配置已初始化。
+
+    默认情况下:
+    - create_if_missing=True: 若 config.json 不存在则创建默认配置;
+    - verbose=False: 避免被其他模块导入时产生多余的 stdout 输出。
+
+    该函数可安全地多次调用。
+    """
+    _tuner_mod.initialize_runtime_config(
+        create_if_missing=create_if_missing, verbose=verbose
+    )
+
+
+# 导入时静默初始化，供 benchmark 等调用方使用
+ensure_runtime_config(verbose=False)
 
 # ============================================================================
 # 配置（从 config.json / 环境变量读取，优先级：环境变量 > config.json > 默认值）
@@ -57,8 +76,6 @@ REQUIRED_STABLE_ROUNDS = CONFIG["REQUIRED_STABLE_ROUNDS"]
 
 SETPOINT     = 200.0  # 目标温度
 INITIAL_TEMP = 20.0   # 初始温度
-                      # 初始 PID
-kp, ki, kd = 1.0, 0.1, 0.05
 
 # ============================================================================
 # 仿真模型 (内置)
@@ -142,6 +159,7 @@ class HeatingSimulator:
 
 
 def run_simulation():
+    ensure_runtime_config(verbose=True)  # 直接运行时显示配置加载信息
     print("=" * 60)
     print("  LLM PID Tuner PRO - 仿真测试")
     print("=" * 60)

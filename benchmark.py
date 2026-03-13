@@ -17,7 +17,7 @@ import random
 import time
 from typing import Any, Dict, List
 
-import simulator  # 同时触发 tuner.initialize_runtime_config，填充 CONFIG
+import simulator  # 用于模拟加热系统和随机性
 from pid_safety import (
     DEFAULT_CONVERGENCE_RULES,
     apply_pid_guardrails,
@@ -27,7 +27,7 @@ from pid_safety import (
     pid_equals,
     should_rollback_to_best,
 )
-from tuner import AdvancedDataBuffer, CONFIG, LLMTuner, TuningHistory
+from tuner import AdvancedDataBuffer, CONFIG, LLMTuner, TuningHistory, initialize_runtime_config
 
 
 DEFAULT_CASES = ("baseline", "fallback", "llm")
@@ -208,6 +208,8 @@ def print_summary(results: List[Dict[str, Any]]):
 
 
 def main():
+    # 显式初始化调参运行时配置，而不是依赖 simulator 的导入副作用
+    initialize_runtime_config(verbose=False)
     parser = argparse.ArgumentParser(description="LLM PID 调参 benchmark")
     parser.add_argument(
         "--cases",

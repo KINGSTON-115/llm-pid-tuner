@@ -230,18 +230,32 @@ void sendDataToSerial() {
 void processSerialCommand() {
     // 静态缓冲区：逐字节非阻塞积累，避免 readStringUntil() 阻塞控制循环
     static char    cmd_buf[80];
-    static uint8_t cmd_len = 0;
+    static uint8_t cmd_len      = 0;
+    static bool    cmd_overflow = false;  // 标记本行是否发生缓冲区溢出
 
     while (Serial.available()) {
         char c = (char)Serial.read();
         if (c == '\r') continue;               // 兼容 Windows CRLF
         if (c != '\n') {
-            if (cmd_len < sizeof(cmd_buf) - 1) // 防缓冲区溢出，超长字节静默丢弃
-                cmd_buf[cmd_len++] = c;
+            if (!cmd_overflow) {
+                if (cmd_len < sizeof(cmd_buf) - 1) {
+                    cmd_buf[cmd_len++] = c;
+                } else {
+                    cmd_overflow = true;  // 缓冲区满，标记溢出，后续直到换行都丢弃
+                }
+            }
             continue;
         }
 
-        // 收到换行符 —— 处理完整命令行
+        // 收到换行符 —— 如果发生过溢出，则整行丢弃并报错
+        if (cmd_overflow) {
+            cmd_len     = 0;
+            cmd_overflow = false;
+            Serial.println(F("# ERROR: command too long"));
+            continue;
+        }
+
+        // 处理完整命令行
         cmd_buf[cmd_len] = '\0';
         cmd_len = 0;
         if (cmd_buf[0] == '\0') continue;      // 空行跳过
