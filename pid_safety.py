@@ -19,8 +19,8 @@ PID_KEYS = ("p", "i", "d")
 
 DEFAULT_PID_LIMITS: Dict[str, Dict[str, float]] = {
     "p": {"min": 0.0, "max": 100.0, "max_increase_ratio": 3.0},
-    "i": {"min": 0.0, "max": 30.0, "max_increase_ratio": 4.0},
-    "d": {"min": 0.0, "max": 20.0, "max_increase_ratio": 4.0},
+    "i": {"min": 0.0, "max":  30.0, "max_increase_ratio": 4.0},
+    "d": {"min": 0.0, "max":  20.0, "max_increase_ratio": 4.0},
 }
 
 DEFAULT_CONVERGENCE_RULES: Dict[str, float] = {
@@ -49,20 +49,20 @@ def _to_float(value: Any, fallback: float) -> float:
 
 
 def apply_pid_guardrails(
-    current_pid: Dict[str, float],
+    current_pid  : Dict[str, float],
     candidate_pid: Dict[str, Any],
-    limits: Dict[str, Dict[str, float]] | None = None,
+    limits       : Dict[str, Dict[str, float]] | None = None,
 ) -> Tuple[Dict[str, float], List[str]]:
     """将候选 PID 参数裁剪到安全范围内。"""
-    limits = limits or DEFAULT_PID_LIMITS
+    limits   = limits or DEFAULT_PID_LIMITS
     sanitized: Dict[str, float] = {}
-    notes: List[str] = []
+    notes    : List[str]        = []
 
     for key in PID_KEYS:
         current_value = max(0.0, _to_float(current_pid.get(key, 0.0), 0.0))
-        raw_value = _to_float(candidate_pid.get(key, current_value), current_value)
+        raw_value     = _to_float(candidate_pid.get(key, current_value), current_value)
 
-        cfg = limits.get(key, DEFAULT_PID_LIMITS[key])
+        cfg           = limits.get(key, DEFAULT_PID_LIMITS[key])
         bounded_value = max(cfg["min"], min(cfg["max"], raw_value))
 
         max_increase_ratio = max(1.0, cfg.get("max_increase_ratio", 1.0))
@@ -92,38 +92,38 @@ def build_fallback_suggestion(current_pid: Dict[str, float], metrics: Dict[str, 
         "d": current_pid.get("d", 0.05),
     }
 
-    status = str(metrics.get("status", "UNKNOWN")).upper()
-    overshoot = float(metrics.get("overshoot", 0.0) or 0.0)
+    status             = str(metrics.get("status", "UNKNOWN")).upper()
+    overshoot          = float(metrics.get("overshoot", 0.0) or 0.0)
     steady_state_error = float(metrics.get("steady_state_error", 0.0) or 0.0)
-    avg_error = float(metrics.get("avg_error", 0.0) or 0.0)
+    avg_error          = float(metrics.get("avg_error", 0.0) or 0.0)
 
     if status == "OSCILLATING":
         proposal["p"] *= 0.80
         proposal["i"] *= 0.85
         proposal["d"] *= 1.20
-        action = "DAMP_OSCILLATION"
-        summary = "检测到震荡，保守降低 P/I 并增加 D。"
+        action         = "DAMP_OSCILLATION"
+        summary        = "检测到震荡，保守降低 P/I 并增加 D。"
     elif status == "OVERSHOOTING" or overshoot > 5.0:
         proposal["p"] *= 0.85
         proposal["i"] *= 0.90
         proposal["d"] *= 1.15
-        action = "REDUCE_OVERSHOOT"
-        summary = "检测到超调，优先降低 P/I 并增加阻尼。"
+        action         = "REDUCE_OVERSHOOT"
+        summary        = "检测到超调，优先降低 P/I 并增加阻尼。"
     elif status == "SLOW_RESPONSE":
         proposal["p"] *= 1.25
         if steady_state_error > max(1.0, avg_error * 0.5):
             proposal["i"] *= 1.20
-        action = "BOOST_RESPONSE"
-        summary = "响应偏慢，适度增加 P，并在稳态误差偏大时增加 I。"
+        action         = "BOOST_RESPONSE"
+        summary        = "响应偏慢，适度增加 P，并在稳态误差偏大时增加 I。"
     elif steady_state_error > 1.0:
         proposal["i"] *= 1.15
-        action = "REDUCE_STEADY_ERROR"
-        summary = "系统基本稳定但仍有稳态误差，微增 I。"
+        action         = "REDUCE_STEADY_ERROR"
+        summary        = "系统基本稳定但仍有稳态误差，微增 I。"
     else:
         proposal["p"] *= 1.05
         proposal["i"] *= 1.05
-        action = "FINE_TUNE"
-        summary = "进入细调阶段，做小步修正。"
+        action         = "FINE_TUNE"
+        summary        = "进入细调阶段，做小步修正。"
 
     safe_pid, notes = apply_pid_guardrails(current_pid, proposal)
 
@@ -146,10 +146,10 @@ def pid_equals(left: Dict[str, float], right: Dict[str, float], tolerance: float
 
 def score_metrics(metrics: Dict[str, float]) -> float:
     """将控制表现压缩成一个可比较的分数，越低越好。"""
-    avg_error = float(metrics.get("avg_error", 1e9) or 1e9)
+    avg_error          = float(metrics.get("avg_error", 1e9) or 1e9)
     steady_state_error = float(metrics.get("steady_state_error", 1e9) or 1e9)
-    overshoot = float(metrics.get("overshoot", 1e9) or 1e9)
-    status = str(metrics.get("status", "UNKNOWN")).upper()
+    overshoot          = float(metrics.get("overshoot", 1e9) or 1e9)
+    status             = str(metrics.get("status", "UNKNOWN")).upper()
 
     status_penalty = 0.0
     if status == "OVERSHOOTING":
@@ -168,17 +168,17 @@ def is_better_metrics(candidate: Dict[str, float], baseline: Dict[str, float], e
 
 def maybe_update_best_result(
     best_result: Dict[str, Any] | None,
-    pid: Dict[str, float],
-    metrics: Dict[str, float],
-    round_num: int,
+    pid        : Dict[str, float],
+    metrics    : Dict[str, float],
+    round_num  : int,
 ) -> Dict[str, Any] | None:
     """只记录稳定状态下的最佳 PID，避免回滚到坏参数。"""
     if str(metrics.get("status", "UNKNOWN")).upper() != "STABLE":
         return best_result
 
     candidate = {
-        "round": round_num,
-        "pid": {key: float(pid.get(key, 0.0)) for key in PID_KEYS},
+        "round"  : round_num,
+        "pid"    : {key: float(pid.get(key, 0.0)) for key in PID_KEYS},
         "metrics": dict(metrics),
     }
 
@@ -189,24 +189,24 @@ def maybe_update_best_result(
 
 def is_good_enough(metrics: Dict[str, float], rules: Dict[str, float] | None = None) -> bool:
     """判断系统是否已经达到“用户可接受”的稳定状态。"""
-    rules = rules or DEFAULT_CONVERGENCE_RULES
-    status = str(metrics.get("status", "UNKNOWN")).upper()
-    avg_error = float(metrics.get("avg_error", float("inf")) or float("inf"))
+    rules              = rules or DEFAULT_CONVERGENCE_RULES
+    status             = str(metrics.get("status", "UNKNOWN")).upper()
+    avg_error          = float(metrics.get("avg_error", float("inf")) or float("inf"))
     steady_state_error = float(metrics.get("steady_state_error", float("inf")) or float("inf"))
-    overshoot = float(metrics.get("overshoot", float("inf")) or float("inf"))
+    overshoot          = float(metrics.get("overshoot", float("inf")) or float("inf"))
 
     return (
         status == "STABLE"
-        and avg_error <= rules["avg_error_threshold"]
+        and avg_error          <= rules["avg_error_threshold"]
         and steady_state_error <= rules["steady_state_error_threshold"]
-        and overshoot <= rules["overshoot_threshold"]
+        and overshoot          <= rules["overshoot_threshold"]
     )
 
 
 def should_rollback_to_best(
     current_metrics: Dict[str, float],
-    best_metrics: Dict[str, float],
-    rules: Dict[str, float] | None = None,
+    best_metrics   : Dict[str, float],
+    rules          : Dict[str, float] | None = None,
 ) -> bool:
     """当前表现明显劣化时，建议回滚到历史最佳稳定参数。"""
     rules = rules or DEFAULT_ROLLBACK_RULES
@@ -219,14 +219,14 @@ def should_rollback_to_best(
     if best_status == "STABLE" and current_status != "STABLE":
         return True
 
-    current_avg = float(current_metrics.get("avg_error", 1e9) or 1e9)
-    best_avg = float(best_metrics.get("avg_error", 1e9) or 1e9)
-    current_steady = float(current_metrics.get("steady_state_error", 1e9) or 1e9)
-    best_steady = float(best_metrics.get("steady_state_error", 1e9) or 1e9)
+    current_avg       = float(current_metrics.get("avg_error", 1e9) or 1e9)
+    best_avg          = float(best_metrics.get("avg_error", 1e9) or 1e9)
+    current_steady    = float(current_metrics.get("steady_state_error", 1e9) or 1e9)
+    best_steady       = float(best_metrics.get("steady_state_error", 1e9) or 1e9)
     current_overshoot = float(current_metrics.get("overshoot", 1e9) or 1e9)
-    best_overshoot = float(best_metrics.get("overshoot", 1e9) or 1e9)
+    best_overshoot    = float(best_metrics.get("overshoot", 1e9) or 1e9)
 
-    avg_regression = current_avg > max(best_avg * rules["avg_error_ratio"], best_avg + rules["avg_error_margin"])
+    avg_regression    = current_avg > max(best_avg * rules["avg_error_ratio"], best_avg + rules["avg_error_margin"])
     steady_regression = current_steady > max(
         best_steady * rules["steady_state_error_ratio"],
         best_steady + rules["steady_state_error_margin"],

@@ -7,20 +7,19 @@ simulator.py - 增强版 PID 调参模拟器 (PRO)
 
 功能：
 1. 使用 core/llm 子包中的增强逻辑 (History-Aware, CoT, Advanced Metrics)
-2. 运行 HeatingSimulator 物理模型（将在 Phase 2 迁移至 simulation/model.py）
+2. 运行 sim/model.py 中的 HeatingSimulator 物理模型
 3. 生成对比报告
 
 ===============================================================================
 """
 
-import random
 import time
-import sys
 
 from core.config import CONFIG, initialize_runtime_config
 from core.buffer import AdvancedDataBuffer
 from core.history import TuningHistory
 from llm.client import LLMTuner
+from sim.model import HeatingSimulator, SETPOINT
 from pid_safety import (
     apply_pid_guardrails,
     build_fallback_suggestion,
@@ -46,91 +45,8 @@ def ensure_runtime_config(
     initialize_runtime_config(create_if_missing=create_if_missing, verbose=verbose)
 
 
-# 导入时静默初始化，供 benchmark 等调用方使用
-ensure_runtime_config(verbose=False)
-
-# ============================================================================
-# 配置（从 config.json / 环境变量读取，优先级：环境变量 > config.json > 默认值）
-# ============================================================================
-
-CONTROL_INTERVAL = 0.2    # 仿真步长 (200ms)，固定物理参数，不走配置
-SETPOINT         = 200.0  # 目标温度
-INITIAL_TEMP     = 20.0   # 初始温度
-
-# ============================================================================
-# 仿真模型（将在 Phase 2 迁移至 simulation/model.py）
-# ============================================================================
-
-
-class HeatingSimulator:
-    """加热系统仿真器 (更真实的物理模型)"""
-
-    def __init__(self, kp: float = 1.0, ki: float = 0.1, kd: float = 0.05):
-        self.temp       = INITIAL_TEMP
-        self.pwm        = 0
-        self.setpoint   = SETPOINT
-        self.integral   = 0.0
-        self.prev_error = 0.0
-        self.timestamp  = 0
-        self.kp         = kp
-        self.ki         = ki
-        self.kd         = kd
-
-        # 二阶系统参数
-        self.heater_temp   = INITIAL_TEMP  # 加热器温度
-        self.ambient_temp  = INITIAL_TEMP  # 环境温度
-        self.heater_coeff  = 300.0         # 加热器加热系数
-        self.heat_transfer = 0.5           # 加热器到物体的传热系数
-        self.cooling_coeff = 0.05          # 向环境散热系数 (略微降低以模拟保温)
-        self.noise_level   = 0.1           # 传感器噪声
-
-    def set_pid(self, kp: float, ki: float, kd: float):
-        """更新 PID 参数"""
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-
-    def compute_pid(self):
-        """计算 PID 输出"""
-        error = self.setpoint - self.temp
-        self.integral += error * CONTROL_INTERVAL
-        self.integral = max(-500, min(500, self.integral))  # 抗饱和
-        derivative = (error - self.prev_error) / CONTROL_INTERVAL
-
-        pid_output = self.kp * error + self.ki * self.integral + self.kd * derivative
-
-        self.pwm = max(0, min(255, pid_output))  # 仿真限制在 0-255
-        self.prev_error = error
-
-    def update(self):
-        """更新温度状态"""
-        # 1. 加热器升温
-        target_heater_temp = self.ambient_temp + (self.pwm / 255.0) * self.heater_coeff
-        self.heater_temp += (
-            (target_heater_temp - self.heater_temp) * 0.1 * CONTROL_INTERVAL
-        )
-
-        # 2. 热传递
-        heat_in = (self.heater_temp - self.temp) * self.heat_transfer
-        heat_out = (self.temp - self.ambient_temp) * self.cooling_coeff
-
-        self.temp += (heat_in - heat_out) * CONTROL_INTERVAL
-
-        # 3. 噪声
-        self.temp += random.gauss(0, self.noise_level)
-        self.timestamp += int(CONTROL_INTERVAL * 1000)
-
-    def get_data(self):
-        return {
-            "timestamp": self.timestamp,
-            "setpoint" : self.setpoint,
-            "input"    : self.temp,
-            "pwm"      : self.pwm,
-            "error"    : self.setpoint - self.temp,
-            "p"        : self.kp,
-            "i"        : self.ki,
-            "d"        : self.kd,
-        }
+# 导入时静默初始化：仅读取已有配置，不创建 config.json（避免无写权限时失败）
+ensure_runtime_config(verbose=False, create_if_missing=False)
 
 
 # ============================================================================
@@ -194,9 +110,9 @@ def run_simulation():
                 f"Overshoot={metrics['overshoot']:.1f}%, Status={metrics['status']}"
             )
 
-            current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
+            current_pid   = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
             previous_best = best_result
-            best_result = maybe_update_best_result(
+            best_result   = maybe_update_best_result(
                 best_result, current_pid, metrics, round_num + 1
             )
             if best_result is not None and best_result is not previous_best:
@@ -247,7 +163,7 @@ def run_simulation():
             round_num += 1
 
             # 3. 准备 Prompt
-            prompt_data = buffer.to_prompt_data()
+            prompt_data  = buffer.to_prompt_data()
             history_text = history.to_prompt_text()
 
             # 4. 调用 LLM
@@ -260,8 +176,8 @@ def run_simulation():
 
             if result:
                 analysis = result.get("analysis_summary", "无分析")
-                thought = result.get("thought_process", "无思考过程")
-                action = result.get("tuning_action", "UNKNOWN")
+                thought  = result.get("thought_process", "无思考过程")
+                action   = result.get("tuning_action", "UNKNOWN")
 
                 print(f"  [思考] {thought[:100]}...")
                 print(f"  [分析] {analysis}")

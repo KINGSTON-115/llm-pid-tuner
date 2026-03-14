@@ -6,6 +6,7 @@ tests/test_regression.py - 核心模块回归测试
 2. LLM fallback：无可用 SDK 时 LLMTuner 正常初始化（use_sdk=False），
    _parse_json 能从合法 JSON 字符串中提取参数
 3. AdvancedDataBuffer：基础功能（add / is_full / reset / calculate_advanced_metrics）
+4. HeatingSimulator：物理行为正确性（温度不爆炸、不为负、有效响应）
 """
 
 import sys
@@ -19,6 +20,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.config import CONFIG, load_config
 from core.buffer import AdvancedDataBuffer
 from llm.client import LLMTuner
+from sim.model import (
+    HeatingSimulator,
+    CONTROL_INTERVAL,
+    INITIAL_TEMP,
+    SETPOINT,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +165,73 @@ class BufferTests(unittest.TestCase):
     def test_metrics_empty_when_no_data(self):
         buf = AdvancedDataBuffer(max_size=10)
         self.assertEqual(buf.calculate_advanced_metrics(), {})
+
+
+# ---------------------------------------------------------------------------
+# 4. HeatingSimulator 物理行为
+# ---------------------------------------------------------------------------
+
+
+class SimulatorStepTests(unittest.TestCase):
+    def setUp(self):
+        # 固定随机种子，使物理行为测试可重复
+        import random
+
+        random.seed(0)
+
+    def test_constants_reasonable(self):
+        """物理常量应在合理范围内"""
+        self.assertGreater(SETPOINT, 0)
+        self.assertGreater(INITIAL_TEMP, 0)
+        self.assertLess(INITIAL_TEMP, SETPOINT)
+        self.assertGreater(CONTROL_INTERVAL, 0)
+        self.assertLess(CONTROL_INTERVAL, 1.0)
+
+    def test_temp_increases_with_full_pwm(self):
+        """全功率加热 50 步后温度应高于初始值"""
+        sim = HeatingSimulator(kp=10.0, ki=0.0, kd=0.0)
+        # 强制 pwm 全满，绕过 PID
+        sim.pwm = 255.0
+        for _ in range(50):
+            sim.update()
+        self.assertGreater(sim.temp, INITIAL_TEMP + 1.0)
+
+    def test_temp_non_negative_after_many_steps(self):
+        """正常 PID 下运行 500 步，温度不应为负"""
+        import random
+
+        random.seed(42)
+        sim = HeatingSimulator(kp=2.0, ki=0.1, kd=0.05)
+        for _ in range(500):
+            sim.compute_pid()
+            sim.update()
+        self.assertGreaterEqual(sim.temp, 0.0)
+
+    def test_temp_does_not_diverge(self):
+        """正常 PID 下运行 500 步，温度不应超出物理上限（600°C）"""
+        import random
+
+        random.seed(42)
+        sim = HeatingSimulator(kp=2.0, ki=0.1, kd=0.05)
+        for _ in range(500):
+            sim.compute_pid()
+            sim.update()
+        self.assertLess(sim.temp, 600.0)
+
+    def test_get_data_returns_required_keys(self):
+        """get_data() 应返回所有必要字段"""
+        sim = HeatingSimulator()
+        data = sim.get_data()
+        for key in ("timestamp", "setpoint", "input", "pwm", "error", "p", "i", "d"):
+            self.assertIn(key, data)
+
+    def test_set_pid_updates_parameters(self):
+        """set_pid() 应正确更新 kp/ki/kd"""
+        sim = HeatingSimulator()
+        sim.set_pid(3.0, 0.5, 0.2)
+        self.assertAlmostEqual(sim.kp, 3.0)
+        self.assertAlmostEqual(sim.ki, 0.5)
+        self.assertAlmostEqual(sim.kd, 0.2)
 
 
 if __name__ == "__main__":

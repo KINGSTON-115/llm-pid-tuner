@@ -17,11 +17,11 @@ import random
 import time
 from typing import Any, Dict, List
 
-import simulator  # Phase 1: HeatingSimulator / SETPOINT 仍在 simulator.py
 from core.config import CONFIG, initialize_runtime_config
 from core.buffer import AdvancedDataBuffer
 from core.history import TuningHistory
 from llm.client import LLMTuner
+from sim.model import HeatingSimulator, SETPOINT
 from pid_safety import (
     DEFAULT_CONVERGENCE_RULES,
     apply_pid_guardrails,
@@ -52,23 +52,22 @@ def run_case(
     case_name: str, rounds: int, seed: int, stop_on_done: bool = True
 ) -> Dict[str, Any]:
     random.seed(seed)
-    simulator.random.seed(seed)
 
-    sim = simulator.HeatingSimulator()
+    sim            = HeatingSimulator()
     sim.set_pid(1.0, 0.1, 0.05)  # 重置为初始 PID
-    history = TuningHistory(max_history=5)
-    llm = create_llm_tuner() if case_name == "llm" else None
+    history        = TuningHistory(max_history=5)
+    llm            = create_llm_tuner() if case_name == "llm" else None
     fallback_count = 0
-    best_result = None
-    records: List[Dict[str, Any]] = []
-    start_time = time.time()
+    best_result    = None
+    records        : List[Dict[str, Any]] = []
+    start_time     = time.time()
     print(f"\n[{case_name}] 开始运行，最多 {rounds} 轮...")
-    rnd_w = len(str(rounds))  # 轮次数字宽度，保证对齐
+    rnd_w          = len(str(rounds))  # 轮次数字宽度，保证对齐
 
     for round_num in range(1, rounds + 1):
         buffer             = AdvancedDataBuffer(max_size=CONFIG["BUFFER_SIZE"])
         buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-        buffer.setpoint    = simulator.SETPOINT
+        buffer.setpoint    = SETPOINT
 
         while not buffer.is_full():
             sim.compute_pid()
