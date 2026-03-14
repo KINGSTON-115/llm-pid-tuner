@@ -7,7 +7,7 @@ simulator.py - 增强版 PID 调参模拟器 (PRO)
 
 功能：
 1. 使用 core/llm 子包中的增强逻辑 (History-Aware, CoT, Advanced Metrics)
-2. 运行 simulation/model.py 中的 HeatingSimulator 物理模型
+2. 运行 sim/model.py 中的 HeatingSimulator 物理模型
 3. 生成对比报告
 
 ===============================================================================
