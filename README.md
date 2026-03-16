@@ -219,55 +219,16 @@ $env:LLM_PROVIDER="openai"
 
 ---
 
-## MATLAB/Simulink 仿真模式（新功能）
+## MATLAB/Simulink 仿真模式
 
 如果你已经有 MATLAB/Simulink 仿真模型，可以直接让 LLM 对你的模型进行 PID 调参，无需真实硬件。
 
-### 前置条件
+在 `config.json` 里填写 `MATLAB_MODEL_PATH`（Simulink `.slx` 文件路径），再运行 `python simulator.py`，程序会自动切换到 MATLAB 模式。
 
-1. 已安装 MATLAB R2021b 或更高版本
-2. 安装 MATLAB Engine API for Python：
-
-```bash
-cd <MATLAB_ROOT>/extern/engines/python
-python setup.py install
-```
-
-3. 你的 Simulink 模型中需要包含：
-   - 一个标准 **PID Controller** 模块（或等效块）
-   - 一个 **To Workspace** 模块，保存格式设为 `Array`，用于输出被控量
-
-### 配置 `config.json`
-
-在 `config.json` 中新增以下字段：
-
-```json
-{
-  "MATLAB_MODEL_PATH"     : "C:/models/my_pid_model.slx",
-  "MATLAB_PID_BLOCK_PATH" : "my_pid_model/PID Controller",
-  "MATLAB_OUTPUT_SIGNAL"  : "y_out",
-  "MATLAB_SIM_STEP_TIME"  : 10.0,
-  "MATLAB_SETPOINT"       : 200.0
-}
-```
-
-| 字段 | 说明 |
-| :--- | :--- |
-| `MATLAB_MODEL_PATH` | Simulink `.slx` 文件的完整路径 |
-| `MATLAB_PID_BLOCK_PATH` | PID 模块在模型中的完整路径，例如 `my_model/PID Controller` |
-| `MATLAB_OUTPUT_SIGNAL` | To Workspace 模块的变量名，例如 `y_out` |
-| `MATLAB_SIM_STEP_TIME` | 每轮调参运行的仿真时长（仿真时间，单位秒） |
-| `MATLAB_SETPOINT` | 调参目标值，需与模型中的 Setpoint 一致 |
-
-### 运行
-
-```bash
-python simulator.py
-```
-
-`MATLAB_MODEL_PATH` 非空时，`simulator.py` 会自动切换到 MATLAB 模式。程序会自动启动 MATLAB Engine，加载你的模型，然后让 LLM 逐轮分析仿真结果并给出 PID 建议，调参逻辑与硬件模式完全一致（包括护栏、回退、最佳参数记录）。
+详细配置步骤、模型准备方法和常见问题，见 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)。
 
 ---
+
 
 ## 如果你还没有硬件，先跑仿真
 

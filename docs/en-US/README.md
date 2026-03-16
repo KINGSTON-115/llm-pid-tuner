@@ -173,55 +173,16 @@ The current runtime is hardened for OpenAI-compatible endpoints and includes a m
 
 ---
 
-## MATLAB/Simulink simulation mode (new)
+## MATLAB/Simulink simulation mode
 
 If you already have a MATLAB/Simulink model, you can tune its PID parameters directly with LLM assistance — no real hardware needed.
 
-### Prerequisites
+Set `MATLAB_MODEL_PATH` in `config.json` to your Simulink `.slx` file path, then run `python simulator.py`. The tool switches to MATLAB mode automatically.
 
-1. MATLAB R2021b or later installed
-2. Install the MATLAB Engine API for Python:
-
-```bash
-cd <MATLAB_ROOT>/extern/engines/python
-python setup.py install
-```
-
-3. Your Simulink model must include:
-   - A standard **PID Controller** block (or equivalent)
-   - A **To Workspace** block with **Save format** set to `Array`, exporting the controlled variable
-
-### Configure `config.json`
-
-Add these fields to your `config.json`:
-
-```json
-{
-  "MATLAB_MODEL_PATH"     : "C:/models/my_pid_model.slx",
-  "MATLAB_PID_BLOCK_PATH" : "my_pid_model/PID Controller",
-  "MATLAB_OUTPUT_SIGNAL"  : "y_out",
-  "MATLAB_SIM_STEP_TIME"  : 10.0,
-  "MATLAB_SETPOINT"       : 200.0
-}
-```
-
-| Field | Description |
-| :--- | :--- |
-| `MATLAB_MODEL_PATH` | Full path to the Simulink `.slx` file |
-| `MATLAB_PID_BLOCK_PATH` | Full block path inside the model, e.g. `my_model/PID Controller` |
-| `MATLAB_OUTPUT_SIGNAL` | To Workspace variable name, e.g. `y_out` |
-| `MATLAB_SIM_STEP_TIME` | Simulation time per tuning round (simulation seconds) |
-| `MATLAB_SETPOINT` | Target value, must match the Setpoint in your model |
-
-### Run
-
-```bash
-python simulator.py
-```
-
-When `MATLAB_MODEL_PATH` is set, `simulator.py` switches to MATLAB mode automatically. It starts a MATLAB Engine, loads your model, and lets the LLM analyze simulation results round by round — the same guardrails, rollback, and best-result tracking as hardware mode.
+For full setup instructions, model requirements, and troubleshooting, see the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
 
 ---
+
 
 ## No hardware yet? Run the simulator first
 
