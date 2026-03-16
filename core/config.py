@@ -35,6 +35,12 @@ CONFIG: dict = {
     "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.3,
     "GOOD_ENOUGH_OVERSHOOT"         : 2.0,
     "REQUIRED_STABLE_ROUNDS"        : 2,
+    # MATLAB/Simulink 模式专属配置（使用 matlab_tuner.py 时填写）
+    "MATLAB_MODEL_PATH"             : "",      # Simulink .slx 文件完整路径
+    "MATLAB_PID_BLOCK_PATH"         : "",      # PID 模块路径，如 "my_model/PID Controller"
+    "MATLAB_OUTPUT_SIGNAL"          : "y_out", # To Workspace 变量名
+    "MATLAB_SIM_STEP_TIME"          : 10.0,    # 每轮仿真时长（仿真秒数）
+    "MATLAB_SETPOINT"               : 200.0,   # 调参目标值
 }
 
 CONFIG_PATH = "config.json"

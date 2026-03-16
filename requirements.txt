@@ -4,3 +4,9 @@ pyserial>=3.5
 # Optional SDKs. If unavailable, the project falls back to raw HTTP requests.
 openai>=1.30.0
 anthropic>=0.34.0
+
+# Optional: MATLAB/Simulink mode (matlab_tuner.py)
+# matlabengine is bundled with MATLAB R2021b+. Install via:
+#   cd <MATLAB_ROOT>/extern/engines/python && python setup.py install
+# See: https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html
+# matlabengine  # do NOT pip install this line directly
