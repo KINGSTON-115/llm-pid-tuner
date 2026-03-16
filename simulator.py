@@ -7,8 +7,9 @@ simulator.py - 增强版 PID 调参模拟器 (PRO)
 
 功能：
 1. 使用 core/llm 子包中的增强逻辑 (History-Aware, CoT, Advanced Metrics)
-2. 运行 sim/model.py 中的 HeatingSimulator 物理模型
-3. 生成对比报告
+2. Python 仿真模式：运行 sim/model.py 中的 HeatingSimulator 物理模型
+3. MATLAB 仿真模式：通过 sim/matlab_bridge.py 驱动 Simulink 模型
+   （当 config.json 中 MATLAB_MODEL_PATH 非空时自动启用）
 
 ===============================================================================
 """
@@ -50,19 +51,39 @@ ensure_runtime_config(verbose=False, create_if_missing=False)
 
 
 # ============================================================================
-# 模拟主程序
+# 通用调参主循环
 # ============================================================================
 
 
-def run_simulation():
-    ensure_runtime_config(verbose=True)  # 直接运行时显示配置加载信息
-    print("=" * 60)
-    print("  LLM PID Tuner PRO - 仿真测试")
-    print("=" * 60)
-    print(f"目标: {SETPOINT}, 模型: {CONFIG['LLM_MODEL_NAME']}")
+def _collect_data(sim, buffer: AdvancedDataBuffer) -> int:
+    """
+    向 buffer 填充数据直到满，返回采集步数。
 
-    # 初始化组件
-    sim   = HeatingSimulator()
+    支持两种 adapter：
+    - HeatingSimulator：每步调用 compute_pid() + update() + get_data() 返回单条
+    - MatlabBridge：每步调用 run_step() + get_data() 返回多条
+    """
+    steps = 0
+    while not buffer.is_full():
+        if hasattr(sim, "compute_pid"):
+            # Python 仿真模式
+            sim.compute_pid()
+            sim.update()
+            buffer.add(sim.get_data())
+            steps += 1
+        else:
+            # MATLAB 模式
+            sim.run_step()
+            for data in sim.get_data():
+                buffer.add(data)
+                steps += 1
+                if buffer.is_full():
+                    break
+    return steps
+
+
+def _run_tuning_loop(sim, setpoint: float, mode_label: str) -> None:
+    """通用调参主循环，对 HeatingSimulator 和 MatlabBridge 均适用。"""
     tuner = LLMTuner(
         CONFIG["LLM_API_KEY"],
         CONFIG["LLM_API_BASE_URL"],
@@ -83,25 +104,15 @@ def run_simulation():
     best_result   = None
     start_time    = time.time()
 
-    # 设置初始 PID 到 buffer
     buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-    buffer.setpoint    = SETPOINT
+    buffer.setpoint    = setpoint
 
     try:
         while round_num < CONFIG["MAX_TUNING_ROUNDS"]:
-            # 1. 运行仿真并采集数据
-            sim_steps = 0
-            print(f"\n[第 {round_num + 1} 轮] 数据采集中...", end="")
-
-            # 采集 BUFFER_SIZE 个数据点
-            while not buffer.is_full():
-                sim.compute_pid()
-                sim.update()
-                data = sim.get_data()
-                buffer.add(data)
-                sim_steps += 1
-
-            print(f" 完成 ({sim_steps} 步)")
+            # 1. 采集数据
+            print(f"\n[第 {round_num + 1} 轮] 数据采集中...", end="", flush=True)
+            steps = _collect_data(sim, buffer)
+            print(f" 完成 ({steps} 步)")
 
             # 2. 计算指标
             metrics = buffer.calculate_advanced_metrics()
@@ -147,7 +158,6 @@ def run_simulation():
                 stable_rounds + 1 if is_good_enough(metrics, good_enough_rules) else 0
             )
 
-            # 检查是否达标
             if (
                 metrics["avg_error"] < CONFIG["MIN_ERROR_THRESHOLD"]
                 and metrics["status"] == "STABLE"
@@ -182,23 +192,22 @@ def run_simulation():
                 print(f"  [思考] {thought[:100]}...")
                 print(f"  [分析] {analysis}")
 
-                # 更新参数
                 old_p, old_i, old_d = sim.kp, sim.ki, sim.kd
                 safe_pid, guardrail_notes = apply_pid_guardrails(
                     {"p": sim.kp, "i": sim.ki, "d": sim.kd},
-                    result
+                    result,
                 )
                 sim.set_pid(safe_pid["p"], safe_pid["i"], safe_pid["d"])
 
                 print(
-                    f"  [动作] {action}: P {old_p:.4f}->{sim.kp:.4f}, I {old_i:.4f}->{sim.ki:.4f}, D {old_d:.4f}->{sim.kd:.4f}"
+                    f"  [动作] {action}: P {old_p:.4f}->{sim.kp:.4f}, "
+                    f"I {old_i:.4f}->{sim.ki:.4f}, D {old_d:.4f}->{sim.kd:.4f}"
                 )
                 if guardrail_notes:
                     print(f"  [护栏] {'; '.join(guardrail_notes)}")
                 if result.get("fallback_used"):
                     print("  [兜底] 本轮使用规则策略替代 LLM 建议。")
 
-                # 记录历史
                 history.add_record(
                     round_num,
                     {"p": sim.kp, "i": sim.ki, "d": sim.kd},
@@ -211,7 +220,6 @@ def run_simulation():
                     print("\n[LLM] 认为调参已完成。")
                     break
 
-            # 清空缓冲，准备下一轮
             buffer.reset()
 
     except KeyboardInterrupt:
@@ -220,6 +228,71 @@ def run_simulation():
     end_time = time.time()
     print(f"\n测试结束，耗时 {end_time - start_time:.1f} 秒")
     print(f"最终参数: P={sim.kp}, I={sim.ki}, D={sim.kd}")
+
+
+# ============================================================================
+# 模拟主程序
+# ============================================================================
+
+
+def run_simulation():
+    ensure_runtime_config(verbose=True)
+
+    matlab_model_path = CONFIG.get("MATLAB_MODEL_PATH", "").strip()
+
+    if matlab_model_path:
+        # ---- MATLAB/Simulink 仿真模式 ----
+        try:
+            from sim.matlab_bridge import MatlabBridge
+        except ImportError as e:
+            print(f"[ERROR] {e}")
+            return
+
+        pid_block_path = CONFIG.get("MATLAB_PID_BLOCK_PATH", "").strip()
+        output_signal  = CONFIG.get("MATLAB_OUTPUT_SIGNAL", "").strip()
+        sim_step_time  = float(CONFIG.get("MATLAB_SIM_STEP_TIME", 10.0))
+        setpoint       = float(CONFIG.get("MATLAB_SETPOINT", 200.0))
+
+        if not pid_block_path:
+            print("[ERROR] 未配置 MATLAB_PID_BLOCK_PATH，请在 config.json 中填写 PID 模块路径。")
+            return
+        if not output_signal:
+            print("[ERROR] 未配置 MATLAB_OUTPUT_SIGNAL，请在 config.json 中填写输出信号变量名。")
+            return
+
+        print("=" * 60)
+        print("  LLM PID Tuner PRO - MATLAB/Simulink 仿真模式")
+        print("=" * 60)
+        print(f"目标: {setpoint}, 模型: {CONFIG['LLM_MODEL_NAME']}")
+        print(f"Simulink 模型: {matlab_model_path}")
+
+        sim = MatlabBridge(
+            model_path=matlab_model_path,
+            setpoint=setpoint,
+            pid_block_path=pid_block_path,
+            output_signal=output_signal,
+            sim_step_time=sim_step_time,
+        )
+        try:
+            sim.connect()
+        except Exception as e:
+            print(f"[ERROR] MATLAB 连接失败: {e}")
+            return
+
+        try:
+            _run_tuning_loop(sim, setpoint, "MATLAB")
+        finally:
+            sim.disconnect()
+
+    else:
+        # ---- Python 热系统仿真模式 ----
+        print("=" * 60)
+        print("  LLM PID Tuner PRO - 仿真测试")
+        print("=" * 60)
+        print(f"目标: {SETPOINT}, 模型: {CONFIG['LLM_MODEL_NAME']}")
+
+        sim = HeatingSimulator()
+        _run_tuning_loop(sim, SETPOINT, "Python")
 
 
 if __name__ == "__main__":

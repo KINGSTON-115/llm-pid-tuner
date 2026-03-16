@@ -216,10 +216,10 @@ Add these fields to your `config.json`:
 ### Run
 
 ```bash
-python matlab_tuner.py
+python simulator.py
 ```
 
-The tool starts a MATLAB Engine, loads your model, and lets the LLM analyze simulation results round by round — the same guardrails, rollback, and best-result tracking as hardware mode.
+When `MATLAB_MODEL_PATH` is set, `simulator.py` switches to MATLAB mode automatically. It starts a MATLAB Engine, loads your model, and lets the LLM analyze simulation results round by round — the same guardrails, rollback, and best-result tracking as hardware mode.
 
 ---
 

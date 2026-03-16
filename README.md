@@ -262,10 +262,10 @@ python setup.py install
 ### 运行
 
 ```bash
-python matlab_tuner.py
+python simulator.py
 ```
 
-程序会自动启动 MATLAB Engine，加载你的模型，然后让 LLM 逐轮分析仿真结果并给出 PID 建议，调参逻辑与硬件模式完全一致（包括护栏、回退、最佳参数记录）。
+`MATLAB_MODEL_PATH` 非空时，`simulator.py` 会自动切换到 MATLAB 模式。程序会自动启动 MATLAB Engine，加载你的模型，然后让 LLM 逐轮分析仿真结果并给出 PID 建议，调参逻辑与硬件模式完全一致（包括护栏、回退、最佳参数记录）。
 
 ---
 
