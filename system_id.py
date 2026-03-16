@@ -184,9 +184,9 @@ def system_identify(
 
     # 根据 PWM 计算增益 (假设 PWM 变化)
     if pwm_data:
-        avg_pwm = sum(pwm_data[-10:]) / min(10, n)
+        avg_pwm     = sum(pwm_data[-10:]) / min(10, n)
         initial_pwm = pwm_data[0]
-        delta_pwm = avg_pwm - initial_pwm
+        delta_pwm   = avg_pwm - initial_pwm
         if delta_pwm > 0:
             K = delta_temp / delta_pwm
         else:
@@ -205,7 +205,7 @@ def system_identify(
 
     # 3. 估算延迟 theta (达到 5% 稳态的时间)
     target_5 = initial_temp + delta_temp * 0.05
-    theta = 0
+    theta    = 0
     for i, temp in enumerate(temp_data):
         if temp > target_5:
             theta = time_data[i] - time_data[0]
