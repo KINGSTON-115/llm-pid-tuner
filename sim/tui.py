@@ -333,44 +333,44 @@ class PanelState:
 class SimulationTUIApp(App[None]):
     CSS = """
     Screen {
-        layout : vertical;
+        layout: vertical;
     }
 
     #status {
-        height : 5;
-        border : round $accent;
+        height: 5;
+        border: round $accent;
         padding: 0 1;
     }
 
     #help {
-        height : 4;
-        border : round $accent;
+        height: 4;
+        border: round $accent;
         padding: 0 1;
     }
 
     #middle-container {
-        height : 14;
-        layout : horizontal;
+        height: 14;
+        layout: horizontal;
     }
 
     #summary {
-        width  : 40%;
-        height : 100%;
-        border : round $accent;
+        width: 40%;
+        height: 100%;
+        border: round $accent;
         padding: 1;
     }
 
     #stream-container {
-        width     : 60%;
-        height    : 100%;
-        border    : round $accent;
-        padding   : 1;
+        width: 60%;
+        height: 100%;
+        border: round $accent;
+        padding: 1;
         overflow-y: auto;
     }
 
     #events {
-        height : 1fr;
-        border : round $accent;
+        height: 1fr;
+        border: round $accent;
     }
     """
 

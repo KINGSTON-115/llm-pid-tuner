@@ -111,7 +111,12 @@ def collect_doctor_checks() -> list[DoctorCheck]:
     else:
         endpoint, headers = _models_endpoint(provider, base_url)
         try:
-            response = requests.get(endpoint, headers=headers, timeout=3)
+            # 增加超时时间到 5 秒，如果请求缓慢可以容忍；如果还是超时，重试一次
+            try:
+                response = requests.get(endpoint, headers=headers, timeout=5)
+            except requests.Timeout:
+                response = requests.get(endpoint, headers=headers, timeout=8)
+
             if response.status_code < 500:
                 status = "PASS" if response.ok else "WARN"
                 detail = f"{tr('可连通 状态码', 'reachable status')}={response.status_code} {tr('端点', 'endpoint')}={endpoint}"
