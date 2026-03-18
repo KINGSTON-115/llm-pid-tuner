@@ -181,12 +181,17 @@ def main():
 
                     # 记录历史
                     history.add_record(
-                        round_num, safe_pid, metrics, result.get("analysis_summary", "")
+                        round_num,
+                        safe_pid,
+                        metrics,
+                        result.get("analysis_summary", ""),
+                        result.get("thought_process", ""),
                     )
 
-                    print(f"[Result] {result.get('analysis_summary')}")
+                    # 流式输出中已包含分析结果，不再重复打印
+                    # print(f"[Result] {result.get('analysis_summary')}")
                     print(
-                        f"[Action] {result.get('tuning_action')} -> P={new_p}, I={new_i}, D={new_d}"
+                        f"\n[Action] {result.get('tuning_action')} -> P={new_p}, I={new_i}, D={new_d}"
                     )
                     if guardrail_notes:
                         print(f"[Guardrail] {'; '.join(guardrail_notes)}")

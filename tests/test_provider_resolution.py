@@ -32,19 +32,33 @@ class FakeResponse:
     def json(self):
         return self.payload
 
+    def iter_lines(self):
+        import json
+
+        if "content" in self.payload:
+            text = self.payload["content"][0]["text"]
+            data = {"type": "content_block_delta", "delta": {"text": text}}
+            yield f"data: {json.dumps(data)}".encode("utf-8")
+        elif "choices" in self.payload:
+            content = self.payload["choices"][0]["message"]["content"]
+            data    = {"choices": [{"delta": {"content": content}}]}
+            yield f"data: {json.dumps(data)}".encode("utf-8")
+        yield b"data: [DONE]"
+
 
 class FakeRequests:
     def __init__(self, payload):
         self.payload = payload
         self.calls   = []
 
-    def post(self, url, headers=None, json=None, timeout=None):
+    def post(self, url, headers=None, json=None, timeout=None, **kwargs):
         self.calls.append(
             {
                 "url"    : url,
                 "headers": headers or {},
                 "json"   : json or {},
                 "timeout": timeout,
+                "stream" : kwargs.get("stream", False),
             }
         )
         return FakeResponse(self.payload)
@@ -100,7 +114,10 @@ class ProviderResolutionTests(unittest.TestCase):
         )
         fake_requests  = FakeRequests({"content": [{"text": "ok"}]})
         tuner.requests = fake_requests  # type: ignore[assignment]
-        content = tuner._request_via_http("hello")
+        content        = tuner._request_via_http(
+            [{"role": "user", "content": "hello"}],
+            [{"role": "user", "content": "hello"}],
+        )
 
         self.assertEqual(tuner.provider, "anthropic")
         self.assertEqual(content, "ok")
@@ -121,7 +138,10 @@ class ProviderResolutionTests(unittest.TestCase):
         )
         tuner.requests = fake_requests  # type: ignore[assignment]
 
-        content = tuner._request_via_http("hello")
+        content = tuner._request_via_http(
+            [{"role": "user", "content": "hello"}],
+            [{"role": "user", "content": "hello"}],
+        )
 
         self.assertEqual(content, '{"status":"DONE"}')
         self.assertEqual(

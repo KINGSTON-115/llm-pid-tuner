@@ -126,7 +126,7 @@ def _run_tuning_loop(sim, setpoint: float, mode_label: str) -> None:
             # 2. 计算指标
             metrics = buffer.calculate_advanced_metrics()
             print(
-                f"  当前状态: AvgErr={metrics['avg_error']:.2f}, MaxErr={metrics['max_error']:.2f}, "
+                f"  当前指标: AvgErr={metrics['avg_error']:.2f}, MaxErr={metrics['max_error']:.2f}, "
                 f"Overshoot={metrics['overshoot']:.1f}%, Status={metrics['status']}"
             )
 
@@ -186,7 +186,6 @@ def _run_tuning_loop(sim, setpoint: float, mode_label: str) -> None:
             history_text = history.to_prompt_text()
 
             # 4. 调用 LLM
-            print("  [LLM] 正在思考...")
             result = tuner.analyze(prompt_data, history_text)
 
             if not result:
@@ -198,30 +197,29 @@ def _run_tuning_loop(sim, setpoint: float, mode_label: str) -> None:
                 thought  = result.get("thought_process", "无思考过程")
                 action   = result.get("tuning_action", "UNKNOWN")
 
-                print(f"  [思考] {thought[:100]}...")
-                print(f"  [分析] {analysis}")
-
                 old_p, old_i, old_d = sim.kp, sim.ki, sim.kd
                 safe_pid, guardrail_notes = apply_pid_guardrails(
                     {"p": sim.kp, "i": sim.ki, "d": sim.kd},
-                    result,
+                    result
                 )
                 sim.set_pid(safe_pid["p"], safe_pid["i"], safe_pid["d"])
 
+                # 这一步仅保留操作总结
                 print(
-                    f"  [动作] {action}: P {old_p:.4f}->{sim.kp:.4f}, "
+                    f"\n  [操作] {action}: P {old_p:.4f}->{sim.kp:.4f}, "
                     f"I {old_i:.4f}->{sim.ki:.4f}, D {old_d:.4f}->{sim.kd:.4f}"
                 )
                 if guardrail_notes:
-                    print(f"  [护栏] {'; '.join(guardrail_notes)}")
+                    print(f"  [限制] {'; '.join(guardrail_notes)}")
                 if result.get("fallback_used"):
-                    print("  [兜底] 本轮使用规则策略替代 LLM 建议。")
+                    print("   [兜底] 本轮使用规则策略替代 LLM 建议。")
 
                 history.add_record(
                     round_num,
                     {"p": sim.kp, "i": sim.ki, "d": sim.kd},
                     metrics,
                     analysis,
+                    thought,
                 )
                 buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
 
@@ -263,14 +261,20 @@ def run_simulation():
             sim_step_time = float(CONFIG.get("MATLAB_SIM_STEP_TIME", 10.0))
             setpoint      = float(CONFIG.get("MATLAB_SETPOINT", 200.0))
         except (TypeError, ValueError) as e:
-            print(f"[ERROR] Simulink 配置数值解析失败: {e}，请检查 MATLAB_SIM_STEP_TIME 和 MATLAB_SETPOINT。")
+            print(
+                f"[ERROR] Simulink 配置数值解析失败: {e}，请检查 MATLAB_SIM_STEP_TIME 和 MATLAB_SETPOINT。"
+            )
             return
 
         if not pid_block_path:
-            print("[ERROR] 未配置 MATLAB_PID_BLOCK_PATH，请在 config.json 中填写 PID 模块路径。")
+            print(
+                "[ERROR] 未配置 MATLAB_PID_BLOCK_PATH，请在 config.json 中填写 PID 模块路径。"
+            )
             return
         if not output_signal:
-            print("[ERROR] 未配置 MATLAB_OUTPUT_SIGNAL，请在 config.json 中填写输出信号变量名。")
+            print(
+                "[ERROR] 未配置 MATLAB_OUTPUT_SIGNAL，请在 config.json 中填写输出信号变量名。"
+            )
             return
 
         print("=" * 60)
