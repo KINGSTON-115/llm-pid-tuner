@@ -22,3 +22,7 @@ result.json
 # IDE
 .vscode/
 .idea/
+.claude/
+
+# Local artifacts
+artifacts/

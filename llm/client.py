@@ -18,10 +18,11 @@ from llm.prompts import SYSTEM_PROMPT
 class JSONStreamFormatter:
     """按行/增量解析 JSON 流，并格式化输出到控制台。"""
 
-    def __init__(self):
+    def __init__(self, writer: Optional[Callable[[str], None]] = None):
         self.displayed_keys = set()
         self.current_key    = None
         self.printed_text   = ""
+        self.writer         = writer or self._default_writer
         self.key_names      = {
             "thought_process" : "\n  [思考]",
             "analysis_summary": "\n  [分析]",
@@ -37,6 +38,10 @@ class JSONStreamFormatter:
             r'"([a-zA-Z_]+)"\s*:\s*([0-9\.\-]+|true|false|null)\s*[,}\n]', re.IGNORECASE
         )
 
+    @staticmethod
+    def _default_writer(text: str) -> None:
+        print(text, end="", flush=True)
+
     def process(self, full_text: str):
         # 处理字符串类型字段
         str_matches = list(self.str_re.finditer(full_text))
@@ -49,7 +54,7 @@ class JSONStreamFormatter:
                 self.current_key  = key
                 self.printed_text = ""
                 name = self.key_names.get(key, f"\n  [{key}]")
-                print(f"{name} ", end="", flush=True)
+                self.writer(f"{name} ")
 
             if self.current_key == key:
                 decoded = (
@@ -64,7 +69,7 @@ class JSONStreamFormatter:
                 if new_text:
                     if key in ["thought_process", "analysis_summary"]:
                         new_text = new_text.replace("\n", "\n    ")
-                    print(new_text, end="", flush=True)
+                    self.writer(new_text)
                     self.printed_text += new_text
 
         # 处理数字/布尔类型字段（必须有终结符保证完整性）
@@ -76,16 +81,23 @@ class JSONStreamFormatter:
                 self.displayed_keys.add(key)
                 name = self.key_names.get(key, f"\n  [{key}]")
                 if key in ["p", "i", "d"]:
-                    print(f",{name}={val}", end="", flush=True)
+                    self.writer(f",{name}={val}")
                 elif key == "status":
-                    print(f"{name}: {val}", end="", flush=True)
+                    self.writer(f"{name}: {val}")
                 else:
-                    print(f"{name}: {val}", end="", flush=True)
+                    self.writer(f"{name}: {val}")
 
 
 class LLMTuner:
     def __init__(
-        self, api_key: str, base_url: str, model: str, provider: str = "openai"
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        provider: str = "openai",
+        stream_callback: Optional[Callable[[str, bool], None]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
+        emit_console: bool = True,
     ):
         self.api_key         = api_key
         self.base_url        = (base_url or "").rstrip("/")
@@ -94,6 +106,9 @@ class LLMTuner:
         self.provider        = self._resolve_transport()
         self.timeout         = CONFIG.get("LLM_REQUEST_TIMEOUT", 60)
         self.debug_output    = CONFIG.get("LLM_DEBUG_OUTPUT", False)
+        self.emit_console    = emit_console
+        self.stream_callback = stream_callback
+        self.log_callback    = log_callback
         self.use_sdk         = False
         self.client          = None
 
@@ -153,6 +168,24 @@ class LLMTuner:
         if not hasattr(self, "requests") or self.requests is None:
             self.requests = self._import_requests()
 
+    def _emit_log(self, label: str, message: str) -> None:
+        if self.log_callback is not None:
+            self.log_callback(label, message)
+        if self.emit_console:
+            print(message)
+
+    def _emit_stream_update(
+        self,
+        full_content: str,
+        *,
+        done: bool = False,
+        formatter: Optional[JSONStreamFormatter] = None,
+    ) -> None:
+        if formatter is not None:
+            formatter.process(full_content)
+        if self.stream_callback is not None:
+            self.stream_callback(full_content, done)
+
     def _call_with_retry(
         self, func: Callable[..., str], *args: Any, **kwargs: Any
     ) -> str:
@@ -168,12 +201,16 @@ class LLMTuner:
             except Exception as e:
                 last_exception = e
                 if attempt < max_retries - 1:
-                    print(
-                        f"\n[WARN] LLM 调用失败: {e}，将在 {delays[attempt]} 秒后重试..."
+                    self._emit_log(
+                        "warn",
+                        f"\n[WARN] LLM 调用失败: {e}，将在 {delays[attempt]} 秒后重试...",
                     )
                     time.sleep(delays[attempt])
                 else:
-                    print(f"\n[ERROR] LLM 调用失败已达 {max_retries} 次: {e}")
+                    self._emit_log(
+                        "error",
+                        f"\n[ERROR] LLM 调用失败已达 {max_retries} 次: {e}",
+                    )
                     raise
 
         if last_exception:
@@ -185,7 +222,11 @@ class LLMTuner:
     ) -> str:
         self._ensure_requests()
         full_content = ""
-        formatter    = JSONStreamFormatter()
+        formatter = (
+            JSONStreamFormatter()
+            if self.emit_console
+            else None
+        )
 
         if self.provider == "anthropic":
             headers = {
@@ -229,7 +270,9 @@ class LLMTuner:
                                     chunk = data["delta"].get("text", "")
                                     if chunk:
                                         full_content += chunk
-                                        formatter.process(full_content)
+                                        self._emit_stream_update(
+                                            full_content, formatter=formatter
+                                        )
                             except json.JSONDecodeError:
                                 pass
 
@@ -267,7 +310,9 @@ class LLMTuner:
                                     chunk = choices[0]["delta"].get("content", "")
                                     if chunk:
                                         full_content += chunk
-                                        formatter.process(full_content)
+                                        self._emit_stream_update(
+                                            full_content, formatter=formatter
+                                        )
                             except json.JSONDecodeError:
                                 pass
 
@@ -276,9 +321,9 @@ class LLMTuner:
     def _execute_request(
         self, openai_msgs: List[Dict[str, Any]], anthropic_msgs: List[Dict[str, Any]]
     ) -> str:
-        print("  LLM 正在思考...")
+        self._emit_log("llm", "  LLM 正在思考...")
         full_content = ""
-        formatter = JSONStreamFormatter()
+        formatter = JSONStreamFormatter() if self.emit_console else None
 
         if self.use_sdk:
             try:
@@ -293,7 +338,9 @@ class LLMTuner:
                         content_chunk = chunk.choices[0].delta.content or ""
                         if content_chunk:
                             full_content += content_chunk
-                            formatter.process(full_content)
+                            self._emit_stream_update(
+                                full_content, formatter=formatter
+                            )
                 elif self.provider == "anthropic":
                     with self.client.messages.stream(  # type: ignore
                         model       = self.model,
@@ -305,14 +352,21 @@ class LLMTuner:
                         for text in stream.text_stream:
                             if text:
                                 full_content += text
-                                formatter.process(full_content)
+                                self._emit_stream_update(
+                                    full_content, formatter=formatter
+                                )
             except Exception as sdk_error:
-                print(f"\n[WARN] SDK 调用失败，尝试 HTTP 回退: {sdk_error}")
+                self._emit_log(
+                    "warn", f"\n[WARN] SDK 调用失败，尝试 HTTP 回退: {sdk_error}"
+                )
                 full_content = self._request_via_http(openai_msgs, anthropic_msgs)
         else:
             full_content = self._request_via_http(openai_msgs, anthropic_msgs)
 
-        print()  # 打印换行
+        if full_content:
+            self._emit_stream_update(full_content, done=True)
+        if self.emit_console:
+            print()  # 打印换行
         return full_content
 
     def _extract_json_candidates(self, text: str) -> List[str]:
@@ -410,15 +464,15 @@ class LLMTuner:
             )
 
             if self.debug_output:
-                print(f"\n[LLM 原始响应预览]\n{content[:500]}...\n")
+                self._emit_log("debug", f"\n[LLM 原始响应预览]\n{content[:500]}...\n")
 
             parsed = self._parse_json(content)
             if parsed:
                 return parsed
 
-            print("[WARN] LLM 响应未能解析为 JSON，已忽略本轮建议。")
+            self._emit_log("warn", "[WARN] LLM 响应未能解析为 JSON，已忽略本轮建议。")
             return None
 
         except Exception as e:
-            print(f"[ERROR] LLM 调用或重试最终失败: {e}")
+            self._emit_log("error", f"[ERROR] LLM 调用或重试最终失败: {e}")
             return None

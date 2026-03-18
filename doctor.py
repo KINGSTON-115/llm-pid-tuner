@@ -3,17 +3,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
 from typing import Iterable
 
 import requests
 import serial.tools.list_ports
 
+from core.compat import slotted_dataclass
 from core.config import CONFIG, CONFIG_PATH, initialize_runtime_config
 
 
-@dataclass(slots=True)
+@slotted_dataclass
 class DoctorCheck:
     name: str
     status: str

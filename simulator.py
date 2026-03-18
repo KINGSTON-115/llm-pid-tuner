@@ -4,25 +4,25 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 from queue import Queue
 import sys
 import time
+import traceback
 from typing import Any
 
 from core.buffer import AdvancedDataBuffer
 from core.config import CONFIG, initialize_runtime_config
-from core.history import TuningHistory
+from core.tuning_session import (
+    apply_rollback,
+    build_tuning_result,
+    create_tuning_session,
+    evaluate_completed_round,
+    finalize_decision,
+)
 from doctor import collect_doctor_checks, print_doctor_report, summarize_doctor_checks
 from llm.client import LLMTuner
-from pid_safety import (
-    apply_pid_guardrails,
-    build_fallback_suggestion,
-    is_good_enough,
-    maybe_update_best_result,
-    pid_equals,
-    should_rollback_to_best,
-)
+from pid_safety import apply_pid_guardrails, build_fallback_suggestion
 from sim.model import HeatingSimulator, SETPOINT
 from sim.runtime import (
     EVENT_DECISION,
@@ -37,9 +37,6 @@ from sim.runtime import (
     wait_while_paused,
 )
 from system_id import extract_initial_pid, system_identify
-
-
-TUI_DEPENDENCIES = ("textual",)
 
 
 def ensure_runtime_config(
@@ -252,24 +249,11 @@ def _run_tuning_loop(
         CONFIG["LLM_MODEL_NAME"],
         CONFIG["LLM_PROVIDER"],
     )
-    buffer = AdvancedDataBuffer(max_size=CONFIG["BUFFER_SIZE"])
-    history = TuningHistory(max_history=5)
-    good_enough_rules = {
-        "avg_error_threshold": CONFIG["GOOD_ENOUGH_AVG_ERROR"],
-        "steady_state_error_threshold": CONFIG["GOOD_ENOUGH_STEADY_STATE_ERROR"],
-        "overshoot_threshold": CONFIG["GOOD_ENOUGH_OVERSHOOT"],
-    }
-
-    round_num = 0
-    last_round = 0
-    stable_rounds = 0
-    best_result = None
-    last_metrics: dict[str, Any] = {}
+    session = create_tuning_session(
+        initial_pid={"p": sim.kp, "i": sim.ki, "d": sim.kd},
+        setpoint=setpoint,
+    )
     start_time = time.time()
-    completed_reason = "max_rounds_reached"
-    fallback_count = 0
-    guardrail_count = 0
-    rollback_count = 0
 
     _publish_doctor_checks(
         doctor_checks,
@@ -280,19 +264,19 @@ def _run_tuning_loop(
     if warm_start and isinstance(sim, HeatingSimulator):
         _run_simulator_warm_start(sim, event_sink=event_sink, emit_console=emit_console)
 
-    buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-    buffer.setpoint = setpoint
+    session.buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
+    session.buffer.setpoint = setpoint
     _emit_lifecycle(event_sink, start_time, "starting", f"{mode_label} simulation started.")
 
     try:
-        while round_num < CONFIG["MAX_TUNING_ROUNDS"]:
+        while session.round_num < CONFIG["MAX_TUNING_ROUNDS"]:
             if controller is not None and controller.should_stop:
-                completed_reason = "stopped_by_user"
+                session.completed_reason = "stopped_by_user"
                 _console(emit_console, "\n[INFO] Simulation stopped by user.")
                 _emit_lifecycle(event_sink, start_time, "stopped", "Simulation stopped by user.")
                 break
 
-            round_index = round_num + 1
+            round_index = session.round_num + 1
             _console(emit_console, f"\n[Round {round_index}] Collecting data...")
             _emit_lifecycle(
                 event_sink,
@@ -303,45 +287,36 @@ def _run_tuning_loop(
 
             steps, completed = _collect_data(
                 sim,
-                buffer,
+                session.buffer,
                 event_sink=event_sink,
                 controller=controller,
             )
             if not completed:
-                completed_reason = "stopped_by_user"
+                session.completed_reason = "stopped_by_user"
                 _console(emit_console, "\n[INFO] Simulation stopped by user.")
                 _emit_lifecycle(event_sink, start_time, "stopped", "Simulation stopped by user.")
                 break
 
-            last_round = round_index
             _console(emit_console, f"[Round {round_index}] Collected {steps} samples.")
 
-            metrics = buffer.calculate_advanced_metrics()
-            last_metrics = dict(metrics)
-            current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-            stable_rounds = (
-                stable_rounds + 1
-                if is_good_enough(metrics, good_enough_rules)
-                else 0
+            evaluation = evaluate_completed_round(
+                session,
+                {"p": sim.kp, "i": sim.ki, "d": sim.kd},
             )
             publish_event(
                 event_sink,
                 EVENT_ROUND_METRICS,
                 round=round_index,
-                avg_error=float(metrics["avg_error"]),
-                max_error=float(metrics["max_error"]),
-                steady_state_error=float(metrics["steady_state_error"]),
-                overshoot=float(metrics["overshoot"]),
-                zero_crossings=int(metrics["zero_crossings"]),
-                status=str(metrics["status"]),
-                stable_rounds=stable_rounds,
+                avg_error=float(evaluation.metrics["avg_error"]),
+                max_error=float(evaluation.metrics["max_error"]),
+                steady_state_error=float(evaluation.metrics["steady_state_error"]),
+                overshoot=float(evaluation.metrics["overshoot"]),
+                zero_crossings=int(evaluation.metrics["zero_crossings"]),
+                status=str(evaluation.metrics["status"]),
+                stable_rounds=evaluation.stable_rounds,
             )
 
-            previous_best = best_result
-            best_result = maybe_update_best_result(
-                best_result, current_pid, metrics, round_index
-            )
-            if best_result is not None and best_result is not previous_best:
+            if evaluation.best_result_updated:
                 _emit_lifecycle(
                     event_sink,
                     start_time,
@@ -349,28 +324,23 @@ def _run_tuning_loop(
                     f"Captured a new best stable result at round {round_index}.",
                 )
 
-            if (
-                best_result
-                and not pid_equals(current_pid, best_result["pid"])
-                and should_rollback_to_best(metrics, best_result["metrics"])
-            ):
+            if evaluation.rollback_pid:
                 sim.set_pid(
-                    best_result["pid"]["p"],
-                    best_result["pid"]["i"],
-                    best_result["pid"]["d"],
+                    evaluation.rollback_pid["p"],
+                    evaluation.rollback_pid["i"],
+                    evaluation.rollback_pid["d"],
                 )
-                buffer.current_pid = dict(best_result["pid"])
+                apply_rollback(session, evaluation.rollback_pid)
                 publish_event(
                     event_sink,
                     EVENT_ROLLBACK,
                     round=round_index,
-                    target_round=int(best_result["round"]),
-                    pid=dict(best_result["pid"]),
+                    target_round=int(evaluation.best_result["round"]) if evaluation.best_result else round_index,
+                    pid=dict(evaluation.rollback_pid),
                     reason="Current metrics regressed against the best stable result.",
                 )
-                rollback_count += 1
-                if is_good_enough(best_result["metrics"], good_enough_rules):
-                    completed_reason = "rollback_to_best"
+                if evaluation.completed_reason == "rollback_to_best":
+                    session.completed_reason = "rollback_to_best"
                     _emit_lifecycle(
                         event_sink,
                         start_time,
@@ -378,15 +348,10 @@ def _run_tuning_loop(
                         "Rolled back to the best stable result and finished early.",
                     )
                     break
-                round_num += 1
-                buffer.reset()
                 continue
 
-            if (
-                metrics["avg_error"] < CONFIG["MIN_ERROR_THRESHOLD"]
-                and metrics["status"] == "STABLE"
-            ):
-                completed_reason = "low_error_converged"
+            if evaluation.completed_reason == "low_error_converged":
+                session.completed_reason = "low_error_converged"
                 _emit_lifecycle(
                     event_sink,
                     start_time,
@@ -395,13 +360,13 @@ def _run_tuning_loop(
                 )
                 break
 
-            if stable_rounds >= CONFIG["REQUIRED_STABLE_ROUNDS"]:
-                completed_reason = "stable_rounds_reached"
+            if evaluation.completed_reason == "stable_rounds_reached":
+                session.completed_reason = "stable_rounds_reached"
                 _emit_lifecycle(
                     event_sink,
                     start_time,
                     "completed",
-                    f"Reached {stable_rounds} stable rounds and finished early.",
+                    f"Reached {evaluation.stable_rounds} stable rounds and finished early.",
                 )
                 break
 
@@ -411,7 +376,10 @@ def _run_tuning_loop(
                 "llm_request",
                 f"Requesting PID suggestion for round {round_index}.",
             )
-            result = tuner.analyze(buffer.to_prompt_data(), history.to_prompt_text())
+            result = tuner.analyze(
+                session.buffer.to_prompt_data(),
+                session.history.to_prompt_text(),
+            )
 
             if not result:
                 _emit_lifecycle(
@@ -420,36 +388,28 @@ def _run_tuning_loop(
                     "fallback",
                     f"LLM unavailable at round {round_index}; using fallback rules.",
                 )
-                result = build_fallback_suggestion(buffer.current_pid, metrics)
+                result = build_fallback_suggestion(
+                    evaluation.current_pid, evaluation.metrics
+                )
 
-            analysis = str(
-                result.get("analysis_summary", "No analysis summary was provided.")
+            decision = finalize_decision(session, evaluation, result)
+            sim.set_pid(
+                decision.safe_pid["p"],
+                decision.safe_pid["i"],
+                decision.safe_pid["d"],
             )
-            thought = str(result.get("thought_process", ""))
-            action = str(result.get("tuning_action", "UNKNOWN"))
-            safe_pid, guardrail_notes = apply_pid_guardrails(current_pid, result)
-            sim.set_pid(safe_pid["p"], safe_pid["i"], safe_pid["d"])
-            history.add_record(round_index, safe_pid, metrics, analysis, thought)
-            buffer.current_pid = dict(safe_pid)
             publish_event(
                 event_sink,
                 EVENT_DECISION,
                 round=round_index,
-                action=action,
-                analysis_summary=analysis,
-                fallback_used=bool(result.get("fallback_used")),
-                guardrail_notes=list(guardrail_notes),
+                action=decision.action,
+                analysis_summary=decision.analysis,
+                fallback_used=decision.fallback_used,
+                guardrail_notes=list(decision.guardrail_notes),
             )
-            if result.get("fallback_used"):
-                fallback_count += 1
-            if guardrail_notes:
-                guardrail_count += 1
 
-            round_num += 1
-            buffer.reset()
-
-            if result.get("status") == "DONE":
-                completed_reason = "llm_marked_done"
+            if decision.completed_reason == "llm_marked_done":
+                session.completed_reason = "llm_marked_done"
                 _emit_lifecycle(
                     event_sink,
                     start_time,
@@ -459,7 +419,7 @@ def _run_tuning_loop(
                 break
 
     except KeyboardInterrupt:
-        completed_reason = "keyboard_interrupt"
+        session.completed_reason = "keyboard_interrupt"
         _console(emit_console, "\n[INFO] Simulation interrupted by keyboard.")
         _emit_lifecycle(
             event_sink,
@@ -468,7 +428,7 @@ def _run_tuning_loop(
             "Simulation interrupted by keyboard.",
         )
     except Exception as exc:
-        completed_reason = "error"
+        session.completed_reason = "error"
         _console(emit_console, f"\n[ERROR] Simulation failed: {exc}")
         _emit_lifecycle(
             event_sink,
@@ -494,17 +454,12 @@ def _run_tuning_loop(
         )
 
     return {
-        "provider": CONFIG["LLM_PROVIDER"],
-        "model": CONFIG["LLM_MODEL_NAME"],
-        "rounds_completed": last_round,
         "elapsed_sec": now_elapsed(start_time),
-        "final_pid": {"p": sim.kp, "i": sim.ki, "d": sim.kd},
-        "final_metrics": dict(last_metrics),
-        "stopped": bool(controller.should_stop) if controller is not None else False,
-        "fallback_count": fallback_count,
-        "guardrail_count": guardrail_count,
-        "rollback_count": rollback_count,
-        "completed_reason": completed_reason,
+        **build_tuning_result(
+            session,
+            final_pid={"p": sim.kp, "i": sim.ki, "d": sim.kd},
+            stopped=bool(controller.should_stop) if controller is not None else False,
+        ),
     }
 
 
@@ -518,17 +473,13 @@ def determine_tui_mode(force_plain: bool, matlab_model_path: str) -> tuple[bool,
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return False, "The TUI requires an interactive terminal; falling back to plain output."
 
-    missing = [
-        dependency
-        for dependency in TUI_DEPENDENCIES
-        if importlib.util.find_spec(dependency) is None
-    ]
-    if missing:
+    try:
+        # Import probing is more reliable than find_spec() in frozen executables.
+        importlib.import_module("sim.tui")
+    except ImportError as exc:
         return (
             False,
-            "TUI dependencies are missing: "
-            + ", ".join(missing)
-            + ". Falling back to plain output.",
+            f"TUI dependencies are missing: {exc}. Falling back to plain output.",
         )
 
     return True, None
@@ -659,8 +610,11 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
                 warm_start=True,
                 doctor_checks=doctor_checks,
             )
-        except ImportError as exc:
+        except Exception as exc:
             print(f"[WARN] Failed to start the TUI ({exc}); falling back to plain output.")
+            debug_enabled = bool(CONFIG.get("LLM_DEBUG_OUTPUT"))
+            if debug_enabled:
+                traceback.print_exc()
 
     print_doctor_report(doctor_checks)
     return _run_python_simulation_plain(

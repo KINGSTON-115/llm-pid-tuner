@@ -61,6 +61,10 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 Double-click `llm-pid-tuner.exe`.
 
+The launcher now asks which mode to start:
+`[1]` hardware tuning or `[2]` the local simulation TUI (default).
+If you are connecting a real serial device, choose `[1]`.
+
 If `config.json` does not exist, the program generates a default one automatically.
 
 ### 4. Edit `config.json`
@@ -242,7 +246,8 @@ Optional tools:
 
 | File                        | Purpose                                                    |
 | :-------------------------- | :--------------------------------------------------------- |
-| `tuner.py`                  | Main hardware tuning runtime and exe entry                 |
+| `launcher.py`               | Packaged exe entry that routes to hardware or simulation   |
+| `tuner.py`                  | Main hardware tuning runtime                               |
 | `simulator.py`              | Local thermal simulation                                   |
 | `pid_safety.py`             | Guardrails, fallback logic, best-result tracking, rollback |
 | `firmware.cpp`              | Example MCU firmware                                       |

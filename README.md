@@ -79,6 +79,9 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 双击运行 `llm-pid-tuner.exe`。
 
+启动器会先让你选择模式：`[1]` 真实硬件调参，`[2]` 本地仿真 TUI（默认）。
+如果你现在是准备接串口硬件，请先选 `[1]`。
+
 第一次运行时，如果当前目录下没有 `config.json`，程序会自动生成一份默认配置。
 
 ### 第 4 步：填写 `config.json`

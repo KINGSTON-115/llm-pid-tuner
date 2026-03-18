@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import field
 import threading
 import time
 from queue import Queue
 from typing import Callable
 
+from core.compat import slotted_dataclass
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import RichLog, Static
@@ -14,6 +15,7 @@ from textual.widgets import RichLog, Static
 from sim.runtime import (
     EVENT_DECISION,
     EVENT_LIFECYCLE,
+    EVENT_LOG,
     EVENT_ROLLBACK,
     EVENT_ROUND_METRICS,
     EVENT_SAMPLE,
@@ -110,7 +112,7 @@ TRANSLATIONS = {
 }
 
 
-@dataclass(slots=True)
+@slotted_dataclass
 class PanelState:
     max_events: int = 100
     detailed_events: bool = False
@@ -206,6 +208,19 @@ class PanelState:
             self.current_phase = str(event.get("phase", self.current_phase))
             self.phase_message = str(event.get("message", self.phase_message))
             self.elapsed_sec = float(event.get("elapsed_sec", self.elapsed_sec))
+
+        elif event_type == EVENT_LOG:
+            if (
+                event.get("replace_last")
+                and self.event_history
+                and self.event_history[-1].get("type") == EVENT_LOG
+                and self.event_history[-1].get("label") == event.get("label")
+                and self.event_history[-1].get("stream_id") == event.get("stream_id")
+            ):
+                self.event_history[-1] = dict(event)
+            else:
+                self.event_history.append(dict(event))
+            return
 
         if event_type in {EVENT_DECISION, EVENT_ROLLBACK, EVENT_LIFECYCLE}:
             self.event_history.append(dict(event))
@@ -308,6 +323,13 @@ class PanelState:
             if detailed:
                 line += f" | {self.tr('event_elapsed')}: {float(event.get('elapsed_sec', 0.0)):.1f}s"
             return line
+
+        if event_type == EVENT_LOG:
+            label = str(event.get("label", "log"))
+            message = str(event.get("message", ""))
+            if not detailed:
+                message = message.replace("\r", "").replace("\n", " ")
+            return f"[{label}] {message}".rstrip()
 
         return str(event)
 
@@ -425,6 +447,8 @@ class SimulationTUIApp(App[None]):
                     in {"completed", "finished", "stopped", "error"}
                 ):
                     terminal_event_seen = True
+                if event.get("type") == EVENT_LOG and event.get("replace_last"):
+                    self._log_requires_full_refresh = True
 
         self.state.paused = self.controller.is_paused
         if self._worker_thread is not None and self._worker_thread.is_alive():

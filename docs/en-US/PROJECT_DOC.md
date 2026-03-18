@@ -158,7 +158,12 @@ This is why early stopping and stable-round counting are built into the runtime.
 
 ## 7. Packaging Notes
 
-The Windows executable is built with `PyInstaller`, with `tuner.py` as the entry point.
+The Windows executable is built with `PyInstaller`, with `launcher.py` as the entry point.
+
+`launcher.py` dispatches the packaged build into two user-facing paths:
+
+- `tuner.py` for real hardware tuning
+- `simulator.py` for the local simulation / TUI
 
 The current release strategy is designed for end users:
 

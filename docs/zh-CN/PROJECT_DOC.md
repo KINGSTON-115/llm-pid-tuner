@@ -161,7 +161,12 @@ LLM 的建议很有价值，但模型输出可能不稳定，因此需要：
 
 ## 7. 打包说明
 
-Windows 可执行文件由 `PyInstaller` 打包生成，入口是 `tuner.py`。
+Windows 可执行文件由 `PyInstaller` 打包生成，入口是 `launcher.py`。
+
+`launcher.py` 会在启动时分流到两条路径：
+
+- `tuner.py`：真实硬件调参
+- `simulator.py`：本地仿真 / TUI
 
 当前发布策略更适合面向终端用户：
 

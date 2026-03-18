@@ -21,6 +21,7 @@ from sim.model import HeatingSimulator, SETPOINT
 from sim.runtime import (
     EVENT_DECISION,
     EVENT_LIFECYCLE,
+    EVENT_LOG,
     EVENT_ROLLBACK,
     EVENT_ROUND_METRICS,
     EVENT_SAMPLE,
@@ -168,20 +169,26 @@ class TuiModeTests(unittest.TestCase):
         self.assertIn("Simulink mode", message)
 
     def test_missing_textual_falls_back_to_plain_mode(self):
-        original_find_spec = importlib.util.find_spec
-
-        def fake_find_spec(name, package=None):
-            if name == "textual":
-                return None
-            return original_find_spec(name, package)
-
         with patch.object(sys.stdin, "isatty", return_value=True):
             with patch.object(sys.stdout, "isatty", return_value=True):
-                with patch("simulator.importlib.util.find_spec", side_effect=fake_find_spec):
+                with patch(
+                    "simulator.importlib.import_module",
+                    side_effect=ModuleNotFoundError("No module named 'textual'"),
+                ):
                     use_tui, message = simulator.determine_tui_mode(False, "")
 
         self.assertFalse(use_tui)
         self.assertIn("dependencies are missing", message)
+
+    def test_tui_mode_uses_import_probe(self):
+        with patch.object(sys.stdin, "isatty", return_value=True):
+            with patch.object(sys.stdout, "isatty", return_value=True):
+                with patch("simulator.importlib.import_module") as import_module:
+                    use_tui, message = simulator.determine_tui_mode(False, "")
+
+        self.assertTrue(use_tui)
+        self.assertIsNone(message)
+        import_module.assert_called_once_with("sim.tui")
 
     def test_plain_mode_uses_plain_runner(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
@@ -196,7 +203,34 @@ class TuiModeTests(unittest.TestCase):
         self.assertEqual(result, {"mode": "plain"})
         doctor_report.assert_called_once_with(doctor_checks)
         plain.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
-        tui.assert_not_called()
+
+
+class PanelStateTests(unittest.TestCase):
+    def test_replace_last_log_event_updates_existing_stream_line(self):
+        from sim.tui import PanelState
+
+        state = PanelState()
+        state.apply_event(
+            {
+                "type": EVENT_LOG,
+                "label": "llm_stream",
+                "message": '{"thought_process":"hel',
+                "replace_last": True,
+                "stream_id": 1,
+            }
+        )
+        state.apply_event(
+            {
+                "type": EVENT_LOG,
+                "label": "llm_stream",
+                "message": '{"thought_process":"hello"}',
+                "replace_last": True,
+                "stream_id": 1,
+            }
+        )
+
+        self.assertEqual(len(state.event_history), 1)
+        self.assertIn("hello", state.render_event_lines()[0])
 
     def test_default_mode_uses_doctor_and_warm_start(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
@@ -209,6 +243,35 @@ class TuiModeTests(unittest.TestCase):
 
         self.assertEqual(result, {"mode": "tui"})
         tui.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
+
+    def test_tui_failure_falls_back_to_plain_runner(self):
+        doctor_checks = [DoctorCheck("api", "PASS", "ok")]
+        with patch.object(simulator, "ensure_runtime_config"):
+            with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
+                with patch.object(simulator, "print_doctor_report") as doctor_report:
+                    with patch.dict(
+                        simulator.CONFIG,
+                        {"MATLAB_MODEL_PATH": "", "LLM_DEBUG_OUTPUT": False},
+                        clear=False,
+                    ):
+                        with patch.object(
+                            simulator, "determine_tui_mode", return_value=(True, None)
+                        ):
+                            with patch.object(
+                                simulator,
+                                "_run_python_simulation_with_tui",
+                                side_effect=RuntimeError("tui boom"),
+                            ):
+                                with patch.object(
+                                    simulator,
+                                    "_run_python_simulation_plain",
+                                    return_value={"mode": "plain"},
+                                ) as plain:
+                                    result = simulator.run_simulation(force_plain=False)
+
+        self.assertEqual(result, {"mode": "plain"})
+        doctor_report.assert_called_once_with(doctor_checks)
+        plain.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
 
 
 @unittest.skipUnless(TEXTUAL_AVAILABLE, "textual is required")

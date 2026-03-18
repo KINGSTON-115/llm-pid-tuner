@@ -82,6 +82,39 @@ class LLMFallbackTests(unittest.TestCase):
         tuner = self._make_tuner_without_sdk("anthropic")
         self.assertEqual(tuner.provider, "anthropic")
 
+    def test_http_stream_callback_emits_done_once(self):
+        done_updates = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+            def raise_for_status(self):
+                return None
+
+            def iter_lines(self):
+                yield b'data: {"choices":[{"delta":{"content":"{\\"status\\":\\"DONE\\"}"}}]}'
+                yield b"data: [DONE]"
+
+        class FakeRequests:
+            def post(self, *args, **kwargs):
+                return FakeResponse()
+
+        tuner = self._make_tuner_without_sdk("openai")
+        tuner.requests = FakeRequests()  # type: ignore[assignment]
+        tuner.stream_callback = lambda _text, done: done_updates.append(done)
+
+        result = tuner._execute_request(
+            [{"role": "user", "content": "hello"}],
+            [{"role": "user", "content": "hello"}],
+        )
+
+        self.assertEqual(result, '{"status":"DONE"}')
+        self.assertEqual(done_updates.count(True), 1)
+
 
 class BufferTests(unittest.TestCase):
     def _make_data_point(self, temp: float, setpoint: float = 200.0) -> dict:

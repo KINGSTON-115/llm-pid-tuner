@@ -1,8 +1,9 @@
-"""hardware package - 串口硬件通信接口"""
+"""hardware package - serial hardware bridge helpers."""
 
-from hw.bridge import SerialBridge, select_serial_port, safe_pause
+from hw.bridge import DEMO_SERIAL_PORT, SerialBridge, safe_pause, select_serial_port
 
 __all__ = [
+    "DEMO_SERIAL_PORT",
     "SerialBridge",
     "select_serial_port",
     "safe_pause",
