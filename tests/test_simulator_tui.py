@@ -33,39 +33,39 @@ from sim.runtime import (
 class QueueEventSinkTests(unittest.TestCase):
     def test_collects_expected_event_shapes(self):
         event_queue = Queue()
-        sink = QueueEventSink(event_queue)
+        sink        = QueueEventSink(event_queue)
 
         sink.publish(
             EVENT_SAMPLE,
-            timestamp=1.0,
-            setpoint=200.0,
-            input=120.0,
-            pwm=255.0,
-            error=80.0,
-            p=1.0,
-            i=0.1,
-            d=0.05,
+            timestamp = 1.0,
+            setpoint  = 200.0,
+            input     = 120.0,
+            pwm       = 255.0,
+            error     = 80.0,
+            p         = 1.0,
+            i         = 0.1,
+            d         = 0.05,
         )
         sink.publish(
             EVENT_DECISION,
-            round=1,
-            action="BOOST_RESPONSE",
-            analysis_summary="Increase P slightly.",
-            fallback_used=False,
-            guardrail_notes=[],
+            round            = 1,
+            action           = "BOOST_RESPONSE",
+            analysis_summary = "Increase P slightly.",
+            fallback_used    = False,
+            guardrail_notes  = [],
         )
         sink.publish(
             EVENT_ROLLBACK,
-            round=2,
-            target_round=1,
-            pid={"p": 1.0, "i": 0.1, "d": 0.05},
-            reason="Regression detected.",
+            round        = 2,
+            target_round = 1,
+            pid          = {"p": 1.0, "i": 0.1, "d": 0.05},
+            reason       = "Regression detected.",
         )
         sink.publish(
             EVENT_LIFECYCLE,
-            phase="completed",
-            message="Finished.",
-            elapsed_sec=1.5,
+            phase       = "completed",
+            message     = "Finished.",
+            elapsed_sec = 1.5
         )
 
         events = drain_event_queue(event_queue)
@@ -93,7 +93,7 @@ class SimulationControllerTests(unittest.TestCase):
     def test_wait_until_running_blocks_until_resume(self):
         controller = SimulationController()
         controller.pause()
-        resumed = []
+        resumed    = []
 
         def worker():
             resumed.append(controller.wait_until_running(poll_interval=0.01))
@@ -112,21 +112,21 @@ class SimulationControllerTests(unittest.TestCase):
 class SimulatorLoopTests(unittest.TestCase):
     def test_run_tuning_loop_emits_core_events(self):
         event_queue = Queue()
-        event_sink = QueueEventSink(event_queue)
-        controller = SimulationController()
+        event_sink  = QueueEventSink(event_queue)
+        controller  = SimulationController()
 
         class FakeTuner:
             def __init__(self, *_args, **_kwargs):
                 pass
 
-            def analyze(self, _prompt_data, _history_text):
+            def analyze(self, _prompt_data, _history_text, stream_callback=None):
                 return {
                     "analysis_summary": "Stop after one round.",
-                    "tuning_action": "HOLD",
-                    "p": 1.2,
-                    "i": 0.1,
-                    "d": 0.05,
-                    "status": "DONE",
+                    "tuning_action"   : "HOLD",
+                    "p"               : 1.2,
+                    "i"               : 0.1,
+                    "d"               : 0.05,
+                    "status"          : "DONE",
                 }
 
         with patch.object(simulator, "LLMTuner", FakeTuner):
@@ -139,9 +139,9 @@ class SimulatorLoopTests(unittest.TestCase):
                     HeatingSimulator(random_seed=9),
                     SETPOINT,
                     "Python",
-                    event_sink=event_sink,
-                    controller=controller,
-                    emit_console=False,
+                    event_sink   = event_sink,
+                    controller   = controller,
+                    emit_console = False,
                 )
 
         events = drain_event_queue(event_queue)
@@ -177,7 +177,9 @@ class TuiModeTests(unittest.TestCase):
 
         with patch.object(sys.stdin, "isatty", return_value=True):
             with patch.object(sys.stdout, "isatty", return_value=True):
-                with patch("simulator.importlib.util.find_spec", side_effect=fake_find_spec):
+                with patch(
+                    "simulator.importlib.util.find_spec", side_effect=fake_find_spec
+                ):
                     use_tui, message = simulator.determine_tui_mode(False, "")
 
         self.assertFalse(use_tui)
@@ -186,11 +188,21 @@ class TuiModeTests(unittest.TestCase):
     def test_plain_mode_uses_plain_runner(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
         with patch.object(simulator, "ensure_runtime_config"):
-            with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
+            with patch.object(
+                simulator, "collect_doctor_checks", return_value=doctor_checks
+            ):
                 with patch.object(simulator, "print_doctor_report") as doctor_report:
-                    with patch.dict(simulator.CONFIG, {"MATLAB_MODEL_PATH": ""}, clear=False):
-                        with patch.object(simulator, "_run_python_simulation_plain", return_value={"mode": "plain"}) as plain:
-                            with patch.object(simulator, "_run_python_simulation_with_tui") as tui:
+                    with patch.dict(
+                        simulator.CONFIG, {"MATLAB_MODEL_PATH": ""}, clear=False
+                    ):
+                        with patch.object(
+                            simulator,
+                            "_run_python_simulation_plain",
+                            return_value={"mode": "plain"},
+                        ) as plain:
+                            with patch.object(
+                                simulator, "_run_python_simulation_with_tui"
+                            ) as tui:
                                 result = simulator.run_simulation(force_plain=True)
 
         self.assertEqual(result, {"mode": "plain"})
@@ -201,10 +213,20 @@ class TuiModeTests(unittest.TestCase):
     def test_default_mode_uses_doctor_and_warm_start(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
         with patch.object(simulator, "ensure_runtime_config"):
-            with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
-                with patch.dict(simulator.CONFIG, {"MATLAB_MODEL_PATH": ""}, clear=False):
-                    with patch.object(simulator, "determine_tui_mode", return_value=(True, None)):
-                        with patch.object(simulator, "_run_python_simulation_with_tui", return_value={"mode": "tui"}) as tui:
+            with patch.object(
+                simulator, "collect_doctor_checks", return_value=doctor_checks
+            ):
+                with patch.dict(
+                    simulator.CONFIG, {"MATLAB_MODEL_PATH": ""}, clear=False
+                ):
+                    with patch.object(
+                        simulator, "determine_tui_mode", return_value=(True, None)
+                    ):
+                        with patch.object(
+                            simulator,
+                            "_run_python_simulation_with_tui",
+                            return_value={"mode": "tui"},
+                        ) as tui:
                             result = simulator.run_simulation(force_plain=False)
 
         self.assertEqual(result, {"mode": "tui"})
@@ -217,46 +239,46 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
         from sim.tui import SimulationTUIApp
 
         event_queue = Queue()
-        event_sink = QueueEventSink(event_queue)
-        controller = SimulationController()
-        app = SimulationTUIApp(
-            event_queue=event_queue,
-            controller=controller,
-            worker_target=None,
-            event_sink=event_sink,
-            mode_label="Python",
+        event_sink  = QueueEventSink(event_queue)
+        controller  = SimulationController()
+        app         = SimulationTUIApp(
+            event_queue   = event_queue,
+            controller    = controller,
+            worker_target = None,
+            event_sink    = event_sink,
+            mode_label    = "Python",
         )
 
         async with app.run_test() as pilot:
             event_sink.publish(
                 EVENT_SAMPLE,
-                timestamp=1.0,
-                setpoint=200.0,
-                input=100.0,
-                pwm=255.0,
-                error=100.0,
-                p=1.0,
-                i=0.1,
-                d=0.05,
+                timestamp = 1.0,
+                setpoint  = 200.0,
+                input     = 100.0,
+                pwm       = 255.0,
+                error     = 100.0,
+                p         = 1.0,
+                i         = 0.1,
+                d         = 0.05,
             )
             event_sink.publish(
                 EVENT_ROUND_METRICS,
-                round=1,
-                avg_error=2.0,
-                max_error=3.0,
-                steady_state_error=1.0,
-                overshoot=0.5,
-                zero_crossings=0,
-                status="TUNING",
-                stable_rounds=0,
+                round              = 1,
+                avg_error          = 2.0,
+                max_error          = 3.0,
+                steady_state_error = 1.0,
+                overshoot          = 0.5,
+                zero_crossings     = 0,
+                status             = "TUNING",
+                stable_rounds      = 0,
             )
             event_sink.publish(
                 EVENT_DECISION,
-                round=1,
-                action="BOOST_RESPONSE",
-                analysis_summary="Increase P slightly.",
-                fallback_used=False,
-                guardrail_notes=[],
+                round            = 1,
+                action           = "BOOST_RESPONSE",
+                analysis_summary = "Increase P slightly.",
+                fallback_used    = False,
+                guardrail_notes  = [],
             )
             await pilot.pause()
             await pilot.press("l")
@@ -276,35 +298,35 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
         from sim.tui import SimulationTUIApp
 
         event_queue = Queue()
-        event_sink = QueueEventSink(event_queue)
-        controller = SimulationController()
-        app = SimulationTUIApp(
-            event_queue=event_queue,
-            controller=controller,
-            worker_target=None,
-            event_sink=event_sink,
-            mode_label="Python",
+        event_sink  = QueueEventSink(event_queue)
+        controller  = SimulationController()
+        app         = SimulationTUIApp(
+            event_queue   = event_queue,
+            controller    = controller,
+            worker_target = None,
+            event_sink    = event_sink,
+            mode_label    = "Python",
         )
 
         async with app.run_test() as _pilot:
             event_sink.publish(
                 EVENT_SAMPLE,
-                timestamp=1.0,
-                setpoint=200.0,
-                input=100.0,
-                pwm=255.0,
-                error=100.0,
-                p=1.0,
-                i=0.1,
-                d=0.05,
+                timestamp = 1.0,
+                setpoint  = 200.0,
+                input     = 100.0,
+                pwm       = 255.0,
+                error     = 100.0,
+                p         = 1.0,
+                i         = 0.1,
+                d         = 0.05,
             )
             event_sink.publish(
                 EVENT_DECISION,
-                round=1,
-                action="BOOST_RESPONSE",
-                analysis_summary="Queued before reset.",
-                fallback_used=False,
-                guardrail_notes=[],
+                round            = 1,
+                action           = "BOOST_RESPONSE",
+                analysis_summary = "Queued before reset.",
+                fallback_used    = False,
+                guardrail_notes  = [],
             )
 
             app.action_reset_view()
@@ -312,14 +334,14 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
 
             event_sink.publish(
                 EVENT_SAMPLE,
-                timestamp=2.0,
-                setpoint=210.0,
-                input=120.0,
-                pwm=200.0,
-                error=90.0,
-                p=1.1,
-                i=0.2,
-                d=0.06,
+                timestamp = 2.0,
+                setpoint  = 210.0,
+                input     = 120.0,
+                pwm       = 200.0,
+                error     = 90.0,
+                p         = 1.1,
+                i         = 0.2,
+                d         = 0.06,
             )
             app._poll_events()
 
@@ -330,9 +352,9 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
     async def test_quit_waits_for_worker_to_finish(self):
         from sim.tui import SimulationTUIApp
 
-        event_queue = Queue()
-        event_sink = QueueEventSink(event_queue)
-        controller = SimulationController()
+        event_queue     = Queue()
+        event_sink      = QueueEventSink(event_queue)
+        controller      = SimulationController()
         worker_finished = threading.Event()
 
         def worker() -> None:
@@ -341,11 +363,11 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
             worker_finished.set()
 
         app = SimulationTUIApp(
-            event_queue=event_queue,
-            controller=controller,
-            worker_target=worker,
-            event_sink=event_sink,
-            mode_label="Python",
+            event_queue   = event_queue,
+            controller    = controller,
+            worker_target = worker,
+            event_sink    = event_sink,
+            mode_label    = "Python",
         )
 
         async with app.run_test() as pilot:
@@ -367,19 +389,19 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
         event_sink = QueueEventSink(event_queue)
         controller = SimulationController()
         app = SimulationTUIApp(
-            event_queue=event_queue,
-            controller=controller,
-            worker_target=None,
-            event_sink=event_sink,
-            mode_label="Python",
+            event_queue   = event_queue,
+            controller    = controller,
+            worker_target = None,
+            event_sink    = event_sink,
+            mode_label    = "Python",
         )
 
         async with app.run_test() as _pilot:
             event_sink.publish(
                 EVENT_LIFECYCLE,
-                phase="completed",
-                message="Finished.",
-                elapsed_sec=10.0,
+                phase       = "completed",
+                message     = "Finished.",
+                elapsed_sec = 10.0,
             )
             app._poll_events()
 

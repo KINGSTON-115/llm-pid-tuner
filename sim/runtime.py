@@ -7,11 +7,12 @@ import time
 from typing import Any
 
 
-EVENT_SAMPLE = "sample"
+EVENT_SAMPLE        = "sample"
 EVENT_ROUND_METRICS = "round_metrics"
-EVENT_DECISION = "decision"
-EVENT_ROLLBACK = "rollback"
-EVENT_LIFECYCLE = "lifecycle"
+EVENT_DECISION      = "decision"
+EVENT_ROLLBACK      = "rollback"
+EVENT_LIFECYCLE     = "lifecycle"
+EVENT_LLM_STREAM    = "llm_stream"
 
 
 RuntimeEvent = dict[str, Any]
@@ -33,8 +34,8 @@ def drain_event_queue(event_queue: Queue[RuntimeEvent]) -> list[RuntimeEvent]:
 @dataclass(slots=True)
 class QueueEventSink:
     event_queue: Queue[RuntimeEvent]
-    _sequence: int = 0
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _sequence  : int = 0
+    _lock      : threading.Lock = field(default_factory=threading.Lock)
 
     def publish(self, event_type: str, **payload: Any) -> None:
         with self._lock:
@@ -50,7 +51,7 @@ class QueueEventSink:
 @dataclass(slots=True)
 class SimulationController:
     stop_event: threading.Event = field(default_factory=threading.Event)
-    run_event: threading.Event = field(default_factory=threading.Event)
+    run_event : threading.Event = field(default_factory=threading.Event)
 
     def __post_init__(self) -> None:
         self.run_event.set()
@@ -87,12 +88,16 @@ class SimulationController:
         return False
 
 
-def publish_event(event_sink: QueueEventSink | None, event_type: str, **payload: Any) -> None:
+def publish_event(
+    event_sink: QueueEventSink | None, event_type: str, **payload: Any
+) -> None:
     if event_sink is not None:
         event_sink.publish(event_type, **payload)
 
 
-def wait_while_paused(controller: SimulationController | None, poll_interval: float = 0.05) -> bool:
+def wait_while_paused(
+    controller: SimulationController | None, poll_interval: float = 0.05
+) -> bool:
     if controller is None:
         return True
     return controller.wait_until_running(poll_interval=poll_interval)

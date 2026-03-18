@@ -18,6 +18,7 @@ import time
 from typing import Any, Dict, List
 
 from core.config import CONFIG, initialize_runtime_config
+from core.i18n import tr
 from core.buffer import AdvancedDataBuffer
 from core.history import TuningHistory
 from llm.client import LLMTuner
@@ -39,7 +40,12 @@ DEFAULT_CASES = ("baseline", "fallback", "llm")
 def create_llm_tuner() -> LLMTuner:
     api_key = CONFIG["LLM_API_KEY"]
     if not api_key or api_key == "your-api-key-here":
-        raise RuntimeError("未设置 LLM_API_KEY，无法运行 llm benchmark")
+        raise RuntimeError(
+            tr(
+                "未设置 LLM_API_KEY，无法运行 llm benchmark",
+                "LLM_API_KEY is not set, cannot run llm benchmark",
+            )
+        )
     return LLMTuner(
         CONFIG["LLM_API_KEY"],
         CONFIG["LLM_API_BASE_URL"],
@@ -61,7 +67,12 @@ def run_case(
     best_result    = None
     records        : List[Dict[str, Any]] = []
     start_time     = time.time()
-    print(f"\n{case_name.upper()} 开始运行，最多 {rounds} 轮...")
+    print(
+        tr(
+            f"\n{case_name.upper()} 开始运行，最多 {rounds} 轮...",
+            f"\n{case_name.upper()} starting, max {rounds} rounds...",
+        )
+    )
     rnd_w          = len(str(rounds))  # 轮次数字宽度，保证对齐
 
     for round_num in range(1, rounds + 1):
@@ -76,11 +87,18 @@ def run_case(
 
         metrics = buffer.calculate_advanced_metrics()
         print(
-            f"\n  [{case_name}] 第 {round_num:{rnd_w}}/{rounds} 轮: "
-            f"AvgErr={metrics['avg_error']:>7.3f}  "
-            f"Steady={metrics['steady_state_error']:>7.3f}  "
-            f"Overshoot={metrics['overshoot']:>6.2f}%  "
-            f"Status={metrics['status']:<13}"
+            tr(
+                f"\n  [{case_name}] 第 {round_num:{rnd_w}}/{rounds} 轮: "
+                f"AvgErr={metrics['avg_error']:>7.3f}  "
+                f"Steady={metrics['steady_state_error']:>7.3f}  "
+                f"Overshoot={metrics['overshoot']:>6.2f}%  "
+                f"Status={metrics['status']:<13}",
+                f"\n  [{case_name}] Round {round_num:{rnd_w}}/{rounds}: "
+                f"AvgErr={metrics['avg_error']:>7.3f}  "
+                f"Steady={metrics['steady_state_error']:>7.3f}  "
+                f"Overshoot={metrics['overshoot']:>6.2f}%  "
+                f"Status={metrics['status']:<13}",
+            )
         )
         record = {
             "round"             : round_num,
@@ -107,7 +125,12 @@ def run_case(
                 best_result["pid"]["i"],
                 best_result["pid"]["d"],
             )
-            print(f"  [{case_name}] 回滚到第 {best_result['round']} 轮最佳参数")
+            print(
+                tr(
+                    f"  [{case_name}] 回滚到第 {best_result['round']} 轮最佳参数",
+                    f"  [{case_name}] Rolled back to best parameters from round {best_result['round']}",
+                )
+            )
             if is_good_enough(best_result["metrics"], DEFAULT_CONVERGENCE_RULES):
                 break
             continue
@@ -120,14 +143,22 @@ def run_case(
         else:
             assert llm is not None, "llm case 下 LLMTuner 未初始化"
             print(
-                f"  [llm] 第 {round_num:{rnd_w}}/{rounds} 轮: 正在请求 LLM...",
+                tr(
+                    f"  [llm] 第 {round_num:{rnd_w}}/{rounds} 轮: 正在请求 LLM...",
+                    f"  [llm] Round {round_num:{rnd_w}}/{rounds}: Requesting LLM...",
+                ),
                 end="",
                 flush=True,
             )
             result = llm.analyze(buffer.to_prompt_data(), history.to_prompt_text())
             if not result:
                 result = build_fallback_suggestion(buffer.current_pid, metrics)
-                print(" 超时/失败，使用兜底策略")
+                print(
+                    tr(
+                        " 超时/失败，使用兜底策略",
+                        " Timeout/Failure, using fallback rules",
+                    )
+                )
             # 流式输出中已经打印了完整的分析结果和调参动作，无需再次打印
             # else:
             #     print(f" {result.get('tuning_action', '?')}")
