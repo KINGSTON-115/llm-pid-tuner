@@ -208,7 +208,7 @@ class PanelState:
             self.latest_analysis = str(event.get("reason", "Rollback applied."))
 
         elif event_type == EVENT_LIFECYCLE:
-            phase = str(event.get("phase", self.current_phase))
+            phase              = str(event.get("phase", self.current_phase))
             self.current_phase = phase
             self.phase_message = str(event.get("message", self.phase_message))
             self.elapsed_sec   = float(event.get("elapsed_sec", self.elapsed_sec))
@@ -408,12 +408,12 @@ class SimulationTUIApp(App[None]):
         self._last_stream_len           = 0
 
     def compose(self) -> ComposeResult:
-        yield Static(self.state.tr("waiting_status"), id="status")
-        yield Static(self.state.tr("waiting_help"), id="help")
+        yield Static(self.state.tr("waiting_status"), id="status", markup=False)
+        yield Static(self.state.tr("waiting_help"), id="help", markup=False)
         with Horizontal(id="middle-container"):
-            yield Static(self.state.tr("waiting_summary"), id="summary")
+            yield Static(self.state.tr("waiting_summary"), id="summary", markup=False)
             with VerticalScroll(id="stream-container"):
-                yield Static("", id="stream")
+                yield Static("", id="stream", markup=False)
         yield RichLog(
             id="events", wrap=True, highlight=False, markup=False, auto_scroll=True
         )

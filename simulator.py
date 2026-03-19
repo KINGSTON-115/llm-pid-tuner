@@ -52,7 +52,10 @@ def ensure_runtime_config(
 ensure_runtime_config(verbose=False, create_if_missing=False)
 
 
-def choose_tui_language(default: str = get_language()) -> str:
+def choose_tui_language(default: str | None = None) -> str:
+    if default is None:
+        default = get_language()
+
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return default
 
@@ -228,7 +231,7 @@ def _collect_data(
 
 
 def _run_tuning_loop(
-    sim: Any,
+    sim          : Any,
     setpoint     : float,
     mode_label   : str,
     event_sink   : QueueEventSink | None = None,
@@ -887,7 +890,18 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Disable the Textual dashboard and use plain console logs.",
     )
+    parser.add_argument(
+        "--lang",
+        choices=["zh", "en"],
+        help="Force override the display language (zh or en).",
+    )
     args = parser.parse_args(argv)
+
+    if args.lang:
+        from core.i18n import set_language
+
+        set_language(args.lang)
+
     run_simulation(force_plain=args.plain)
 
 

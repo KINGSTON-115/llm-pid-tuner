@@ -154,6 +154,11 @@ class SimulatorLoopTests(unittest.TestCase):
 
 
 class TuiModeTests(unittest.TestCase):
+    def setUp(self):
+        from core.i18n import set_language
+
+        set_language("en")
+
     def test_non_tty_terminal_falls_back_to_plain_mode(self):
         with patch.object(sys.stdin, "isatty", return_value=False):
             with patch.object(sys.stdout, "isatty", return_value=False):

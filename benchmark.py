@@ -159,9 +159,6 @@ def run_case(
                         " Timeout/Failure, using fallback rules",
                     )
                 )
-            # 流式输出中已经打印了完整的分析结果和调参动作，无需再次打印
-            # else:
-            #     print(f" {result.get('tuning_action', '?')}")
 
         if result.get("fallback_used"):
             fallback_count += 1
@@ -266,7 +263,15 @@ def main():
         help   = "即使模型判定 DONE 也继续跑满轮数",
     )
     parser.add_argument("--json-out", type=str, help="将结果写入 JSON 文件")
+    parser.add_argument(
+        "--lang", choices=["zh", "en"], help="强制覆盖显示语言 (zh 或 en)"
+    )
     args = parser.parse_args()
+
+    if args.lang:
+        from core.i18n import set_language
+
+        set_language(args.lang)
 
     results = [
         run_case(
@@ -283,7 +288,12 @@ def main():
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as handle:
             json.dump(results, handle, indent=2, ensure_ascii=False)
-        print(f"\n[INFO] 结果已写入 {args.json_out}")
+        print(
+            tr(
+                f"\n[INFO] 结果已写入 {args.json_out}",
+                f"\n[INFO] Results written to {args.json_out}",
+            )
+        )
 
 
 if __name__ == "__main__":

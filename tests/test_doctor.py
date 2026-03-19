@@ -17,6 +17,11 @@ class FakeResponse:
 
 
 class DoctorTests(unittest.TestCase):
+    def setUp(self):
+        from core.i18n import set_language
+
+        set_language("en")
+
     def test_summarize_doctor_checks_counts_statuses(self):
         checks = [
             doctor.DoctorCheck("a", "PASS", "ok"),
@@ -47,7 +52,10 @@ class DoctorTests(unittest.TestCase):
             ):
                 with patch("doctor.os.path.exists", return_value=True):
                     with patch("doctor.requests.get", return_value=FakeResponse(200)):
-                        with patch("doctor.serial.tools.list_ports.comports", return_value=[fake_port]):
+                        with patch(
+                            "doctor.serial.tools.list_ports.comports",
+                            return_value=[fake_port],
+                        ):
                             checks = doctor.collect_doctor_checks()
 
         status_by_name = {check.name: check.status for check in checks}

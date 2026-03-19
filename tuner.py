@@ -14,6 +14,7 @@ import time
 import sys
 
 from core.config import CONFIG, initialize_runtime_config
+from core.i18n import tr
 from core.buffer import AdvancedDataBuffer
 from core.history import TuningHistory
 from hw.bridge import SerialBridge, select_serial_port, safe_pause
@@ -37,7 +38,7 @@ def main():
     initialize_runtime_config(create_if_missing=True, verbose=True)
 
     print("=" * 60)
-    print("  LLM PID Tuner PRO - 增强版自动调参系统")
+    print(tr("  LLM PID Tuner PRO - 增强版自动调参系统", "  LLM PID Tuner PRO - Enhanced Auto Tuning"))
     print("=" * 60)
 
     # 串口选择逻辑
@@ -47,24 +48,24 @@ def main():
             serial_port = sys.argv[1]
     else:
         if serial_port and serial_port.upper() != "AUTO":
-            print(f"[INFO] 使用配置端口: {serial_port}")
-            use_env = input("是否使用该端口? (Y/n): ").strip().lower()
+            print(tr(f"[INFO] 使用配置端口: {serial_port}", f"[INFO] Using configured port: {serial_port}"))
+            use_env = input(tr("是否使用该端口? (Y/n): ", "Use this port? (Y/n): ")).strip().lower()
             if use_env == "n":
                 serial_port = select_serial_port()
         else:
             serial_port = select_serial_port()
 
     if not serial_port:
-        print("[ERROR] 未指定串口，程序退出。")
+        print(tr("[ERROR] 未指定串口，程序退出。", "[ERROR] No serial port specified, exiting."))
         safe_pause()
         return
 
-    print(f"[INFO] 即将连接到: {serial_port}")
+    print(tr(f"[INFO] 即将连接到: {serial_port}", f"[INFO] Connecting to: {serial_port}"))
 
     # 串口初始化
     bridge = SerialBridge(serial_port, CONFIG["BAUD_RATE"])
     if not bridge.connect():
-        print(f"[ERROR] 无法打开串口 {serial_port}")
+        print(tr(f"[ERROR] 无法打开串口 {serial_port}", f"[ERROR] Cannot open serial port {serial_port}"))
         safe_pause()
         return
 
@@ -93,7 +94,7 @@ def main():
         bridge.send_command("STATUS")  # 唤醒/检查状态
         time.sleep(1)
 
-        print("[INFO] 开始采集数据...")
+        print(tr("[INFO] 开始采集数据...", "[INFO] Collecting data..."))
 
         while round_num < CONFIG["MAX_TUNING_ROUNDS"]:
             line = bridge.read_line()
@@ -111,7 +112,10 @@ def main():
                 round_num += 1
                 metrics    = buffer.calculate_advanced_metrics()
                 print(
-                    f"[第 {round_num} 轮] 分析中... AvgErr={metrics['avg_error']:.2f}, Status={metrics['status']}"
+                    tr(
+                        f"[第 {round_num} 轮] 分析中... AvgErr={metrics['avg_error']:.2f}, Status={metrics['status']}",
+                        f"[Round {round_num}] Analyzing... AvgErr={metrics['avg_error']:.2f}, Status={metrics['status']}",
+                    )
                 )
                 previous_best = best_result
                 best_result   = maybe_update_best_result(
@@ -119,8 +123,10 @@ def main():
                 )
                 if best_result is not None and best_result is not previous_best:
                     print(
-                        f"[Best] 更新最佳参数 -> "
-                        f"P={best_result['pid']['p']}, I={best_result['pid']['i']}, D={best_result['pid']['d']}"
+                        tr(
+                            f"[Best] 更新最佳参数 -> P={best_result['pid']['p']}, I={best_result['pid']['i']}, D={best_result['pid']['d']}",
+                            f"[Best] Updated best params -> P={best_result['pid']['p']}, I={best_result['pid']['i']}, D={best_result['pid']['d']}",
+                        )
                     )
 
                 if (
@@ -130,8 +136,10 @@ def main():
                 ):
                     rollback_pid = best_result["pid"]
                     print(
-                        f"[Rollback] 当前表现劣于第 {best_result['round']} 轮最佳结果，"
-                        f"恢复到 P={rollback_pid['p']}, I={rollback_pid['i']}, D={rollback_pid['d']}"
+                        tr(
+                            f"[Rollback] 当前表现劣于第 {best_result['round']} 轮最佳结果，恢复到 P={rollback_pid['p']}, I={rollback_pid['i']}, D={rollback_pid['d']}",
+                            f"[Rollback] Metrics worse than round {best_result['round']} best, reverting to P={rollback_pid['p']}, I={rollback_pid['i']}, D={rollback_pid['d']}",
+                        )
                     )
                     bridge.send_command(
                         f"SET P:{rollback_pid['p']} I:{rollback_pid['i']} D:{rollback_pid['d']}"
@@ -140,7 +148,10 @@ def main():
 
                     if is_good_enough(best_result["metrics"], good_enough_rules):
                         print(
-                            "\n[SUCCESS] 已回滚到历史最佳且满足可用标准，提前结束调参。"
+                            tr(
+                                "\n[SUCCESS] 已回滚到历史最佳且满足可用标准，提前结束调参。",
+                                "\n[SUCCESS] Rolled back to best result and met criteria, finishing early.",
+                            )
                         )
                         break
 
@@ -156,7 +167,10 @@ def main():
 
                 if stable_rounds >= CONFIG["REQUIRED_STABLE_ROUNDS"]:
                     print(
-                        f"\n[SUCCESS] 系统已连续 {stable_rounds} 轮达到可用稳定状态，提前结束调参。"
+                        tr(
+                            f"\n[SUCCESS] 系统已连续 {stable_rounds} 轮达到可用稳定状态，提前结束调参。",
+                            f"\n[SUCCESS] Reached {stable_rounds} stable rounds, finishing early.",
+                        )
                     )
                     break
 
@@ -168,7 +182,7 @@ def main():
                 result = tuner.analyze(prompt_data, history_text)
 
                 if not result:
-                    print("[WARN] LLM 本轮不可用，启用保守兜底策略。")
+                    print(tr("[WARN] LLM 本轮不可用，启用保守兜底策略。", "[WARN] LLM unavailable this round, using fallback."))
                     result = build_fallback_suggestion(buffer.current_pid, metrics)
 
                 if result:
@@ -189,14 +203,17 @@ def main():
                     )
 
                     # 流式输出中已包含分析结果，不再重复打印
-                    # print(f"[Result] {result.get('analysis_summary')}")
+                    action_str = result.get("tuning_action", "")
                     print(
-                        f"\n[Action] {result.get('tuning_action')} -> P={new_p}, I={new_i}, D={new_d}"
+                        tr(
+                            f"\n[动作] {action_str} -> P={new_p}, I={new_i}, D={new_d}",
+                            f"\n[Action] {action_str} -> P={new_p}, I={new_i}, D={new_d}",
+                        )
                     )
                     if guardrail_notes:
                         print(f"[Guardrail] {'; '.join(guardrail_notes)}")
                     if result.get("fallback_used"):
-                        print("[Fallback] 本轮使用规则策略替代 LLM 建议。")
+                        print(tr("[Fallback] 本轮使用规则策略替代 LLM 建议。", "[Fallback] Using rule-based fallback instead of LLM."))
 
                     cmd = f"SET P:{new_p} I:{new_i} D:{new_d}"
                     bridge.send_command(cmd)
@@ -206,14 +223,14 @@ def main():
                         result.get("status") == "DONE"
                         or metrics["avg_error"] < CONFIG["MIN_ERROR_THRESHOLD"]
                     ):
-                        print("\n[SUCCESS] 调参完成！")
+                        print(tr("\n[SUCCESS] 调参完成！", "\n[SUCCESS] Tuning complete!"))
                         break
 
                 buffer.reset()
                 time.sleep(1)
 
     except KeyboardInterrupt:
-        print("\n[INFO] 用户停止")
+        print(tr("\n[INFO] 用户停止", "\n[INFO] Stopped by user"))
     finally:
         bridge.disconnect()
 

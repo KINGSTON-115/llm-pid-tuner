@@ -50,6 +50,8 @@ import json
 import os
 from typing import Any
 
+from core.i18n import tr
+
 # ============================================================================
 # 默认配置
 # ============================================================================
@@ -74,6 +76,7 @@ CONFIG: dict = {
     "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.3,
     "GOOD_ENOUGH_OVERSHOOT"         : 2.0,
     "REQUIRED_STABLE_ROUNDS"        : 2,
+    "LANGUAGE"                      : "",      # "zh" / "en"，空则自动检测
     # MATLAB/Simulink 模式专属配置（使用 matlab_tuner.py 时填写）
     "MATLAB_MODEL_PATH"             : "",      # Simulink .slx 文件完整路径
     "MATLAB_PID_BLOCK_PATH"         : "",      # PID 模块路径，如 "my_model/PID Controller"
@@ -107,21 +110,46 @@ def load_config(create_if_missing: bool = True, verbose: bool = True) -> None:
                 user_config = json.load(f)
                 CONFIG.update(user_config)
                 if verbose:
-                    print(f"[INFO] 已加载配置文件: {CONFIG_PATH}")
+                    print(
+                        tr(
+                            f"[INFO] 已加载配置文件: {CONFIG_PATH}",
+                            f"[INFO] Config loaded: {CONFIG_PATH}",
+                        )
+                    )
         except Exception as e:
             if verbose:
-                print(f"[WARN] 配置文件加载失败: {e}，将使用默认值。")
+                print(
+                    tr(
+                        f"[WARN] 配置文件加载失败: {e}，将使用默认值。",
+                        f"[WARN] Config load failed: {e}, using defaults.",
+                    )
+                )
     elif create_if_missing:
         # 2. 如果不存在，自动创建默认配置
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(CONFIG, f, indent=4, ensure_ascii=False)
             if verbose:
-                print(f"[INFO] 未找到配置文件，已生成默认配置: {CONFIG_PATH}")
-                print(f"[HINT] 请打开 {CONFIG_PATH} 修改您的 API Key 和串口设置。")
+                print(
+                    tr(
+                        f"[INFO] 未找到配置文件，已生成默认配置: {CONFIG_PATH}",
+                        f"[INFO] Config not found, created default: {CONFIG_PATH}",
+                    )
+                )
+                print(
+                    tr(
+                        f"[HINT] 请打开 {CONFIG_PATH} 修改您的 API Key 和串口设置。",
+                        f"[HINT] Open {CONFIG_PATH} to set your API Key and serial port.",
+                    )
+                )
         except Exception as e:
             if verbose:
-                print(f"[WARN] 无法创建配置文件: {e}")
+                print(
+                    tr(
+                        f"[WARN] 无法创建配置文件: {e}",
+                        f"[WARN] Cannot create config file: {e}",
+                    )
+                )
 
     # 3. 环境变量覆盖 (优先级最高)
     for key in CONFIG:
@@ -163,3 +191,7 @@ def initialize_runtime_config(
     ensure_utf8_console()
     load_config(create_if_missing=create_if_missing, verbose=verbose)
     _apply_proxy_env_from_config()
+    lang = CONFIG.get("LANGUAGE", "").strip().lower()
+    if lang in ("zh", "en"):
+        from core.i18n import set_language
+        set_language(lang)
