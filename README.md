@@ -380,4 +380,4 @@ python system_id.py --file sample_step.csv
 
 ## License
 
-`CC BY-NC-SA 4.0`
+`Apache-2.0`
