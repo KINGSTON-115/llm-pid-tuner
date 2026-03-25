@@ -2,6 +2,8 @@
 
 本文档说明如何使用 llm-pid-tuner 对 MATLAB/Simulink 仿真模型进行 LLM 辅助 PID 调参。
 
+如果你打算源码运行、自己改模型适配逻辑，或做针对性开发，建议统一拉取 `latest-verified` 分支代码，而不是直接使用 `main`。
+
 ---
 
 ## 快速开始（下载 exe，零代码运行）

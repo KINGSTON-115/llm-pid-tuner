@@ -221,8 +221,10 @@ python doctor.py
 
 ## Run from source
 
+If you want the newest verified source snapshot for development or targeted customization, use the `latest-verified` branch.
+
 ```bash
-git clone https://github.com/KINGSTON-115/llm-pid-tuner.git
+git clone -b latest-verified https://github.com/KINGSTON-115/llm-pid-tuner.git
 cd llm-pid-tuner
 pip install -r requirements.txt
 python tuner.py
