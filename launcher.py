@@ -7,6 +7,7 @@ import argparse
 import sys
 import traceback
 
+from core.config import initialize_runtime_config
 from hw.bridge import safe_pause
 import simulator
 import tuner
@@ -141,6 +142,7 @@ def dispatch(
 
 def main(argv: list[str] | None = None) -> None:
     try:
+        initialize_runtime_config(create_if_missing=True, verbose=True)
         args = build_parser().parse_args(argv)
         dispatch(args.mode_or_port, list(args.extra), force_plain=args.plain)
     except Exception as exc:
@@ -148,7 +150,7 @@ def main(argv: list[str] | None = None) -> None:
         if can_prompt():
             debug_enabled = False
             try:
-                from core.config import CONFIG, initialize_runtime_config
+                from core.config import CONFIG
 
                 initialize_runtime_config(create_if_missing=False, verbose=False)
                 debug_enabled = bool(CONFIG.get("LLM_DEBUG_OUTPUT"))

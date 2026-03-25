@@ -40,6 +40,13 @@ from sim.runtime import (
 from system_id import extract_initial_pid, system_identify
 
 
+def _get_configured_setpoint(default: float = SETPOINT) -> float:
+    try:
+        return float(CONFIG.get("MATLAB_SETPOINT", default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def choose_tui_language(default: str = "zh") -> str:
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return default
@@ -239,8 +246,9 @@ def _build_python_sim_prompt_context() -> dict[str, Any]:
 def _create_python_simulator(
     initial_pid: dict[str, float] | None,
     warm_start: bool,
+    setpoint: float,
 ) -> tuple[HeatingSimulator, bool]:
-    sim = HeatingSimulator()
+    sim = HeatingSimulator(setpoint=setpoint)
     effective_warm_start = warm_start
     if initial_pid:
         sim.kp = initial_pid["p"]
@@ -613,6 +621,7 @@ def _run_python_simulation_with_tui(
 ) -> dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
+    setpoint = _get_configured_setpoint()
     event_queue: Queue[dict[str, Any]] = Queue()
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
@@ -621,10 +630,10 @@ def _run_python_simulation_with_tui(
 
     def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
         def worker() -> None:
-            sim, effective_warm_start = _create_python_simulator(pid, warm_start)
+            sim, effective_warm_start = _create_python_simulator(pid, warm_start, setpoint)
             result = _run_tuning_loop(
                 sim,
-                SETPOINT,
+                setpoint,
                 "Python",
                 llm_mode="python_sim",
                 prompt_context=_build_python_sim_prompt_context(),
@@ -663,14 +672,15 @@ def _run_python_simulation_plain(
     doctor_checks: list[Any] | None = None,
     initial_pid: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    setpoint = _get_configured_setpoint()
     print("=" * 60)
     print("  LLM PID Tuner PRO - Simulation")
     print("=" * 60)
-    print(f"Setpoint: {SETPOINT}, Model: {CONFIG['LLM_MODEL_NAME']}")
-    sim, effective_warm_start = _create_python_simulator(initial_pid, warm_start)
+    print(f"Setpoint: {setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}")
+    sim, effective_warm_start = _create_python_simulator(initial_pid, warm_start, setpoint)
     return _run_tuning_loop(
         sim,
-        SETPOINT,
+        setpoint,
         "Python",
         llm_mode="python_sim",
         prompt_context=_build_python_sim_prompt_context(),

@@ -105,6 +105,24 @@ whos y_out   % should show y_out as a timeseries object
 
 Save the model as `.slx` and note the full file path (use forward slashes, e.g. `C:/models/pid_tuner.slx`).
 
+**3. Setpoint source block (Step or Constant recommended)**
+
+The tool now treats `MATLAB_SETPOINT` as the single source of truth for the target value.
+
+- The built-in Python simulator uses `MATLAB_SETPOINT` directly
+- Simulink mode tries to write `MATLAB_SETPOINT` back into the model's setpoint source block before tuning starts
+
+Built-in auto-detection currently supports these common block types:
+
+- `Step`: writes to `After`
+- `Constant`: writes to `Value`
+
+Practical tips:
+
+- If your target value comes from a `Step` or `Constant` block, you usually do not need extra setup
+- Naming the source block with words like `Step`, `Setpoint`, `Reference`, `目标`, or `给定` makes auto-detection more reliable
+- If your model uses a more specialized source block, the current version may not auto-write it; in that case, keep the model's internal target value consistent with `MATLAB_SETPOINT`
+
 ---
 
 ## Step 3: Configure `config.json`
@@ -132,9 +150,11 @@ Add these fields alongside your existing LLM configuration:
 | `MATLAB_PID_BLOCK_PATH` | Full block path inside the model | `my_model/PID Controller` |
 | `MATLAB_OUTPUT_SIGNAL` | To Workspace variable name | `y_out` |
 | `MATLAB_SIM_STEP_TIME` | Simulation time per tuning round (sim seconds) | `10.0` |
-| `MATLAB_SETPOINT` | Target value — must match the Setpoint in your model | `200.0` |
+| `MATLAB_SETPOINT` | Unified target value. The Python simulator uses it directly; Simulink will try to sync it into `Step` / `Constant` setpoint blocks automatically | `200.0` |
 
 `MATLAB_PID_BLOCK_PATH` follows the format **model_name/block_name**. The model name is the `.slx` filename without the extension. If the PID block is inside a subsystem, write `my_model/Subsystem/PID Controller`.
+
+`MATLAB_SETPOINT` is no longer only a logging target. For common `Step` / `Constant` setpoint blocks, the tool will try to write that value into the Simulink model before each tuning run.
 
 ---
 
@@ -198,6 +218,14 @@ The MATLAB Engine API is not installed. Follow Step 1, and make sure you run `se
 - Confirm the To Workspace block's Save format is **`Timeseries`** (not Array or Structure)
 - Confirm the variable name matches `MATLAB_OUTPUT_SIGNAL` exactly
 - Run the model once manually in MATLAB and check that the variable appears in the workspace
+
+**I changed `MATLAB_SETPOINT` to 300, but the model still behaves like 200**
+
+- The tool now tries to auto-detect and update common `Step` / `Constant` setpoint blocks
+- If the log says it synced the target value into a block, the model target was updated successfully
+- If that message is missing, the tool could not identify your setpoint source block automatically
+- First check whether your setpoint comes from a `Step` or `Constant` block
+- If not, make sure the model's internal target value matches `MATLAB_SETPOINT` manually for now
 
 **The LLM reports the response is "extremely slow" but it looks fine in simulation**
 

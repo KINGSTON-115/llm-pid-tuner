@@ -326,6 +326,12 @@ class SimulatorStepTests(unittest.TestCase):
         self.assertAlmostEqual(sim.ki, 0.5)
         self.assertAlmostEqual(sim.kd, 0.2)
 
+    def test_simulator_accepts_custom_setpoint(self):
+        sim = HeatingSimulator(setpoint=300.0, random_seed=7)
+        data = sim.get_data()
+        self.assertEqual(data["setpoint"], 300.0)
+        self.assertAlmostEqual(data["error"], 300.0 - sim.temp)
+
     def test_same_seed_reproduces_same_temperature_trace(self):
         left = HeatingSimulator(random_seed=123)
         right = HeatingSimulator(random_seed=123)

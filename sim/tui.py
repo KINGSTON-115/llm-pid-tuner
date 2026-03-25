@@ -56,6 +56,7 @@ TRANSLATIONS = {
         "help_title": "快捷键",
         "help_line": "q 退出 | p 暂停/继续 | l 详细日志 | r 清空日志/摘要",
         "help_browse": "日志浏览：鼠标滚轮 / PgUp / PgDn / ↑↓",
+        "help_done": "调参完成 → n 继续新一轮（以本次结果为起点） | q 退出",
         "flags_none": "无",
         "no_decision": "还没有决策。",
         "summary_cleared": "摘要已清空。",
@@ -97,6 +98,7 @@ TRANSLATIONS = {
         "help_title": "Hotkeys",
         "help_line": "q quit | p pause/resume | l detailed log | r clear log/summary",
         "help_browse": "Log browsing: mouse wheel / PgUp / PgDn / Up / Down",
+        "help_done": "Tuning done → n next round (starts from last result) | q quit",
         "flags_none": "none",
         "no_decision": "No decision yet.",
         "summary_cleared": "Summary cleared.",
@@ -125,6 +127,7 @@ class PanelState:
     phase_message: str = "Waiting to start"
     stable_rounds: int = 0
     paused: bool = False
+    tuning_done: bool = False
     current_input: float = 0.0
     current_setpoint: float = 0.0
     current_pwm: float = 0.0
@@ -284,6 +287,14 @@ class PanelState:
         )
 
     def render_help_text(self) -> str:
+        if self.tuning_done:
+            return "\n".join(
+                [
+                    self.tr("help_title"),
+                    self.tr("help_done"),
+                    self.tr("help_browse"),
+                ]
+            )
         return "\n".join(
             [
                 self.tr("help_title"),
@@ -369,6 +380,7 @@ class SimulationTUIApp(App[None]):
         ("p", "toggle_pause", "Pause"),
         ("l", "toggle_event_detail", "Log detail"),
         ("r", "reset_view", "Reset view"),
+        ("n", "next_round", "Next round"),
     ]
 
     def __init__(
@@ -379,6 +391,7 @@ class SimulationTUIApp(App[None]):
         event_sink: QueueEventSink | None = None,
         mode_label: str = "Python",
         language: str = "zh",
+        next_round_factory: Callable[[], Callable[[], None]] | None = None,
     ) -> None:
         super().__init__()
         self.event_queue = event_queue
@@ -386,6 +399,7 @@ class SimulationTUIApp(App[None]):
         self.worker_target = worker_target
         self.event_sink = event_sink
         self.state = PanelState(mode_label=mode_label, language=language)
+        self.next_round_factory = next_round_factory
         self._worker_thread: threading.Thread | None = None
         self._started_at = time.time()
         self._shutdown_requested = False
@@ -394,6 +408,7 @@ class SimulationTUIApp(App[None]):
         self._log_requires_full_refresh = True
         self._placeholder_visible = False
         self._history_browsing_enabled = False
+        self._last_result: dict[str, Any] = {}
 
     def compose(self) -> ComposeResult:
         yield Static(self.state.tr("waiting_status"), id="status")
@@ -517,6 +532,9 @@ class SimulationTUIApp(App[None]):
         log.auto_scroll = False
         log.focus()
         self._history_browsing_enabled = True
+        if self.next_round_factory is not None:
+            self.state.tuning_done = True
+            self._refresh_all()
 
     def action_request_quit(self) -> None:
         self.controller.request_stop()
@@ -533,6 +551,31 @@ class SimulationTUIApp(App[None]):
             }
         )
         self._log_requires_full_refresh = True
+        self._refresh_all()
+
+    def action_next_round(self) -> None:
+        if not self.state.tuning_done or self.next_round_factory is None:
+            return
+        new_worker = self.next_round_factory(self._last_result)
+        self.state.tuning_done = False
+        self._history_browsing_enabled = False
+        self.state.reset_view()
+        self._rendered_event_count = 0
+        self._log_requires_full_refresh = True
+        self.controller = SimulationController()
+        self._shutdown_requested = False
+        self._started_at = time.time()
+        self._worker_thread = threading.Thread(
+            target=new_worker,
+            name="simulation-tui-worker",
+        )
+        self._worker_thread.start()
+        try:
+            log = self.query_one("#events", RichLog)
+            log.auto_scroll = True
+            log.clear()
+        except NoMatches:
+            pass
         self._refresh_all()
 
     def action_toggle_pause(self) -> None:
