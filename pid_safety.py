@@ -23,18 +23,6 @@ DEFAULT_PID_LIMITS: Dict[str, Dict[str, float]] = {
     "d": {"min": 0.0, "max":  20.0, "max_increase_ratio": 4.0},
 }
 
-PYTHON_SIM_PID_LIMITS: Dict[str, Dict[str, float]] = {
-    "p": {"min": 0.0, "max": 5000.0, "max_increase_ratio": 3.0},
-    "i": {"min": 0.0, "max":  500.0, "max_increase_ratio": 4.0},
-    "d": {"min": 0.0, "max":  500.0, "max_increase_ratio": 4.0},
-}
-
-SIMULINK_PID_LIMITS: Dict[str, Dict[str, float]] = {
-    "p": {"min": 0.0, "max": 5000.0, "max_increase_ratio": 5.0},
-    "i": {"min": 0.0, "max":  500.0, "max_increase_ratio": 6.0},
-    "d": {"min": 0.0, "max":  500.0, "max_increase_ratio": 6.0},
-}
-
 DEFAULT_CONVERGENCE_RULES: Dict[str, float] = {
     "avg_error_threshold"         : 1.2,
     "steady_state_error_threshold": 0.3,
@@ -48,21 +36,6 @@ DEFAULT_ROLLBACK_RULES: Dict[str, float] = {
     "steady_state_error_margin": 0.25,
     "overshoot_margin"         : 1.0,
 }
-
-
-def get_pid_limits(mode: str | None = None) -> Dict[str, Dict[str, float]]:
-    normalized = (mode or "").strip().lower()
-    if normalized == "python_sim":
-        source = PYTHON_SIM_PID_LIMITS
-    elif normalized == "simulink":
-        source = SIMULINK_PID_LIMITS
-    else:
-        source = DEFAULT_PID_LIMITS
-
-    return {
-        key: dict(value)
-        for key, value in source.items()
-    }
 
 
 def _to_float(value: Any, fallback: float) -> float:
@@ -111,11 +84,7 @@ def apply_pid_guardrails(
     return sanitized, notes
 
 
-def build_fallback_suggestion(
-    current_pid: Dict[str, float],
-    metrics: Dict[str, float],
-    limits: Dict[str, Dict[str, float]] | None = None,
-) -> Dict[str, Any]:
+def build_fallback_suggestion(current_pid: Dict[str, float], metrics: Dict[str, float]) -> Dict[str, Any]:
     """当 LLM 不可用时，用保守规则生成一个兜底建议。"""
     proposal = {
         "p": current_pid.get("p", 1.0),
@@ -156,7 +125,7 @@ def build_fallback_suggestion(
         action         = "FINE_TUNE"
         summary        = "进入细调阶段，做小步修正。"
 
-    safe_pid, notes = apply_pid_guardrails(current_pid, proposal, limits=limits)
+    safe_pid, notes = apply_pid_guardrails(current_pid, proposal)
 
     return {
         "analysis_summary": f"LLM 不可用，已启用保守兜底：{summary}",

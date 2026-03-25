@@ -270,7 +270,7 @@ class TuiModeTests(unittest.TestCase):
 
     def test_plain_mode_uses_plain_runner(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
-        with patch.object(simulator, "initialize_runtime_config"):
+        with patch.object(simulator, "ensure_runtime_config"):
             with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
                 with patch.object(simulator, "print_doctor_report") as doctor_report:
                     with patch.dict(simulator.CONFIG, {"MATLAB_MODEL_PATH": ""}, clear=False):
@@ -280,11 +280,7 @@ class TuiModeTests(unittest.TestCase):
 
         self.assertEqual(result, {"mode": "plain"})
         doctor_report.assert_called_once_with(doctor_checks)
-        plain.assert_called_once_with(
-            warm_start=True,
-            doctor_checks=doctor_checks,
-            initial_pid=None,
-        )
+        plain.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
 
 
 class PanelStateTests(unittest.TestCase):
@@ -316,7 +312,7 @@ class PanelStateTests(unittest.TestCase):
 
     def test_default_mode_uses_doctor_and_warm_start(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
-        with patch.object(simulator, "initialize_runtime_config"):
+        with patch.object(simulator, "ensure_runtime_config"):
             with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
                 with patch.dict(simulator.CONFIG, {"MATLAB_MODEL_PATH": ""}, clear=False):
                     with patch.object(simulator, "determine_tui_mode", return_value=(True, None)):
@@ -324,15 +320,11 @@ class PanelStateTests(unittest.TestCase):
                             result = simulator.run_simulation(force_plain=False)
 
         self.assertEqual(result, {"mode": "tui"})
-        tui.assert_called_once_with(
-            warm_start=True,
-            doctor_checks=doctor_checks,
-            initial_pid=None,
-        )
+        tui.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
 
     def test_tui_failure_falls_back_to_plain_runner(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
-        with patch.object(simulator, "initialize_runtime_config"):
+        with patch.object(simulator, "ensure_runtime_config"):
             with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
                 with patch.object(simulator, "print_doctor_report") as doctor_report:
                     with patch.dict(
@@ -357,11 +349,7 @@ class PanelStateTests(unittest.TestCase):
 
         self.assertEqual(result, {"mode": "plain"})
         doctor_report.assert_called_once_with(doctor_checks)
-        plain.assert_called_once_with(
-            warm_start=True,
-            doctor_checks=doctor_checks,
-            initial_pid=None,
-        )
+        plain.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
 
 
 @unittest.skipUnless(TEXTUAL_AVAILABLE, "textual is required")

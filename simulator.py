@@ -9,7 +9,7 @@ from queue import Queue
 import sys
 import time
 import traceback
-from typing import Any, Callable
+from typing import Any
 
 from core.buffer import AdvancedDataBuffer
 from core.config import CONFIG, initialize_runtime_config
@@ -23,7 +23,7 @@ from core.tuning_session import (
 )
 from doctor import collect_doctor_checks, print_doctor_report, summarize_doctor_checks
 from llm.client import LLMTuner
-from pid_safety import apply_pid_guardrails, build_fallback_suggestion, get_pid_limits
+from pid_safety import apply_pid_guardrails, build_fallback_suggestion
 from sim.model import HeatingSimulator, SETPOINT
 from sim.runtime import (
     EVENT_DECISION,
@@ -38,6 +38,9 @@ from sim.runtime import (
     wait_while_paused,
 )
 from system_id import extract_initial_pid, system_identify
+
+
+initialize_runtime_config(create_if_missing=False, verbose=False)
 
 
 def choose_tui_language(default: str = "zh") -> str:
@@ -236,20 +239,6 @@ def _build_python_sim_prompt_context() -> dict[str, Any]:
     }
 
 
-def _create_python_simulator(
-    initial_pid: dict[str, float] | None,
-    warm_start: bool,
-) -> tuple[HeatingSimulator, bool]:
-    sim = HeatingSimulator()
-    effective_warm_start = warm_start
-    if initial_pid:
-        sim.kp = initial_pid["p"]
-        sim.ki = initial_pid["i"]
-        sim.kd = initial_pid["d"]
-        effective_warm_start = False
-    return sim, effective_warm_start
-
-
 def _build_simulink_prompt_context(
     model_path: str,
     pid_block_path: str,
@@ -326,7 +315,6 @@ def _run_tuning_loop(
     disable_early_exit: bool = False,
 ) -> dict[str, Any]:
     llm_mode = _resolve_llm_mode(mode_label, llm_mode)
-    pid_limits = get_pid_limits(llm_mode)
     if prompt_context is None:
         prompt_context = _default_prompt_context_for_mode(sim, llm_mode)
 
@@ -366,6 +354,8 @@ def _run_tuning_loop(
             round_index = session.round_num + 1
             _console(emit_console, f"\n[Round {round_index}] Collecting data...")
             # Simulink 每轮独立仿真，需在采集前清空上轮缓冲数据
+            if hasattr(sim, 'run_step'):
+                session.buffer.reset()
             _emit_lifecycle(
                 event_sink,
                 start_time,
@@ -486,17 +476,10 @@ def _run_tuning_loop(
                     f"LLM unavailable at round {round_index}; using fallback rules.",
                 )
                 result = build_fallback_suggestion(
-                    evaluation.current_pid,
-                    evaluation.metrics,
-                    limits=pid_limits,
+                    evaluation.current_pid, evaluation.metrics
                 )
 
-            decision = finalize_decision(
-                session,
-                evaluation,
-                result,
-                limits=pid_limits,
-            )
+            decision = finalize_decision(session, evaluation, result)
             sim.set_pid(
                 decision.safe_pid["p"],
                 decision.safe_pid["i"],
@@ -511,23 +494,6 @@ def _run_tuning_loop(
                 fallback_used=decision.fallback_used,
                 guardrail_notes=list(decision.guardrail_notes),
             )
-            _console(
-                emit_console,
-                (
-                    f"[Action] {decision.action} -> "
-                    f"P={decision.safe_pid['p']}, I={decision.safe_pid['i']}, D={decision.safe_pid['d']}"
-                ),
-            )
-            if decision.guardrail_notes:
-                _console(
-                    emit_console,
-                    f"[Guardrail] {'; '.join(decision.guardrail_notes)}",
-                )
-            if decision.fallback_used:
-                _console(
-                    emit_console,
-                    "[Fallback] This round used the fallback policy instead of the LLM suggestion.",
-                )
 
             if decision.completed_reason == "llm_marked_done":
                 session.completed_reason = "llm_marked_done"
@@ -609,65 +575,50 @@ def determine_tui_mode(force_plain: bool, matlab_model_path: str) -> tuple[bool,
 def _run_python_simulation_with_tui(
     warm_start: bool = True,
     doctor_checks: list[Any] | None = None,
-    initial_pid: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
     event_queue: Queue[dict[str, Any]] = Queue()
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
-    language = choose_tui_language()
+    sim = HeatingSimulator()
     result_box: dict[str, Any] = {}
+    language = choose_tui_language()
 
-    def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
-        def worker() -> None:
-            sim, effective_warm_start = _create_python_simulator(pid, warm_start)
-            result = _run_tuning_loop(
-                sim,
-                SETPOINT,
-                "Python",
-                llm_mode="python_sim",
-                prompt_context=_build_python_sim_prompt_context(),
-                event_sink=event_sink,
-                controller=app.controller,
-                emit_console=False,
-                warm_start=effective_warm_start,
-                doctor_checks=doctor_checks,
-            )
-            result_box["result"] = result
-            app._last_result = result
-        return worker
+    def worker() -> None:
+        result_box["result"] = _run_tuning_loop(
+            sim,
+            SETPOINT,
+            "Python",
+            llm_mode="python_sim",
+            prompt_context=_build_python_sim_prompt_context(),
+            event_sink=event_sink,
+            controller=controller,
+            emit_console=False,
+            warm_start=warm_start,
+            doctor_checks=doctor_checks,
+        )
 
-    def next_round_factory(last_result: dict[str, Any]) -> Callable[[], None]:
-        pid = last_result.get("final_pid")
-        new_controller = SimulationController()
-        app.controller = new_controller
-        app.event_sink = QueueEventSink(event_queue)
-        return make_worker(pid)
-
-    app = SimulationTUIApp(
+    SimulationTUIApp(
         event_queue=event_queue,
         controller=controller,
-        worker_target=make_worker(initial_pid),
+        worker_target=worker,
         event_sink=event_sink,
         mode_label="Python",
         language=language,
-        next_round_factory=next_round_factory,
-    )
-    app.run()
+    ).run()
     return result_box.get("result", {})
 
 
 def _run_python_simulation_plain(
     warm_start: bool = True,
     doctor_checks: list[Any] | None = None,
-    initial_pid: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     print("=" * 60)
     print("  LLM PID Tuner PRO - Simulation")
     print("=" * 60)
     print(f"Setpoint: {SETPOINT}, Model: {CONFIG['LLM_MODEL_NAME']}")
-    sim, effective_warm_start = _create_python_simulator(initial_pid, warm_start)
+    sim = HeatingSimulator()
     return _run_tuning_loop(
         sim,
         SETPOINT,
@@ -675,12 +626,12 @@ def _run_python_simulation_plain(
         llm_mode="python_sim",
         prompt_context=_build_python_sim_prompt_context(),
         emit_console=True,
-        warm_start=effective_warm_start,
+        warm_start=warm_start,
         doctor_checks=doctor_checks,
     )
 
 
-def _run_simulink_simulation(initial_pid: dict[str, float] | None = None) -> dict[str, Any] | None:
+def _run_simulink_simulation() -> dict[str, Any] | None:
     try:
         from sim.simulink_bridge import SimulinkBridge
     except ImportError as exc:
@@ -725,9 +676,6 @@ def _run_simulink_simulation(initial_pid: dict[str, float] | None = None) -> dic
         print(f"[ERROR] Failed to connect to Simulink: {exc}")
         return None
 
-    if initial_pid:
-        sim.set_pid(initial_pid["p"], initial_pid["i"], initial_pid["d"])
-
     try:
         return _run_tuning_loop(
             sim,
@@ -747,8 +695,8 @@ def _run_simulink_simulation(initial_pid: dict[str, float] | None = None) -> dic
         sim.disconnect()
 
 
-def run_simulation(force_plain: bool = False, initial_pid: dict[str, float] | None = None) -> dict[str, Any] | None:
-    initialize_runtime_config(create_if_missing=True, verbose=True)
+def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
+    ensure_runtime_config(verbose=True)
     doctor_checks = collect_doctor_checks()
     matlab_model_path = CONFIG.get("MATLAB_MODEL_PATH", "").strip()
     use_tui, fallback_message = determine_tui_mode(force_plain, matlab_model_path)
@@ -758,14 +706,13 @@ def run_simulation(force_plain: bool = False, initial_pid: dict[str, float] | No
 
     if matlab_model_path:
         print_doctor_report(doctor_checks)
-        return _run_simulink_simulation(initial_pid=initial_pid)
+        return _run_simulink_simulation()
 
     if use_tui:
         try:
             return _run_python_simulation_with_tui(
                 warm_start=True,
                 doctor_checks=doctor_checks,
-                initial_pid=initial_pid,
             )
         except Exception as exc:
             print(f"[WARN] Failed to start the TUI ({exc}); falling back to plain output.")
@@ -777,7 +724,6 @@ def run_simulation(force_plain: bool = False, initial_pid: dict[str, float] | No
     return _run_python_simulation_plain(
         warm_start=True,
         doctor_checks=doctor_checks,
-        initial_pid=initial_pid,
     )
 
 
