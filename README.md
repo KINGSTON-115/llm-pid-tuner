@@ -79,6 +79,9 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 双击运行 `llm-pid-tuner.exe`。
 
+启动器会先让你选择模式：`[1]` 真实硬件调参，`[2]` 本地仿真 TUI（默认）。
+如果你现在是准备接串口硬件，请先选 `[1]`。
+
 第一次运行时，如果当前目录下没有 `config.json`，程序会自动生成一份默认配置。
 
 ### 第 4 步：填写 `config.json`
@@ -248,10 +251,16 @@ python simulator.py
 
 如果你不想用 exe，也可以直接跑源码。
 
+### 分支说明（重要）
+
+- `dev` 分支：当前最新开发代码，功能更新会先进入 `dev`
+- `main` 分支：稳定版分支，以稳定可用为主，但不一定是最新代码
+- 如果你想源码运行或做针对性调教，建议优先拉取 `dev` 分支
+
 ### 安装依赖
 
 ```bash
-git clone https://github.com/KINGSTON-115/llm-pid-tuner.git
+git clone -b dev https://github.com/KINGSTON-115/llm-pid-tuner.git
 cd llm-pid-tuner
 pip install -r requirements.txt
 ```
@@ -376,6 +385,9 @@ python system_id.py --file sample_step.csv
 ## 补充说明
 
 - 最新打包版请看 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest)
+- 打包方法见 [Issue #11](https://github.com/KINGSTON-115/llm-pid-tuner/issues/11)
+- 当前打包使用 Python `3.8`（见 `llm-pid-tuner.spec` 中 `matlabengineforpython3_8.pyd`）
+- MATLAB 测试环境：`R2022b`
 - 想看项目内部设计，请看 [PROJECT_DOC.md](docs/zh-CN/PROJECT_DOC.md)
 
 ## License
