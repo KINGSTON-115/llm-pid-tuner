@@ -2,6 +2,8 @@
 
 本文档说明如何使用 llm-pid-tuner 对 MATLAB/Simulink 仿真模型进行 LLM 辅助 PID 调参。
 
+如果你打算源码运行、自己改模型适配逻辑，或做针对性开发，建议统一拉取 `latest-verified` 分支代码，而不是直接使用 `main`。
+
 ---
 
 ## 快速开始（下载 exe，零代码运行）
@@ -103,24 +105,6 @@ whos y_out   % 应该能看到 y_out 是 timeseries 类型
 
 模型保存为 `.slx` 格式，记下文件完整路径备用（建议用正斜杠，如 `C:/models/pid_tuner.slx`）。
 
-**3. 设定值来源块（推荐使用 Step 或 Constant）**
-
-程序现在会把 `MATLAB_SETPOINT` 作为统一的调参目标值来源。
-
-- 本地 Python 仿真会直接使用 `MATLAB_SETPOINT`
-- Simulink 仿真会在启动时，自动尝试把 `MATLAB_SETPOINT` 写入模型中的设定值来源块
-
-当前内置自动识别的常见块类型：
-
-- `Step`：会写入 `After`
-- `Constant`：会写入 `Value`
-
-实用建议：
-
-- 如果你的模型目标值来自 `Step` 或 `Constant`，通常不需要额外配置
-- 设定值来源块名称里尽量包含 `Step`、`Setpoint`、`Reference`、`目标`、`给定` 这类字样，程序更容易自动识别
-- 如果你的模型使用的是更特殊的目标值生成方式，当前版本可能无法自动写入，这种情况下请先保证模型内部目标值与你填写的 `MATLAB_SETPOINT` 一致
-
 ---
 
 ## 第 3 步：配置 `config.json`
@@ -148,11 +132,9 @@ whos y_out   % 应该能看到 y_out 是 timeseries 类型
 | `MATLAB_PID_BLOCK_PATH` | PID 模块在模型中的完整路径 | `my_model/PID Controller` |
 | `MATLAB_OUTPUT_SIGNAL` | To Workspace 变量名 | `y_out` |
 | `MATLAB_SIM_STEP_TIME` | 每轮调参运行的仿真时长（仿真秒数） | `10.0` |
-| `MATLAB_SETPOINT` | 统一调参目标值。本地仿真直接使用；Simulink 会尝试自动同步到模型中的 `Step/Constant` 设定值块 | `200.0` |
+| `MATLAB_SETPOINT` | 调参目标值，需与模型中 Setpoint 一致 | `200.0` |
 
 `MATLAB_PID_BLOCK_PATH` 的格式是**模型名/模块名**，模型名就是 `.slx` 文件名去掉扩展名。如果 PID 块在子系统里，路径写成 `my_model/子系统名/PID Controller`。
-
-`MATLAB_SETPOINT` 不再只是日志里的目标值。对于常见的 `Step` / `Constant` 设定值块，程序会在每次启动 Simulink 调参前自动把该值写回模型。
 
 ---
 
@@ -216,14 +198,6 @@ LLM 采用标准的三阶段调参顺序，与工程实践经验一致：
 - 确认 To Workspace 模块的 Save format 设为 **`Timeseries`**（不能用 Array 或 Structure）
 - 确认变量名与 `MATLAB_OUTPUT_SIGNAL` 完全一致
 - 确认模型在 MATLAB 里手动运行一次后工作区里有这个变量
-
-**Q：我把 `MATLAB_SETPOINT` 改成了 300，但模型还是按 200 跑**
-
-- 现在程序会优先自动识别并写入常见的 `Step` / `Constant` 设定值块
-- 如果日志里出现“已将目标值 xxx 同步到 xxx”，说明模型目标值已被成功改写
-- 如果没有这条日志，说明程序没能自动识别你的设定值来源块
-- 这时请先检查你的目标值是不是来自 `Step` 或 `Constant`
-- 如果不是，请先手动保证模型内部目标值与你配置的 `MATLAB_SETPOINT` 一致
 
 **Q：LLM 反映响应「极慢」，但实际仿真看起来还好**
 
