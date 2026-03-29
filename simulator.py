@@ -357,6 +357,11 @@ def _run_tuning_loop(
         stream_callback=llm_stream_callback,
         log_callback=llm_log_callback,
         emit_console=emit_console,
+        abort_check=(
+            (lambda: controller.should_stop or controller.is_paused)
+            if controller is not None
+            else None
+        ),
     )
     session = create_tuning_session(
         initial_pid={"p": sim.kp, "i": sim.ki, "d": sim.kd}, setpoint=setpoint
@@ -513,6 +518,22 @@ def _run_tuning_loop(
                 tuning_mode=llm_mode,
                 prompt_context=prompt_context,
             )
+
+            # LLM 被 stop 中断
+            if controller is not None and controller.should_stop:
+                session.completed_reason = "stopped_by_user"
+                _console(emit_console, "\n[INFO] Simulation stopped by user.")
+                _emit_lifecycle(
+                    event_sink, start_time, "stopped", "Simulation stopped by user."
+                )
+                break
+
+            # LLM 被 pause 中断 → 等待恢复后重做本轮
+            if controller is not None and controller.is_paused:
+                if not wait_while_paused(controller):
+                    session.completed_reason = "stopped_by_user"
+                    break
+                continue  # buffer 仍满 → _collect_data 立即返回 → 重新请求 LLM
 
             if not result:
                 _emit_lifecycle(

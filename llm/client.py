@@ -99,6 +99,7 @@ class LLMTuner:
         stream_callback: Optional[Callable[[str, bool], None]] = None,
         log_callback: Optional[Callable[[str, str], None]] = None,
         emit_console: bool = True,
+        abort_check: Optional[Callable[[], bool]] = None,
     ):
         self.api_key = api_key
         self.base_url = (base_url or "").rstrip("/")
@@ -110,6 +111,7 @@ class LLMTuner:
         self.emit_console = emit_console
         self.stream_callback = stream_callback
         self.log_callback = log_callback
+        self.abort_check = abort_check
         self.use_sdk = False
         self.client = None
 
@@ -166,6 +168,15 @@ class LLMTuner:
         if not hasattr(self, "requests") or self.requests is None:
             self.requests = self._import_requests()
 
+    def _interruptible_sleep(self, seconds: float) -> bool:
+        """每 0.1s 轮询 abort_check，若中止返回 False，否则睡完返回 True。"""
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            if self.abort_check and self.abort_check():
+                return False
+            time.sleep(min(0.1, deadline - time.time()))
+        return True
+
     def _emit_log(self, label: str, message: str) -> None:
         if self.log_callback is not None:
             self.log_callback(label, message)
@@ -192,6 +203,8 @@ class LLMTuner:
         last_exception: Optional[Exception] = None
 
         for attempt in range(max_retries):
+            if self.abort_check and self.abort_check():
+                return ""
             try:
                 return func(*args, **kwargs)
             except (KeyboardInterrupt, SystemExit):
@@ -203,7 +216,8 @@ class LLMTuner:
                         "warn",
                         f"\n[WARN] LLM call failed: {exc}. Retrying in {delays[attempt]}s...",
                     )
-                    time.sleep(delays[attempt])
+                    if not self._interruptible_sleep(delays[attempt]):
+                        return ""
                 else:
                     self._emit_log(
                         "error",
@@ -268,6 +282,8 @@ class LLMTuner:
                         if chunk:
                             full_content += chunk
                             self._emit_stream_update(full_content, formatter=formatter)
+                            if self.abort_check and self.abort_check():
+                                break
         else:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -306,6 +322,8 @@ class LLMTuner:
                         if chunk:
                             full_content += chunk
                             self._emit_stream_update(full_content, formatter=formatter)
+                            if self.abort_check and self.abort_check():
+                                break
 
         return full_content
 
@@ -333,6 +351,8 @@ class LLMTuner:
                         if content_chunk:
                             full_content += content_chunk
                             self._emit_stream_update(full_content, formatter=formatter)
+                            if self.abort_check and self.abort_check():
+                                break
                 elif self.provider == "anthropic":
                     with self.client.messages.stream(  # type: ignore
                         model=self.model,
@@ -347,6 +367,8 @@ class LLMTuner:
                                 self._emit_stream_update(
                                     full_content, formatter=formatter
                                 )
+                                if self.abort_check and self.abort_check():
+                                    break
             except Exception as sdk_error:
                 self._emit_log(
                     "warn",
