@@ -11,7 +11,8 @@
 [![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
 
 > 如果你是第一次接触这个项目，**不要先折腾 Python**。
-> **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
+> Windows 用户最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。
+> Ubuntu 用户可以直接试用 Release 里的 `.deb` 或 `.tar.gz` 实验包。
 
 ## 系统结构图
 
@@ -34,6 +35,7 @@
 ## 先看你该怎么用
 
 - **只想调硬件，不想配开发环境**：走 `exe` 路线，见下方“3 分钟上手”。
+- **想在 Ubuntu 上直接运行**：看 [Ubuntu 实验打包版教程](docs/zh-CN/UBUNTU_GUIDE.md)。
 - **想先看看这个项目到底有没有用**：运行 `simulator.py` 做本地热系统仿真。
 - **想接自己的 Arduino / ESP32 / 其他控制板**：使用 `firmware.cpp` + `tuner.py` / `llm-pid-tuner.exe`。
 - **想二次开发或看内部设计**：看 [PROJECT_DOC.md](docs/zh-CN/PROJECT_DOC.md)。
@@ -153,6 +155,26 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 - 当系统“已经够好”时，会尽量提前停止，避免过调
 
 你最终需要做的事通常只有一件：**把收敛后的 PID 参数写回你的固件。**
+
+---
+
+## Ubuntu 实验打包版
+
+如果你使用 Ubuntu，且不想先折腾 Python 环境，请直接看：
+
+- [Ubuntu 实验打包版教程](docs/zh-CN/UBUNTU_GUIDE.md)
+
+这份教程里写清楚了：
+
+- `.deb` 和 `.tar.gz` 该怎么选
+- 首次运行后 `config.json` 会生成到哪里
+- 怎么先跑 `sim --plain` 验证接口
+- 怎么切到真实串口硬件调参
+
+当前实验包建议运行在：
+
+- Ubuntu `22.04+`
+- `amd64 / x86_64`
 
 ---
 
@@ -386,8 +408,8 @@ python system_id.py --file sample_step.csv
 ## 补充说明
 
 - 最新打包版请看 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest)
-- 打包方法见 [Issue #11](https://github.com/KINGSTON-115/llm-pid-tuner/issues/11)
-- 当前打包使用 Python `3.8`（见 `llm-pid-tuner.spec` 中 `matlabengineforpython3_8.pyd`）
+- Ubuntu 打包脚本见 `scripts/build_ubuntu_package.sh`
+- Ubuntu 使用说明见 [Ubuntu 实验打包版教程](docs/zh-CN/UBUNTU_GUIDE.md)
 - MATLAB 测试环境：`R2022b`
 - 想看项目内部设计，请看 [PROJECT_DOC.md](docs/zh-CN/PROJECT_DOC.md)
 

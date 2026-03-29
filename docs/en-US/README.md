@@ -10,7 +10,8 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 > 📺 [YouTube Tutorial](https://youtu.be/Giruc9kN53Y)
 
 > New here? The easiest path is **not** Python.
-> Download the packaged `llm-pid-tuner.exe` from Releases and start there.
+> Windows users should start with the packaged `llm-pid-tuner.exe`.
+> Ubuntu users can start with the experimental `.deb` or `.tar.gz` package.
 
 ## System Architecture
 
@@ -32,7 +33,8 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 
 ## Best starting path
 
-- **Just want to tune hardware**: use the packaged `exe`
+- **Just want to tune hardware on Windows**: use the packaged `exe`
+- **Want to run directly on Ubuntu**: read the [Ubuntu Experimental Package Guide](UBUNTU_GUIDE.md)
 - **Want to see the idea first**: run `simulator.py`
 - **Want to integrate your own board**: use `firmware.cpp` + `tuner.py`
 - **Want internals**: read [PROJECT_DOC.md](PROJECT_DOC.md)
@@ -122,6 +124,26 @@ The app will:
 - stop early when the system is already “good enough”
 
 In practice, this means the tool tries to be useful on real hardware, not just aggressive.
+
+---
+
+## Experimental Ubuntu package
+
+If you are on Ubuntu and do not want to prepare a Python environment first, start with:
+
+- [Ubuntu Experimental Package Guide](UBUNTU_GUIDE.md)
+
+The guide covers:
+
+- when to choose the `.deb` vs the `.tar.gz`
+- where `config.json` is created on first launch
+- how to validate the API path with `sim --plain`
+- how to switch to real serial hardware tuning
+
+Current target environment:
+
+- Ubuntu `22.04+`
+- `amd64 / x86_64`
 
 ---
 

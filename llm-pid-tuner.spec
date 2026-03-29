@@ -1,21 +1,34 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_submodules
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
 
 
-rich_hiddenimports = collect_submodules('rich._unicode_data')
-matlab_hiddenimports = collect_submodules('matlab')
+ROOT_DIR = Path(globals().get("SPECPATH", Path.cwd())).resolve()
+
+hiddenimports = collect_submodules("rich._unicode_data")
+datas = []
+binaries = []
+
+if importlib.util.find_spec("matlab") is not None:
+    hiddenimports += collect_submodules("matlab")
+    datas += collect_data_files("matlab")
+    binaries += collect_dynamic_libs("matlab")
 
 a = Analysis(
-    ['launcher.py'],
-    pathex=[],
-    binaries=[
-        ('D:/Program Files/MATLAB/R2022b/extern/engines/python/dist/matlab/engine/win64/matlabengineforpython3_8.pyd', 'matlab/engine/win64'),
-    ],
-    datas=[
-        ('d:/Python_Learning/llm-pid-tuner/venv_build/Lib/site-packages/matlab/engine/_arch.txt', 'matlab/engine'),
-    ],
-    hiddenimports=rich_hiddenimports + matlab_hiddenimports,
+    ["launcher.py"],
+    pathex=[str(ROOT_DIR)],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -31,7 +44,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='llm-pid-tuner',
+    name="llm-pid-tuner",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -187,6 +187,38 @@ class LLMTuner:
         if self.stream_callback is not None:
             self.stream_callback(full_content, done)
 
+    def _extract_openai_sdk_chunk_content(
+        self,
+        chunk: Any,
+        accumulated_content: str,
+    ) -> str:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            return ""
+
+        choice = choices[0]
+        delta = getattr(choice, "delta", None)
+        if delta is not None:
+            delta_content = getattr(delta, "content", None)
+            if isinstance(delta_content, str) and delta_content:
+                return delta_content
+
+        message = getattr(choice, "message", None)
+        if message is None:
+            return ""
+
+        message_content = getattr(message, "content", None)
+        if not isinstance(message_content, str) or not message_content:
+            return ""
+
+        if not accumulated_content:
+            return message_content
+
+        if message_content.startswith(accumulated_content):
+            return message_content[len(accumulated_content) :]
+
+        return ""
+
     def _call_with_retry(
         self,
         func: Callable[..., str],
@@ -344,7 +376,10 @@ class LLMTuner:
                         stream=True,
                     )
                     for chunk in resp:
-                        content_chunk = chunk.choices[0].delta.content or ""
+                        content_chunk = self._extract_openai_sdk_chunk_content(
+                            chunk,
+                            full_content,
+                        )
                         if content_chunk:
                             full_content += content_chunk
                             self._emit_stream_update(
