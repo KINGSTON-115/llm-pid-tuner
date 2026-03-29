@@ -177,11 +177,21 @@ def finalize_decision(
     state: TuningSessionState,
     evaluation: RoundEvaluation,
     result: dict[str, Any] | None,
+    *,
+    limits: dict[str, dict[str, float]] | None = None,
 ) -> DecisionOutcome:
     if not result:
-        result = build_fallback_suggestion(evaluation.current_pid, evaluation.metrics)
+        result = build_fallback_suggestion(
+            evaluation.current_pid,
+            evaluation.metrics,
+            limits=limits,
+        )
 
-    safe_pid, guardrail_notes = apply_pid_guardrails(evaluation.current_pid, result)
+    safe_pid, guardrail_notes = apply_pid_guardrails(
+        evaluation.current_pid,
+        result,
+        limits=limits,
+    )
     analysis = str(result.get("analysis_summary", "No analysis summary was provided."))
     thought = str(result.get("thought_process", ""))
     action = str(result.get("tuning_action", "UNKNOWN"))

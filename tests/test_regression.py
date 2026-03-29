@@ -18,6 +18,7 @@ from core.tuning_session import (
 )
 from llm.client import LLMTuner
 from llm.prompts import build_user_prompt, get_system_prompt, normalize_tuning_mode
+from pid_safety import get_pid_limits
 from sim.model import CONTROL_INTERVAL, INITIAL_TEMP, SETPOINT, HeatingSimulator
 
 
@@ -282,6 +283,41 @@ class TuningSessionHistoryTests(unittest.TestCase):
         self.assertEqual(record["metrics"]["avg_error"], 93.0)
         self.assertIn("Automatic rollback triggered", record["analysis"])
         self.assertIn("round 5", summary)
+
+    def test_finalize_decision_allows_simulink_five_x_p_step(self):
+        state = create_tuning_session(
+            initial_pid={"p": 100.0, "i": 0.5, "d": 0.0},
+            setpoint=200.0,
+        )
+        evaluation = RoundEvaluation(
+            round_index=1,
+            metrics={
+                "avg_error": 5.0,
+                "steady_state_error": 1.8,
+                "overshoot": 0.0,
+                "status": "SLOW_RESPONSE",
+            },
+            current_pid={"p": 100.0, "i": 0.5, "d": 0.0},
+            stable_rounds=0,
+        )
+
+        decision = finalize_decision(
+            state,
+            evaluation,
+            {
+                "analysis_summary": "Increase P aggressively for Simulink.",
+                "thought_process": "Current P is too low.",
+                "tuning_action": "BOOST_RESPONSE",
+                "p": 500.0,
+                "i": 0.5,
+                "d": 0.0,
+                "status": "TUNING",
+            },
+            limits=get_pid_limits("simulink"),
+        )
+
+        self.assertEqual(decision.safe_pid["p"], 500.0)
+        self.assertEqual(state.buffer.current_pid["p"], 500.0)
 
 
 class BufferTests(unittest.TestCase):

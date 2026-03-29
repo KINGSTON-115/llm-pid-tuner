@@ -26,7 +26,11 @@ from core.tuning_session import (
 )
 from doctor import collect_doctor_checks, print_doctor_report, summarize_doctor_checks
 from llm.client import LLMTuner
-from pid_safety import apply_pid_guardrails, build_fallback_suggestion
+from pid_safety import (
+    apply_pid_guardrails,
+    build_fallback_suggestion,
+    get_pid_limits,
+)
 from sim.model import HeatingSimulator, SETPOINT
 from sim.runtime import (
     EVENT_DECISION,
@@ -164,7 +168,9 @@ def _run_simulator_warm_start(
         return None
 
     safe_pid, notes = apply_pid_guardrails(
-        {"p": sim.kp, "i": sim.ki, "d": sim.kd}, candidate_pid
+        {"p": sim.kp, "i": sim.ki, "d": sim.kd},
+        candidate_pid,
+        limits=get_pid_limits("python_sim"),
     )
     sim.set_pid(safe_pid["p"], safe_pid["i"], safe_pid["d"])
     note_text = f" ({'; '.join(notes)})" if notes else ""
@@ -343,6 +349,7 @@ def _run_tuning_loop(
     disable_early_exit: bool = False,
 ) -> dict[str, Any]:
     llm_mode = _resolve_llm_mode(mode_label, llm_mode)
+    pid_limits = get_pid_limits(llm_mode)
     if prompt_context is None:
         prompt_context = _default_prompt_context_for_mode(sim, llm_mode)
 
@@ -563,10 +570,17 @@ def _run_tuning_loop(
                     f"LLM unavailable at round {round_index}; using fallback rules.",
                 )
                 result = build_fallback_suggestion(
-                    evaluation.current_pid, evaluation.metrics
+                    evaluation.current_pid,
+                    evaluation.metrics,
+                    limits=pid_limits,
                 )
 
-            decision = finalize_decision(session, evaluation, result)
+            decision = finalize_decision(
+                session,
+                evaluation,
+                result,
+                limits=pid_limits,
+            )
             sim.set_pid(
                 decision.safe_pid["p"], decision.safe_pid["i"], decision.safe_pid["d"]
             )
