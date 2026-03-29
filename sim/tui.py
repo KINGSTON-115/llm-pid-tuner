@@ -8,6 +8,7 @@ from queue import Queue
 from typing import Callable
 
 from core.compat import slotted_dataclass
+from core.i18n import get_language
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import RichLog, Static
@@ -36,8 +37,7 @@ TRANSLATIONS = {
             "状态 {status} | 阶段 {phase} | 暂停 {paused}"
         ),
         "status_line_2": (
-            "目标 {setpoint:.1f} | 当前 {input:.1f} | "
-            "误差 {error:.2f} | PWM {pwm:.1f}"
+            "目标 {setpoint:.1f} | 当前 {input:.1f} | 误差 {error:.2f} | PWM {pwm:.1f}"
         ),
         "status_line_3": "PID  P={p:.4f}  I={i:.4f}  D={d:.4f}",
         "paused_yes": "是",
@@ -117,7 +117,7 @@ class PanelState:
     max_events: int = 100
     detailed_events: bool = False
     mode_label: str = "Python"
-    language: str = "zh"
+    language: str = field(default_factory=get_language)
     current_round: int = 0
     elapsed_sec: float = 0.0
     current_status: str = "IDLE"
@@ -258,16 +258,24 @@ class PanelState:
         )
 
     def render_summary_text(self) -> str:
-        flags_text = ", ".join(self.latest_flags) if self.latest_flags else self.tr("flags_none")
+        flags_text = (
+            ", ".join(self.latest_flags) if self.latest_flags else self.tr("flags_none")
+        )
         return "\n".join(
             [
                 self.tr("summary_title"),
-                self.tr("summary_avg_error").format(value=float(self.metrics["avg_error"])),
-                self.tr("summary_max_error").format(value=float(self.metrics["max_error"])),
+                self.tr("summary_avg_error").format(
+                    value=float(self.metrics["avg_error"])
+                ),
+                self.tr("summary_max_error").format(
+                    value=float(self.metrics["max_error"])
+                ),
                 self.tr("summary_steady_error").format(
                     value=float(self.metrics["steady_state_error"])
                 ),
-                self.tr("summary_overshoot").format(value=float(self.metrics["overshoot"])),
+                self.tr("summary_overshoot").format(
+                    value=float(self.metrics["overshoot"])
+                ),
                 self.tr("summary_zero_cross").format(
                     value=int(self.metrics["zero_crossings"])
                 ),
@@ -285,11 +293,7 @@ class PanelState:
 
     def render_help_text(self) -> str:
         return "\n".join(
-            [
-                self.tr("help_title"),
-                self.tr("help_line"),
-                self.tr("help_browse"),
-            ]
+            [self.tr("help_title"), self.tr("help_line"), self.tr("help_browse")]
         )
 
     def render_event_lines(self) -> list[str]:
@@ -308,7 +312,9 @@ class PanelState:
             if event.get("fallback_used"):
                 line += f" [{self.tr('event_fallback')}]"
             if detailed and event.get("guardrail_notes"):
-                notes = "; ".join(str(note) for note in event.get("guardrail_notes", []))
+                notes = "; ".join(
+                    str(note) for note in event.get("guardrail_notes", [])
+                )
                 line += f" | {self.tr('event_guardrail')}: {notes}"
             return line
 
@@ -396,22 +402,17 @@ class SimulationTUIApp(App[None]):
         self._history_browsing_enabled = False
 
     def compose(self) -> ComposeResult:
-        yield Static(self.state.tr("waiting_status"), id="status")
-        yield Static(self.state.tr("waiting_help"), id="help")
-        yield Static(self.state.tr("waiting_summary"), id="summary")
+        yield Static(self.state.tr("waiting_status"), id="status", markup=False)
+        yield Static(self.state.tr("waiting_help"), id="help", markup=False)
+        yield Static(self.state.tr("waiting_summary"), id="summary", markup=False)
         yield RichLog(
-            id="events",
-            wrap=True,
-            highlight=False,
-            markup=False,
-            auto_scroll=True,
+            id="events", wrap=True, highlight=False, markup=False, auto_scroll=True
         )
 
     def on_mount(self) -> None:
         if self.worker_target is not None:
             self._worker_thread = threading.Thread(
-                target=self.worker_target,
-                name="simulation-tui-worker",
+                target=self.worker_target, name="simulation-tui-worker"
             )
             self._worker_thread.start()
         self.set_interval(0.1, self._poll_events)
@@ -441,11 +442,9 @@ class SimulationTUIApp(App[None]):
                 ):
                     continue
                 self.state.apply_event(event)
-                if (
-                    event.get("type") == EVENT_LIFECYCLE
-                    and str(event.get("phase", "")).lower()
-                    in {"completed", "finished", "stopped", "error"}
-                ):
+                if event.get("type") == EVENT_LIFECYCLE and str(
+                    event.get("phase", "")
+                ).lower() in {"completed", "finished", "stopped", "error"}:
                     terminal_event_seen = True
                 if event.get("type") == EVENT_LOG and event.get("replace_last"):
                     self._log_requires_full_refresh = True

@@ -14,6 +14,7 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional
 
 from core.config import CONFIG
+from core.i18n import tr
 from llm.prompts import SYSTEM_PROMPT, build_user_prompt, get_system_prompt
 
 
@@ -26,18 +27,17 @@ class JSONStreamFormatter:
         self.printed_text = ""
         self.writer = writer or self._default_writer
         self.key_names = {
-            "thought_process": "\n  [Thought]",
-            "analysis_summary": "\n  [Analysis]",
-            "tuning_action": "\n  [Action]",
-            "p": "\n  [PID] P",
+            "thought_process": tr("\n  [思考]", "\n  [Thought]"),
+            "analysis_summary": tr("\n  [分析]", "\n  [Analysis]"),
+            "tuning_action": tr("\n  [调参]", "\n  [Action]"),
+            "p": tr("\n  [建议] P", "\n  [PID] P"),
             "i": " I",
             "d": " D",
-            "status": "\n  [Status]",
+            "status": tr("\n  [状态]", "\n  [Status]"),
         }
         self.str_re = re.compile(r'"([a-zA-Z_]+)"\s*:\s*"((?:[^"\\]|\\.)*)')
         self.num_re = re.compile(
-            r'"([a-zA-Z_]+)"\s*:\s*([0-9\.\-]+|true|false|null)\s*[,}\n]',
-            re.IGNORECASE,
+            r'"([a-zA-Z_]+)"\s*:\s*([0-9\.\-]+|true|false|null)\s*[,}\n]', re.IGNORECASE
         )
 
     @staticmethod
@@ -61,9 +61,7 @@ class JSONStreamFormatter:
                 continue
 
             decoded = (
-                raw_value.replace("\\n", "\n")
-                .replace('\\"', '"')
-                .replace("\\\\", "\\")
+                raw_value.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
             )
             if raw_value.endswith("\\"):
                 decoded = decoded[:-1]
@@ -124,8 +122,7 @@ class LLMTuner:
                 import anthropic
 
                 self.client = anthropic.Anthropic(
-                    api_key=api_key,
-                    base_url=self.base_url,
+                    api_key=api_key, base_url=self.base_url
                 )
         except ImportError:
             self.requests = self._import_requests()
@@ -188,10 +185,7 @@ class LLMTuner:
             self.stream_callback(full_content, done)
 
     def _call_with_retry(
-        self,
-        func: Callable[..., str],
-        *args: Any,
-        **kwargs: Any,
+        self, func: Callable[..., str], *args: Any, **kwargs: Any
     ) -> str:
         max_retries = 5
         delays = [2, 4, 8, 16, 32]
@@ -269,17 +263,11 @@ class LLMTuner:
                         data = json.loads(data_str)
                     except json.JSONDecodeError:
                         continue
-                    if (
-                        data.get("type") == "content_block_delta"
-                        and "delta" in data
-                    ):
+                    if data.get("type") == "content_block_delta" and "delta" in data:
                         chunk = data["delta"].get("text", "")
                         if chunk:
                             full_content += chunk
-                            self._emit_stream_update(
-                                full_content,
-                                formatter=formatter,
-                            )
+                            self._emit_stream_update(full_content, formatter=formatter)
         else:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -317,10 +305,7 @@ class LLMTuner:
                         chunk = choices[0]["delta"].get("content", "")
                         if chunk:
                             full_content += chunk
-                            self._emit_stream_update(
-                                full_content,
-                                formatter=formatter,
-                            )
+                            self._emit_stream_update(full_content, formatter=formatter)
 
         return full_content
 
@@ -347,10 +332,7 @@ class LLMTuner:
                         content_chunk = chunk.choices[0].delta.content or ""
                         if content_chunk:
                             full_content += content_chunk
-                            self._emit_stream_update(
-                                full_content,
-                                formatter=formatter,
-                            )
+                            self._emit_stream_update(full_content, formatter=formatter)
                 elif self.provider == "anthropic":
                     with self.client.messages.stream(  # type: ignore
                         model=self.model,
@@ -363,8 +345,7 @@ class LLMTuner:
                             if text:
                                 full_content += text
                                 self._emit_stream_update(
-                                    full_content,
-                                    formatter=formatter,
+                                    full_content, formatter=formatter
                                 )
             except Exception as sdk_error:
                 self._emit_log(
@@ -372,15 +353,11 @@ class LLMTuner:
                     f"\n[WARN] SDK request failed, falling back to HTTP: {sdk_error}",
                 )
                 full_content = self._request_via_http(
-                    openai_msgs,
-                    anthropic_msgs,
-                    system_prompt=system_prompt,
+                    openai_msgs, anthropic_msgs, system_prompt=system_prompt
                 )
         else:
             full_content = self._request_via_http(
-                openai_msgs,
-                anthropic_msgs,
-                system_prompt=system_prompt,
+                openai_msgs, anthropic_msgs, system_prompt=system_prompt
             )
 
         if full_content:
@@ -397,9 +374,7 @@ class LLMTuner:
             candidates.append(stripped)
 
         fenced_matches = re.findall(
-            r"```(?:json)?\s*(\{.*?\})\s*```",
-            text,
-            re.DOTALL | re.IGNORECASE,
+            r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE
         )
         candidates.extend(fenced_matches)
 
@@ -484,16 +459,12 @@ class LLMTuner:
 
         try:
             content = self._call_with_retry(
-                self._execute_request,
-                openai_msgs,
-                anthropic_msgs,
-                system_prompt,
+                self._execute_request, openai_msgs, anthropic_msgs, system_prompt
             )
 
             if self.debug_output:
                 self._emit_log(
-                    "debug",
-                    f"\n[LLM raw response preview]\n{content[:500]}...\n",
+                    "debug", f"\n[LLM raw response preview]\n{content[:500]}...\n"
                 )
 
             parsed = self._parse_json(content)
@@ -506,8 +477,5 @@ class LLMTuner:
             )
             return None
         except Exception as exc:
-            self._emit_log(
-                "error",
-                f"[ERROR] LLM request failed after retries: {exc}",
-            )
+            self._emit_log("error", f"[ERROR] LLM request failed after retries: {exc}")
             return None

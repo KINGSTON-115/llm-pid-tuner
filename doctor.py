@@ -11,6 +11,7 @@ import serial.tools.list_ports
 
 from core.compat import slotted_dataclass
 from core.config import CONFIG, CONFIG_PATH, initialize_runtime_config
+from core.i18n import tr
 
 
 @slotted_dataclass
@@ -56,30 +57,42 @@ def collect_doctor_checks() -> list[DoctorCheck]:
     has_config = os.path.exists(CONFIG_PATH)
     checks.append(
         DoctorCheck(
-            "config.json",
+            tr("配置文件", "config.json"),
             "PASS" if has_config else "FAIL",
-            f"path={CONFIG_PATH}",
+            f"{tr('路径', 'path')}={CONFIG_PATH}",
         )
     )
 
-    required_fields = ("LLM_API_KEY", "LLM_API_BASE_URL", "LLM_MODEL_NAME", "LLM_PROVIDER")
+    required_fields = (
+        "LLM_API_KEY",
+        "LLM_API_BASE_URL",
+        "LLM_MODEL_NAME",
+        "LLM_PROVIDER",
+    )
     missing = [field for field in required_fields if not CONFIG.get(field)]
     placeholder_key = str(CONFIG.get("LLM_API_KEY", "")) == "your-api-key-here"
     if missing or placeholder_key:
         detail = []
         if missing:
-            detail.append("missing=" + ", ".join(missing))
+            detail.append(tr("缺失=", "missing=") + ", ".join(missing))
         if placeholder_key:
-            detail.append("LLM_API_KEY is still the placeholder value")
-        checks.append(DoctorCheck("config fields", "FAIL", "; ".join(detail)))
+            detail.append(
+                tr(
+                    "LLM_API_KEY 仍为默认占位符",
+                    "LLM_API_KEY is still the placeholder value",
+                )
+            )
+        checks.append(
+            DoctorCheck(tr("配置字段", "config fields"), "FAIL", "; ".join(detail))
+        )
     else:
         checks.append(
             DoctorCheck(
-                "config fields",
+                tr("配置字段", "config fields"),
                 "PASS",
                 (
-                    f"provider={CONFIG.get('LLM_PROVIDER')} "
-                    f"model={CONFIG.get('LLM_MODEL_NAME')} "
+                    f"{tr('提供商', 'provider')}={CONFIG.get('LLM_PROVIDER')} "
+                    f"{tr('模型', 'model')}={CONFIG.get('LLM_MODEL_NAME')} "
                     f"api_key={_mask_secret(str(CONFIG.get('LLM_API_KEY', '')))}"
                 ),
             )
@@ -88,42 +101,62 @@ def collect_doctor_checks() -> list[DoctorCheck]:
     base_url = str(CONFIG.get("LLM_API_BASE_URL", "")).strip()
     provider = str(CONFIG.get("LLM_PROVIDER", "openai")).strip()
     if not base_url:
-        checks.append(DoctorCheck("API reachability", "FAIL", "LLM_API_BASE_URL is empty"))
+        checks.append(
+            DoctorCheck(
+                tr("API 连通性", "API reachability"),
+                "FAIL",
+                tr("LLM_API_BASE_URL 为空", "LLM_API_BASE_URL is empty"),
+            )
+        )
     else:
         endpoint, headers = _models_endpoint(provider, base_url)
         try:
-            response = requests.get(endpoint, headers=headers, timeout=3)
+            try:
+                response = requests.get(endpoint, headers=headers, timeout=5)
+            except requests.Timeout:
+                response = requests.get(endpoint, headers=headers, timeout=8)
+
             if response.status_code < 500:
                 status = "PASS" if response.ok else "WARN"
-                detail = f"reachable status={response.status_code} endpoint={endpoint}"
+                detail = (
+                    f"{tr('可连通 状态码', 'reachable status')}={response.status_code} "
+                    f"{tr('端点', 'endpoint')}={endpoint}"
+                )
             else:
                 status = "FAIL"
-                detail = f"server error status={response.status_code} endpoint={endpoint}"
+                detail = (
+                    f"{tr('服务器错误 状态码', 'server error status')}={response.status_code} "
+                    f"{tr('端点', 'endpoint')}={endpoint}"
+                )
         except requests.RequestException as exc:
             status = "FAIL"
-            detail = f"request failed: {exc}"
-        checks.append(DoctorCheck("API reachability", status, detail))
+            detail = f"{tr('请求失败', 'request failed')}: {exc}"
+        checks.append(DoctorCheck(tr("API 连通性", "API reachability"), status, detail))
 
     ports = list(serial.tools.list_ports.comports())
     if ports:
         detail = ", ".join(port.device for port in ports[:5])
         if len(ports) > 5:
             detail += ", ..."
-        checks.append(DoctorCheck("serial ports", "PASS", detail))
+        checks.append(DoctorCheck(tr("串口设备", "serial ports"), "PASS", detail))
     else:
         checks.append(
             DoctorCheck(
-                "serial ports",
+                tr("串口设备", "serial ports"),
                 "WARN",
-                "No serial device detected. This is fine for simulator-only usage.",
+                tr(
+                    "未检测到串口设备。仅在纯仿真模式下这没有问题。",
+                    "No serial device detected. This is fine for simulator-only usage.",
+                ),
             )
         )
 
     checks.append(
         DoctorCheck(
-            "protocol fields",
+            tr("协议字段", "protocol fields"),
             "PASS",
-            "expected CSV: timestamp_ms,setpoint,input,pwm,error,p,i,d",
+            tr("预期的 CSV 格式: ", "expected CSV: ")
+            + "timestamp_ms,setpoint,input,pwm,error,p,i,d",
         )
     )
 
@@ -138,9 +171,11 @@ def collect_doctor_checks() -> list[DoctorCheck]:
             proxy_parts.append(f"{key}=config:{cfg_value}")
     checks.append(
         DoctorCheck(
-            "proxy settings",
+            tr("代理设置", "proxy settings"),
             "PASS",
-            "; ".join(proxy_parts) if proxy_parts else "No proxy configured",
+            "; ".join(proxy_parts)
+            if proxy_parts
+            else tr("未配置代理", "No proxy configured"),
         )
     )
 
@@ -152,7 +187,10 @@ def summarize_doctor_checks(checks: Iterable[DoctorCheck]) -> str:
     pass_count = sum(1 for check in checks if check.status == "PASS")
     warn_count = sum(1 for check in checks if check.status == "WARN")
     fail_count = sum(1 for check in checks if check.status == "FAIL")
-    return f"Doctor summary: {pass_count} pass, {warn_count} warn, {fail_count} fail."
+    return tr(
+        f"Doctor 诊断汇总: {pass_count} 通过, {warn_count} 警告, {fail_count} 失败。",
+        f"Doctor summary: {pass_count} pass, {warn_count} warn, {fail_count} fail.",
+    )
 
 
 def print_doctor_report(checks: Iterable[DoctorCheck]) -> int:
@@ -167,12 +205,22 @@ def print_doctor_report(checks: Iterable[DoctorCheck]) -> int:
     has_warn = any(check.status == "WARN" for check in checks)
     print("-" * 60)
     if has_fail:
-        print("Doctor finished with FAIL items.")
+        print(
+            tr(
+                "Doctor 诊断完成，包含 失败(FAIL) 项。",
+                "Doctor finished with FAIL items.",
+            )
+        )
         return 1
     if has_warn:
-        print("Doctor finished with WARN items.")
+        print(
+            tr(
+                "Doctor 诊断完成，包含 警告(WARN) 项。",
+                "Doctor finished with WARN items.",
+            )
+        )
         return 0
-    print("Doctor finished successfully.")
+    print(tr("Doctor 诊断成功通过。", "Doctor finished successfully."))
     return 0
 
 
