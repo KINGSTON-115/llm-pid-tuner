@@ -282,6 +282,40 @@ class TuiModeTests(unittest.TestCase):
         doctor_report.assert_called_once_with(doctor_checks)
         plain.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
 
+    def test_python_plain_runner_uses_configured_setpoint_and_initial_pid(self):
+        captured = {}
+
+        def fake_run_tuning_loop(
+            sim,
+            setpoint,
+            mode_label,
+            **_kwargs,
+        ):
+            captured["sim"] = sim
+            captured["setpoint"] = setpoint
+            captured["mode_label"] = mode_label
+            return {"mode": "plain"}
+
+        with patch.object(simulator, "_run_tuning_loop", side_effect=fake_run_tuning_loop):
+            with patch.dict(
+                simulator.CONFIG,
+                {"MATLAB_SETPOINT": 180.0, "LLM_MODEL_NAME": "demo-model"},
+                clear=False,
+            ):
+                result = simulator._run_python_simulation_plain(
+                    warm_start=True,
+                    doctor_checks=[],
+                    initial_pid={"p": 2.0, "i": 0.3, "d": 0.1},
+                )
+
+        self.assertEqual(result, {"mode": "plain"})
+        self.assertEqual(captured["setpoint"], 180.0)
+        self.assertEqual(captured["mode_label"], "Python")
+        self.assertEqual(captured["sim"].setpoint, 180.0)
+        self.assertEqual(captured["sim"].kp, 2.0)
+        self.assertEqual(captured["sim"].ki, 0.3)
+        self.assertEqual(captured["sim"].kd, 0.1)
+
 
 class PanelStateTests(unittest.TestCase):
     def test_replace_last_log_event_updates_existing_stream_line(self):
@@ -526,6 +560,59 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
 
             log = app.query_one("#events", RichLog)
             self.assertFalse(log.auto_scroll)
+
+    async def test_next_round_restarts_worker_from_last_result(self):
+        from sim.tui import SimulationTUIApp
+
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+        controller = SimulationController()
+        next_round_calls = []
+        worker_started = threading.Event()
+
+        def next_round_factory(last_result):
+            next_round_calls.append(last_result)
+
+            def worker() -> None:
+                worker_started.set()
+
+            return worker
+
+        app = SimulationTUIApp(
+            event_queue=event_queue,
+            controller=controller,
+            worker_target=None,
+            event_sink=event_sink,
+            mode_label="Python",
+            next_round_factory=next_round_factory,
+        )
+        app._last_result = {"final_pid": {"p": 2.0, "i": 0.3, "d": 0.1}}
+
+        async with app.run_test() as pilot:
+            event_sink.publish(
+                EVENT_LIFECYCLE,
+                phase="completed",
+                message="Finished.",
+                elapsed_sec=10.0,
+            )
+            app._poll_events()
+            self.assertTrue(app.state.tuning_done)
+
+            await pilot.press("n")
+            for _ in range(10):
+                if worker_started.wait(timeout=0.05):
+                    break
+                await pilot.pause()
+
+            help_text = str(app.query_one("#help", Static).content)
+            self.assertTrue(worker_started.is_set())
+            self.assertEqual(
+                next_round_calls,
+                [{"final_pid": {"p": 2.0, "i": 0.3, "d": 0.1}}],
+            )
+            self.assertFalse(app.state.tuning_done)
+            self.assertFalse(app._history_browsing_enabled)
+            self.assertIn("q", help_text)
 
 
 if __name__ == "__main__":

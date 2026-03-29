@@ -5,7 +5,7 @@ from dataclasses import field
 import threading
 import time
 from queue import Queue
-from typing import Callable
+from typing import Any, Callable
 
 from rich.markup import escape as markup_escape
 from core.compat import slotted_dataclass
@@ -73,7 +73,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "help_p": "暂停/继续",
         "help_l": "日志详情",
         "help_r": "清空视图",
+        "help_n": "下一轮",
         "help_browse": "滚轮 / PgUp / PgDn / ↑↓  浏览日志",
+        "help_done": "调参完成，按 n 可以上次结果为起点继续新一轮",
         # booleans
         "paused_yes": "是",
         "paused_no": "否",
@@ -128,7 +130,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "help_p": "Pause/Resume",
         "help_l": "Log Detail",
         "help_r": "Reset View",
+        "help_n": "Next Round",
         "help_browse": "Wheel / PgUp / PgDn / ↑↓  browse log",
+        "help_done": "Tuning done. Press n to start another round from the last result.",
         # booleans
         "paused_yes": "yes",
         "paused_no": "no",
@@ -165,6 +169,7 @@ class PanelState:
     phase_message: str = "Waiting to start"
     stable_rounds: int = 0
     paused: bool = False
+    tuning_done: bool = False
     current_input: float = 0.0
     current_setpoint: float = 0.0
     current_pwm: float = 0.0
@@ -381,6 +386,10 @@ class PanelState:
             # Use reverse video for the key character (no square brackets needed)
             return f"[reverse bold] {key} [/reverse bold] {desc}"
 
+        if self.tuning_done:
+            line1 = hk("n", self.tr("help_n")) + sep + hk("q", self.tr("help_q"))
+            return f"{line1}\n[dim]{self.tr('help_done')}[/dim]"
+
         line1 = (
             hk("q", self.tr("help_q"))
             + sep
@@ -522,6 +531,7 @@ class SimulationTUIApp(App[None]):
         ("p", "toggle_pause", "Pause"),
         ("l", "toggle_event_detail", "Log detail"),
         ("r", "reset_view", "Reset view"),
+        ("n", "next_round", "Next round"),
     ]
 
     def __init__(
@@ -532,6 +542,7 @@ class SimulationTUIApp(App[None]):
         event_sink: QueueEventSink | None = None,
         mode_label: str = "Python",
         language: str = "zh",
+        next_round_factory: Callable[[dict[str, Any]], Callable[[], None]] | None = None,
     ) -> None:
         super().__init__()
         self.event_queue = event_queue
@@ -539,6 +550,7 @@ class SimulationTUIApp(App[None]):
         self.worker_target = worker_target
         self.event_sink = event_sink
         self.state = PanelState(mode_label=mode_label, language=language)
+        self.next_round_factory = next_round_factory
         self._worker_thread: threading.Thread | None = None
         self._started_at = time.time()
         self._shutdown_requested = False
@@ -547,6 +559,7 @@ class SimulationTUIApp(App[None]):
         self._log_requires_full_refresh = True
         self._placeholder_visible = False
         self._history_browsing_enabled = False
+        self._last_result: dict[str, Any] = {}
 
     def compose(self) -> ComposeResult:
         yield Static(self.state.tr("waiting_status"), id="status", markup=True)
@@ -714,6 +727,9 @@ class SimulationTUIApp(App[None]):
         log.auto_scroll = False
         log.focus()
         self._history_browsing_enabled = True
+        if self.next_round_factory is not None:
+            self.state.tuning_done = True
+            self._refresh_all()
 
     def action_request_quit(self) -> None:
         self.controller.request_stop()
@@ -730,6 +746,42 @@ class SimulationTUIApp(App[None]):
             }
         )
         self._log_requires_full_refresh = True
+        self._refresh_all()
+
+    def action_next_round(self) -> None:
+        if (
+            not self.state.tuning_done
+            or self.next_round_factory is None
+            or self._worker_is_running()
+        ):
+            return
+
+        if self.event_sink is not None:
+            self._ignore_events_before_seq = self.event_sink.snapshot_sequence()
+        else:
+            drain_event_queue(self.event_queue)
+
+        self.controller = SimulationController()
+        new_worker = self.next_round_factory(self._last_result)
+        self.state.tuning_done = False
+        self.state.reset_view()
+        self._history_browsing_enabled = False
+        self._rendered_event_count = 0
+        self._log_requires_full_refresh = True
+        self._placeholder_visible = False
+        self._shutdown_requested = False
+        self._started_at = time.time()
+        self._worker_thread = threading.Thread(
+            target=new_worker,
+            name="simulation-tui-worker",
+        )
+        self._worker_thread.start()
+        try:
+            log = self.query_one("#events", RichLog)
+            log.auto_scroll = True
+            log.clear()
+        except NoMatches:
+            pass
         self._refresh_all()
 
     def action_toggle_pause(self) -> None:
@@ -759,6 +811,7 @@ class SimulationTUIApp(App[None]):
         else:
             drain_event_queue(self.event_queue)
         self.state.reset_view()
+        self.state.tuning_done = False
         self._rendered_event_count = 0
         self._log_requires_full_refresh = True
         self._placeholder_visible = False

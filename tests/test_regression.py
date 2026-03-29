@@ -1,4 +1,5 @@
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -121,6 +122,78 @@ class LLMFallbackTests(unittest.TestCase):
 
         self.assertEqual(result, '{"status":"DONE"}')
         self.assertEqual(done_updates.count(True), 1)
+
+    def test_sdk_stream_ignores_null_delta_summary_chunk(self):
+        class FakeDelta:
+            def __init__(self, content):
+                self.content = content
+
+        class FakeMessage:
+            def __init__(self, content):
+                self.content = content
+
+        class FakeChoice:
+            def __init__(self, *, delta=None, message=None):
+                self.delta = delta
+                self.message = message
+
+        class FakeChunk:
+            def __init__(self, choice):
+                self.choices = [choice]
+
+        chunks = [
+            FakeChunk(FakeChoice(delta=FakeDelta('{"status":"'))),
+            FakeChunk(FakeChoice(delta=FakeDelta('DONE"}'))),
+            FakeChunk(FakeChoice(delta=None, message=FakeMessage('{"status":"DONE"}'))),
+        ]
+
+        tuner = self._make_tuner_without_sdk("openai")
+        tuner.use_sdk = True
+        tuner.client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=lambda **kwargs: iter(chunks))
+            )
+        )
+        tuner._request_via_http = lambda *args, **kwargs: self.fail("unexpected HTTP fallback")  # type: ignore[method-assign]
+
+        result = tuner._execute_request(
+            [{"role": "user", "content": "hello"}],
+            [{"role": "user", "content": "hello"}],
+        )
+
+        self.assertEqual(result, '{"status":"DONE"}')
+
+    def test_sdk_stream_accepts_message_only_chunk(self):
+        class FakeChoice:
+            def __init__(self, *, message=None):
+                self.delta = None
+                self.message = message
+
+        class FakeMessage:
+            def __init__(self, content):
+                self.content = content
+
+        class FakeChunk:
+            def __init__(self, content):
+                self.choices = [FakeChoice(message=FakeMessage(content))]
+
+        tuner = self._make_tuner_without_sdk("openai")
+        tuner.use_sdk = True
+        tuner.client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(
+                    create=lambda **kwargs: iter([FakeChunk('{"status":"DONE"}')])
+                )
+            )
+        )
+        tuner._request_via_http = lambda *args, **kwargs: self.fail("unexpected HTTP fallback")  # type: ignore[method-assign]
+
+        result = tuner._execute_request(
+            [{"role": "user", "content": "hello"}],
+            [{"role": "user", "content": "hello"}],
+        )
+
+        self.assertEqual(result, '{"status":"DONE"}')
 
 
 class PromptSelectionTests(unittest.TestCase):
@@ -294,6 +367,12 @@ class SimulatorStepTests(unittest.TestCase):
         self.assertAlmostEqual(sim.kp, 3.0)
         self.assertAlmostEqual(sim.ki, 0.5)
         self.assertAlmostEqual(sim.kd, 0.2)
+
+    def test_simulator_accepts_custom_setpoint(self):
+        sim = HeatingSimulator(setpoint=300.0, random_seed=7)
+        data = sim.get_data()
+        self.assertEqual(data["setpoint"], 300.0)
+        self.assertAlmostEqual(data["error"], 300.0 - sim.temp)
 
     def test_same_seed_reproduces_same_temperature_trace(self):
         left = HeatingSimulator(random_seed=123)

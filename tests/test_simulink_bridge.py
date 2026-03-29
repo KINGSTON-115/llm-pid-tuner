@@ -12,8 +12,11 @@ from sim.simulink_bridge import SimulinkBridge
 class _FakeEngine:
     def __init__(self, sim_output):
         self._sim_output = sim_output
+        self.blocks = {}
+        self.set_param_calls = []
 
     def set_param(self, *_args, **_kwargs):
+        self.set_param_calls.append(_args)
         return None
 
     def sim(self, *_args, **_kwargs):
@@ -23,6 +26,24 @@ class _FakeEngine:
         if isinstance(obj, dict) and field_name in obj:
             return obj[field_name]
         raise KeyError(field_name)
+
+    def find_system(self, _model_name, *args, **kwargs):
+        block_type = None
+        for index in range(0, len(args), 2):
+            if index + 1 >= len(args):
+                break
+            if args[index] == "BlockType":
+                block_type = args[index + 1]
+                break
+        if not block_type:
+            return []
+        return [
+            path for path, meta in self.blocks.items()
+            if meta.get("BlockType") == block_type
+        ]
+
+    def get_param(self, block_path, parameter_name, nargout=1):
+        return self.blocks[block_path][parameter_name]
 
 
 class SimulinkBridgeCompatTests(unittest.TestCase):
@@ -87,6 +108,31 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         self.assertEqual(bridge.get_data()[1]["timestamp"], 2000.0)
         self.assertEqual(bridge.get_data()[0]["input"], 80.0)
         self.assertEqual(bridge.get_data()[1]["input"], 90.0)
+
+    def test_apply_model_setpoint_updates_step_block(self):
+        bridge = self._make_bridge({})
+        bridge.setpoint = 300.0
+        bridge._eng.blocks = {
+            "demo/Step": {"BlockType": "Step"},
+        }
+
+        bridge._apply_model_setpoint()
+
+        self.assertIn(("demo/Step", "After", "300.0"), bridge._eng.set_param_calls)
+
+    def test_apply_model_setpoint_updates_constant_block(self):
+        bridge = self._make_bridge({})
+        bridge.setpoint = 180.0
+        bridge._eng.blocks = {
+            "demo/Setpoint": {"BlockType": "Constant"},
+        }
+
+        bridge._apply_model_setpoint()
+
+        self.assertIn(
+            ("demo/Setpoint", "Value", "180.0"),
+            bridge._eng.set_param_calls,
+        )
 
 
 if __name__ == "__main__":

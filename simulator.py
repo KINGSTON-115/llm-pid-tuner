@@ -49,6 +49,13 @@ from core.i18n import get_language, set_language, tr
 initialize_runtime_config(create_if_missing=False, verbose=False)
 
 
+def _get_configured_setpoint(default: float = SETPOINT) -> float:
+    try:
+        return float(CONFIG.get("MATLAB_SETPOINT", default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def choose_tui_language(default: str | None = None) -> str:
     if default is None:
         default = get_language()
@@ -251,6 +258,19 @@ def _build_python_sim_prompt_context() -> dict[str, Any]:
         "tuning_style": "simulation_can_move_faster_than_hardware",
         "per_round_guardrail_hint": "仿真环境，可适度加大调整幅度，每轮 P 值可调整至当前值的3倍以内，I/D 可调整至当前值的4倍以内。",
     }
+
+
+def _create_python_simulator(
+    initial_pid: dict[str, float] | None,
+    warm_start: bool,
+    setpoint: float,
+) -> tuple[HeatingSimulator, bool]:
+    sim = HeatingSimulator(setpoint=setpoint)
+    effective_warm_start = warm_start
+    if initial_pid:
+        sim.set_pid(initial_pid["p"], initial_pid["i"], initial_pid["d"])
+        effective_warm_start = False
+    return sim, effective_warm_start
 
 
 def _build_simulink_prompt_context(
@@ -638,63 +658,90 @@ def determine_tui_mode(
 
 
 def _run_python_simulation_with_tui(
-    warm_start: bool = True, doctor_checks: list[Any] | None = None
+    warm_start: bool = True,
+    doctor_checks: list[Any] | None = None,
+    initial_pid: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
     event_queue: Queue[dict[str, Any]] = Queue()
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
-    sim = HeatingSimulator()
     result_box: dict[str, Any] = {}
     language = choose_tui_language()
+    setpoint = _get_configured_setpoint()
 
-    def worker() -> None:
-        result_box["result"] = _run_tuning_loop(
-            sim,
-            SETPOINT,
-            "Python",
-            llm_mode="python_sim",
-            prompt_context=_build_python_sim_prompt_context(),
-            event_sink=event_sink,
-            controller=controller,
-            emit_console=False,
-            warm_start=warm_start,
-            doctor_checks=doctor_checks,
-        )
+    def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
+        def worker() -> None:
+            sim, effective_warm_start = _create_python_simulator(
+                pid,
+                warm_start,
+                setpoint,
+            )
+            result = _run_tuning_loop(
+                sim,
+                setpoint,
+                "Python",
+                llm_mode="python_sim",
+                prompt_context=_build_python_sim_prompt_context(),
+                event_sink=event_sink,
+                controller=app.controller,
+                emit_console=False,
+                warm_start=effective_warm_start,
+                doctor_checks=doctor_checks,
+            )
+            result_box["result"] = result
+            app._last_result = result
 
-    SimulationTUIApp(
+        return worker
+
+    def next_round_factory(last_result: dict[str, Any]) -> Callable[[], None]:
+        pid = last_result.get("final_pid")
+        return make_worker(pid if isinstance(pid, dict) else None)
+
+    app = SimulationTUIApp(
         event_queue=event_queue,
         controller=controller,
-        worker_target=worker,
+        worker_target=make_worker(initial_pid),
         event_sink=event_sink,
         mode_label="Python",
         language=language,
-    ).run()
+        next_round_factory=next_round_factory,
+    )
+    app.run()
     return result_box.get("result", {})
 
 
 def _run_python_simulation_plain(
-    warm_start: bool = True, doctor_checks: list[Any] | None = None
+    warm_start: bool = True,
+    doctor_checks: list[Any] | None = None,
+    initial_pid: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    setpoint = _get_configured_setpoint()
     print("=" * 60)
     print("  LLM PID Tuner PRO - Simulation")
     print("=" * 60)
-    print(f"Setpoint: {SETPOINT}, Model: {CONFIG['LLM_MODEL_NAME']}")
-    sim = HeatingSimulator()
+    print(f"Setpoint: {setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}")
+    sim, effective_warm_start = _create_python_simulator(
+        initial_pid,
+        warm_start,
+        setpoint,
+    )
     return _run_tuning_loop(
         sim,
-        SETPOINT,
+        setpoint,
         "Python",
         llm_mode="python_sim",
         prompt_context=_build_python_sim_prompt_context(),
         emit_console=True,
-        warm_start=warm_start,
+        warm_start=effective_warm_start,
         doctor_checks=doctor_checks,
     )
 
 
-def _run_simulink_simulation() -> dict[str, Any] | None:
+def _run_simulink_simulation(
+    initial_pid: dict[str, float] | None = None,
+) -> dict[str, Any] | None:
     try:
         from sim.simulink_bridge import SimulinkBridge
     except ImportError as exc:
@@ -738,6 +785,9 @@ def _run_simulink_simulation() -> dict[str, Any] | None:
     except Exception as exc:
         print(f"[ERROR] Failed to connect to Simulink: {exc}")
         return None
+
+    if initial_pid:
+        sim.set_pid(initial_pid["p"], initial_pid["i"], initial_pid["d"])
 
     try:
         return _run_tuning_loop(

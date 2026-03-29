@@ -19,11 +19,12 @@ class HeatingSimulator:
         kp: float = 1.0,
         ki: float = 0.1,
         kd: float = 0.05,
+        setpoint: float = SETPOINT,
         random_seed: int | None = 0,
     ):
         self.temp = INITIAL_TEMP
         self.pwm = 0.0
-        self.setpoint = SETPOINT
+        self.setpoint = float(setpoint)
         self.integral = 0.0
         self.prev_error = 0.0
         self.timestamp = 0

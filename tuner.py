@@ -17,7 +17,7 @@ import importlib
 from queue import Queue
 import sys
 import time
-from typing import Any
+from typing import Any, Callable
 
 from core.config import CONFIG, initialize_runtime_config
 from core.tuning_session import (
@@ -161,9 +161,10 @@ def _run_hardware_tuning_loop(
     event_sink: QueueEventSink | None = None,
     controller: SimulationController | None = None,
     emit_console: bool = True,
+    initial_pid: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     bridge = SerialBridge(serial_port, CONFIG["BAUD_RATE"], emit_console=False)
-    session = create_tuning_session()
+    session = create_tuning_session(initial_pid=initial_pid)
     start_time = time.time()
     current_stream_round = [0]
 
@@ -229,6 +230,11 @@ def _run_hardware_tuning_loop(
         bridge.send_command("STATUS")
         _emit_log(event_sink, start_time, "cmd", "STATUS")
         _console(emit_console, "[CMD] Sent: STATUS")
+        if initial_pid:
+            cmd = f"SET P:{initial_pid['p']} I:{initial_pid['i']} D:{initial_pid['d']}"
+            bridge.send_command(cmd)
+            _emit_log(event_sink, start_time, "cmd", cmd)
+            _console(emit_console, f"[CMD] Initial PID: {cmd}")
         time.sleep(1)
 
         _console(emit_console, "[INFO] 开始采集数据...")
@@ -494,7 +500,10 @@ def _run_hardware_tuning_loop(
     }
 
 
-def _run_hardware_tuning_with_tui(serial_port: str) -> dict[str, Any]:
+def _run_hardware_tuning_with_tui(
+    serial_port: str,
+    initial_pid: dict[str, float] | None = None,
+) -> dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
     event_queue: Queue[dict[str, Any]] = Queue()
@@ -503,26 +512,41 @@ def _run_hardware_tuning_with_tui(serial_port: str) -> dict[str, Any]:
     result_box: dict[str, Any] = {}
     language = choose_tui_language()
 
-    def worker() -> None:
-        result_box["result"] = _run_hardware_tuning_loop(
-            serial_port,
-            event_sink=event_sink,
-            controller=controller,
-            emit_console=False,
-        )
+    def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
+        def worker() -> None:
+            result = _run_hardware_tuning_loop(
+                serial_port,
+                event_sink=event_sink,
+                controller=app.controller,
+                emit_console=False,
+                initial_pid=pid,
+            )
+            result_box["result"] = result
+            app._last_result = result
 
-    SimulationTUIApp(
+        return worker
+
+    def next_round_factory(last_result: dict[str, Any]) -> Callable[[], None]:
+        pid = last_result.get("final_pid")
+        return make_worker(pid if isinstance(pid, dict) else None)
+
+    app = SimulationTUIApp(
         event_queue=event_queue,
         controller=controller,
-        worker_target=worker,
+        worker_target=make_worker(initial_pid),
         event_sink=event_sink,
         mode_label="Hardware",
         language=language,
-    ).run()
+        next_round_factory=next_round_factory,
+    )
+    app.run()
     return result_box.get("result", {})
 
 
-def _run_hardware_tuning_plain(serial_port: str) -> dict[str, Any]:
+def _run_hardware_tuning_plain(
+    serial_port: str,
+    initial_pid: dict[str, float] | None = None,
+) -> dict[str, Any]:
     print("=" * 60)
     print("  LLM PID Tuner PRO - 增强版自动调参系统")
     print("=" * 60)
@@ -530,12 +554,14 @@ def _run_hardware_tuning_plain(serial_port: str) -> dict[str, Any]:
     return _run_hardware_tuning_loop(
         serial_port,
         emit_console=True,
+        initial_pid=initial_pid,
     )
 
 
 def run_hardware_tuner(
     serial_port_arg: str | None = None,
     force_plain: bool = False,
+    initial_pid: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     initialize_runtime_config(create_if_missing=True, verbose=True)
     serial_port = resolve_serial_port(serial_port_arg)
@@ -549,8 +575,8 @@ def run_hardware_tuner(
         print(f"[WARN] {fallback_message}")
 
     if use_tui:
-        return _run_hardware_tuning_with_tui(serial_port)
-    return _run_hardware_tuning_plain(serial_port)
+        return _run_hardware_tuning_with_tui(serial_port, initial_pid=initial_pid)
+    return _run_hardware_tuning_plain(serial_port, initial_pid=initial_pid)
 
 
 def main(argv: list[str] | None = None) -> None:

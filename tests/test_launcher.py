@@ -11,6 +11,14 @@ import tuner
 
 
 class LauncherDispatchTests(unittest.TestCase):
+    def test_main_initializes_config_before_dispatch(self):
+        with patch.object(launcher, "initialize_runtime_config") as init_config:
+            with patch.object(launcher, "dispatch") as dispatch:
+                launcher.main([])
+
+        init_config.assert_called_once_with(create_if_missing=True, verbose=True)
+        dispatch.assert_called_once()
+
     def test_sim_mode_routes_to_simulator(self):
         with patch.object(launcher, "run_simulation") as run_simulation:
             with patch.object(launcher, "run_tuner") as run_tuner:

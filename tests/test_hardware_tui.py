@@ -27,6 +27,43 @@ def _make_csv_line(timestamp: int, temp: float, pwm: float = 200.0) -> str:
 
 
 class HardwareTuiLoopTests(unittest.TestCase):
+    def test_hardware_loop_applies_initial_pid_before_tuning(self):
+        sent_commands: list[str] = []
+
+        class FakeBridge:
+            def __init__(self, _port, _baudrate, emit_console=True):
+                self.emit_console = emit_console
+                self.last_error = ""
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+            def read_line(self):
+                return None
+
+            def parse_data(self, line):
+                return None
+
+            def send_command(self, cmd):
+                sent_commands.append(cmd)
+
+        with patch.object(tuner, "SerialBridge", FakeBridge):
+            with patch.dict(
+                tuner.CONFIG,
+                {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 0},
+                clear=False,
+            ):
+                tuner._run_hardware_tuning_loop(
+                    "COM9",
+                    emit_console=False,
+                    initial_pid={"p": 2.5, "i": 0.4, "d": 0.1},
+                )
+
+        self.assertEqual(sent_commands[:2], ["STATUS", "SET P:2.5 I:0.4 D:0.1"])
+
     def test_hardware_loop_emits_stream_and_decision_events(self):
         event_queue = Queue()
         event_sink = QueueEventSink(event_queue)

@@ -99,6 +99,7 @@ class SimulinkBridge:
         self._eng.addpath(model_dir, nargout=0)
         self._eng.load_system(self.model_path, nargout=0)
         print(f"[Simulink] 模型已加载: {self._model_name}")
+        self._apply_model_setpoint()
 
         # 设置仿真模式为外部控制（逐步推进）
         self._eng.set_param(self._model_name, "SimulationMode", "normal", nargout=0)
@@ -156,6 +157,92 @@ class SimulinkBridge:
             return self._eng.getfield(obj, field_name, nargout=1)  # type: ignore[union-attr]
         except Exception:
             return None
+
+    def _to_string_list(self, raw_value: object) -> list[str]:
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, str):
+            return [raw_value]
+        try:
+            values = list(raw_value)  # type: ignore[arg-type]
+        except TypeError:
+            return [str(raw_value)]
+        return [str(value) for value in values]
+
+    def _find_blocks_by_type(self, block_type: str) -> list[str]:
+        raw_blocks = self._eng.find_system(  # type: ignore[union-attr]
+            self._model_name,
+            "LookUnderMasks",
+            "all",
+            "FollowLinks",
+            "on",
+            "BlockType",
+            block_type,
+            nargout=1,
+        )
+        return self._to_string_list(raw_blocks)
+
+    def _resolve_setpoint_block(self) -> tuple[str | None, str | None]:
+        keywords = ("setpoint", "reference", "ref", "step", "目标", "给定")
+        candidates: list[tuple[int, str, str]] = []
+
+        for block_type in ("Step", "Constant"):
+            for block_path in self._find_blocks_by_type(block_type):
+                score = 0
+                lowered = block_path.lower()
+                if any(keyword in lowered for keyword in keywords):
+                    score += 10
+                if block_path.rsplit("/", 1)[-1] in {"Step", "Setpoint", "Reference"}:
+                    score += 5
+                candidates.append((score, block_path, block_type))
+
+        if not candidates:
+            return None, None
+
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        best_score, best_path, best_type = candidates[0]
+
+        if len(candidates) > 1:
+            second_score = candidates[1][0]
+            if best_score == second_score and best_score == 0:
+                return None, None
+
+        return best_path, best_type
+
+    def _setpoint_parameter_name(self, block_type: str) -> str | None:
+        if block_type == "Step":
+            return "After"
+        if block_type == "Constant":
+            return "Value"
+        return None
+
+    def _apply_model_setpoint(self) -> None:
+        block_path, block_type = self._resolve_setpoint_block()
+        if not block_path or not block_type:
+            print(
+                "[Simulink][WARN] 未能自动识别设定值来源块，"
+                f"请确认模型内目标值已与 MATLAB_SETPOINT={self.setpoint} 保持一致。"
+            )
+            return
+
+        parameter_name = self._setpoint_parameter_name(block_type)
+        if not parameter_name:
+            print(
+                f"[Simulink][WARN] 识别到设定值块 {block_path}，"
+                f"但暂不支持自动写入块类型 {block_type}。"
+            )
+            return
+
+        self._eng.set_param(  # type: ignore[union-attr]
+            block_path,
+            parameter_name,
+            str(self.setpoint),
+            nargout=0,
+        )
+        print(
+            f"[Simulink] 已将目标值 {self.setpoint} 同步到 {block_path} "
+            f"({parameter_name})."
+        )
 
     def _to_float_scalar(self, value: object) -> float:
         """Convert MATLAB numeric wrappers (including nested iterables) to float."""
