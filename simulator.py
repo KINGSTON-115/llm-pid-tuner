@@ -13,6 +13,9 @@ from typing import Any
 
 from core.buffer import AdvancedDataBuffer
 from core.config import CONFIG, initialize_runtime_config
+
+# Alias used by run_simulation and patchable in tests
+ensure_runtime_config = initialize_runtime_config
 from core.tuning_session import (
     apply_rollback,
     build_tuning_result,
@@ -28,6 +31,7 @@ from sim.model import HeatingSimulator, SETPOINT
 from sim.runtime import (
     EVENT_DECISION,
     EVENT_LIFECYCLE,
+    EVENT_LOG,
     EVENT_ROLLBACK,
     EVENT_ROUND_METRICS,
     EVENT_SAMPLE,
@@ -39,20 +43,15 @@ from sim.runtime import (
 )
 from system_id import extract_initial_pid, system_identify
 
+from core.i18n import get_language, set_language, tr
+
 
 initialize_runtime_config(create_if_missing=False, verbose=False)
 
 
-def choose_tui_language(default: str = "zh") -> str:
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return default
-
-    print("Choose interface language / 选择界面语言")
-    print("[1] 中文")
-    print("[2] English")
-    choice = input("Press Enter for 中文 / 回车默认中文: ").strip().lower()
-    if choice in {"2", "en", "english"}:
-        return "en"
+def choose_tui_language(default: str | None = None) -> str:
+    if default is None:
+        default = get_language()
     return default
 
 
@@ -62,16 +61,33 @@ def _console(enabled: bool, message: str) -> None:
 
 
 def _emit_lifecycle(
-    event_sink: QueueEventSink | None,
-    start_time: float,
-    phase: str,
-    message: str,
+    event_sink: QueueEventSink | None, start_time: float, phase: str, message: str
 ) -> None:
     publish_event(
         event_sink,
         EVENT_LIFECYCLE,
         phase=phase,
         message=message,
+        elapsed_sec=now_elapsed(start_time),
+    )
+
+
+def _emit_log(
+    event_sink: QueueEventSink | None,
+    start_time: float,
+    label: str,
+    message: str,
+    *,
+    replace_last: bool = False,
+    stream_id: int | None = None,
+) -> None:
+    publish_event(
+        event_sink,
+        EVENT_LOG,
+        label=label,
+        message=message,
+        replace_last=replace_last,
+        stream_id=stream_id,
         elapsed_sec=now_elapsed(start_time),
     )
 
@@ -87,11 +103,7 @@ def _publish_doctor_checks(
     summary = summarize_doctor_checks(doctor_checks)
     _console(emit_console, f"[Doctor] {summary}")
     publish_event(
-        event_sink,
-        EVENT_LIFECYCLE,
-        phase="doctor",
-        message=summary,
-        elapsed_sec=0.0,
+        event_sink, EVENT_LIFECYCLE, phase="doctor", message=summary, elapsed_sec=0.0
     )
     for check in doctor_checks:
         if getattr(check, "status", "PASS") == "PASS":
@@ -130,8 +142,11 @@ def _run_simulator_warm_start(
     result = system_identify(time_data, temp_data, pwm_data)
     candidate_pid = extract_initial_pid(result, "PID")
     if not candidate_pid:
-        message = "Warm start skipped because system identification did not return a usable PID."
-        _console(emit_console, f"[Warm Start] {message}")
+        message = tr(
+            "因系统辨识未返回可用 PID，跳过热启动。",
+            "Warm start skipped because system identification did not return a usable PID.",
+        )
+        _console(emit_console, tr(f"[热启动] {message}", f"[Warm Start] {message}"))
         publish_event(
             event_sink,
             EVENT_LIFECYCLE,
@@ -142,16 +157,15 @@ def _run_simulator_warm_start(
         return None
 
     safe_pid, notes = apply_pid_guardrails(
-        {"p": sim.kp, "i": sim.ki, "d": sim.kd},
-        candidate_pid,
+        {"p": sim.kp, "i": sim.ki, "d": sim.kd}, candidate_pid
     )
     sim.set_pid(safe_pid["p"], safe_pid["i"], safe_pid["d"])
     note_text = f" ({'; '.join(notes)})" if notes else ""
-    message = (
-        f"Applied warm start PID: P={safe_pid['p']:.4f} "
-        f"I={safe_pid['i']:.4f} D={safe_pid['d']:.4f}{note_text}"
+    message = tr(
+        f"已应用热启动 PID: P={safe_pid['p']:.4f} I={safe_pid['i']:.4f} D={safe_pid['d']:.4f}{note_text}",
+        f"Applied warm start PID: P={safe_pid['p']:.4f} I={safe_pid['i']:.4f} D={safe_pid['d']:.4f}{note_text}",
     )
-    _console(emit_console, f"[Warm Start] {message}")
+    _console(emit_console, tr(f"[热启动] {message}", f"[Warm Start] {message}"))
     publish_event(
         event_sink,
         EVENT_LIFECYCLE,
@@ -240,10 +254,7 @@ def _build_python_sim_prompt_context() -> dict[str, Any]:
 
 
 def _build_simulink_prompt_context(
-    model_path: str,
-    pid_block_path: str,
-    output_signal: str,
-    sim_step_time: float,
+    model_path: str, pid_block_path: str, output_signal: str, sim_step_time: float
 ) -> dict[str, Any]:
     return {
         "source": "matlab_simulink",
@@ -294,10 +305,7 @@ def _default_prompt_context_for_mode(sim: Any, llm_mode: str) -> dict[str, Any] 
         return None
 
     return _build_simulink_prompt_context(
-        model_path,
-        pid_block_path,
-        output_signal,
-        sim_step_time_value,
+        model_path, pid_block_path, output_signal, sim_step_time_value
     )
 
 
@@ -318,22 +326,49 @@ def _run_tuning_loop(
     if prompt_context is None:
         prompt_context = _default_prompt_context_for_mode(sim, llm_mode)
 
+    current_stream_round = [0]
+
+    def llm_log_callback(label: str, message: str) -> None:
+        _emit_log(
+            event_sink,
+            start_time,
+            label,
+            message,
+            stream_id=current_stream_round[0] or None,
+        )
+
+    def llm_stream_callback(text: str, done: bool) -> None:
+        _emit_log(
+            event_sink,
+            start_time,
+            "llm_stream",
+            text,
+            replace_last=True,
+            stream_id=current_stream_round[0] or None,
+        )
+
+    start_time = time.time()
+
     tuner = LLMTuner(
         CONFIG["LLM_API_KEY"],
         CONFIG["LLM_API_BASE_URL"],
         CONFIG["LLM_MODEL_NAME"],
         CONFIG["LLM_PROVIDER"],
+        stream_callback=llm_stream_callback,
+        log_callback=llm_log_callback,
+        emit_console=emit_console,
+        abort_check=(
+            (lambda: controller.should_stop or controller.is_paused)
+            if controller is not None
+            else None
+        ),
     )
     session = create_tuning_session(
-        initial_pid={"p": sim.kp, "i": sim.ki, "d": sim.kd},
-        setpoint=setpoint,
+        initial_pid={"p": sim.kp, "i": sim.ki, "d": sim.kd}, setpoint=setpoint
     )
-    start_time = time.time()
 
     _publish_doctor_checks(
-        doctor_checks,
-        event_sink=event_sink,
-        emit_console=emit_console,
+        doctor_checks, event_sink=event_sink, emit_console=emit_console
     )
 
     if warm_start and isinstance(sim, HeatingSimulator):
@@ -341,20 +376,24 @@ def _run_tuning_loop(
 
     session.buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
     session.buffer.setpoint = setpoint
-    _emit_lifecycle(event_sink, start_time, "starting", f"{mode_label} simulation started.")
+    _emit_lifecycle(
+        event_sink, start_time, "starting", f"{mode_label} simulation started."
+    )
 
     try:
         while session.round_num < CONFIG["MAX_TUNING_ROUNDS"]:
             if controller is not None and controller.should_stop:
                 session.completed_reason = "stopped_by_user"
                 _console(emit_console, "\n[INFO] Simulation stopped by user.")
-                _emit_lifecycle(event_sink, start_time, "stopped", "Simulation stopped by user.")
+                _emit_lifecycle(
+                    event_sink, start_time, "stopped", "Simulation stopped by user."
+                )
                 break
 
             round_index = session.round_num + 1
             _console(emit_console, f"\n[Round {round_index}] Collecting data...")
             # Simulink 每轮独立仿真，需在采集前清空上轮缓冲数据
-            if hasattr(sim, 'run_step'):
+            if hasattr(sim, "run_step"):
                 session.buffer.reset()
             _emit_lifecycle(
                 event_sink,
@@ -364,22 +403,20 @@ def _run_tuning_loop(
             )
 
             steps, completed = _collect_data(
-                sim,
-                session.buffer,
-                event_sink=event_sink,
-                controller=controller,
+                sim, session.buffer, event_sink=event_sink, controller=controller
             )
             if not completed:
                 session.completed_reason = "stopped_by_user"
                 _console(emit_console, "\n[INFO] Simulation stopped by user.")
-                _emit_lifecycle(event_sink, start_time, "stopped", "Simulation stopped by user.")
+                _emit_lifecycle(
+                    event_sink, start_time, "stopped", "Simulation stopped by user."
+                )
                 break
 
             _console(emit_console, f"[Round {round_index}] Collected {steps} samples.")
 
             evaluation = evaluate_completed_round(
-                session,
-                {"p": sim.kp, "i": sim.ki, "d": sim.kd},
+                session, {"p": sim.kp, "i": sim.ki, "d": sim.kd}
             )
             publish_event(
                 event_sink,
@@ -407,7 +444,9 @@ def _run_tuning_loop(
                     session,
                     evaluation,
                     evaluation.rollback_pid,
-                    target_round=int(evaluation.best_result["round"]) if evaluation.best_result else None,
+                    target_round=int(evaluation.best_result["round"])
+                    if evaluation.best_result
+                    else None,
                 )
                 _console(emit_console, f"[Rollback] {rollback_message}")
                 sim.set_pid(
@@ -420,11 +459,16 @@ def _run_tuning_loop(
                     event_sink,
                     EVENT_ROLLBACK,
                     round=round_index,
-                    target_round=int(evaluation.best_result["round"]) if evaluation.best_result else round_index,
+                    target_round=int(evaluation.best_result["round"])
+                    if evaluation.best_result
+                    else round_index,
                     pid=dict(evaluation.rollback_pid),
                     reason=rollback_message,
                 )
-                if evaluation.completed_reason == "rollback_to_best" and not disable_early_exit:
+                if (
+                    evaluation.completed_reason == "rollback_to_best"
+                    and not disable_early_exit
+                ):
                     session.completed_reason = "rollback_to_best"
                     _emit_lifecycle(
                         event_sink,
@@ -435,7 +479,10 @@ def _run_tuning_loop(
                     break
                 continue
 
-            if evaluation.completed_reason == "low_error_converged" and not disable_early_exit:
+            if (
+                evaluation.completed_reason == "low_error_converged"
+                and not disable_early_exit
+            ):
                 session.completed_reason = "low_error_converged"
                 _emit_lifecycle(
                     event_sink,
@@ -445,7 +492,10 @@ def _run_tuning_loop(
                 )
                 break
 
-            if evaluation.completed_reason == "stable_rounds_reached" and not disable_early_exit:
+            if (
+                evaluation.completed_reason == "stable_rounds_reached"
+                and not disable_early_exit
+            ):
                 session.completed_reason = "stable_rounds_reached"
                 _emit_lifecycle(
                     event_sink,
@@ -455,6 +505,7 @@ def _run_tuning_loop(
                 )
                 break
 
+            current_stream_round[0] = round_index
             _emit_lifecycle(
                 event_sink,
                 start_time,
@@ -467,6 +518,22 @@ def _run_tuning_loop(
                 tuning_mode=llm_mode,
                 prompt_context=prompt_context,
             )
+
+            # LLM 被 stop 中断
+            if controller is not None and controller.should_stop:
+                session.completed_reason = "stopped_by_user"
+                _console(emit_console, "\n[INFO] Simulation stopped by user.")
+                _emit_lifecycle(
+                    event_sink, start_time, "stopped", "Simulation stopped by user."
+                )
+                break
+
+            # LLM 被 pause 中断 → 等待恢复后重做本轮
+            if controller is not None and controller.is_paused:
+                if not wait_while_paused(controller):
+                    session.completed_reason = "stopped_by_user"
+                    break
+                continue  # buffer 仍满 → _collect_data 立即返回 → 重新请求 LLM
 
             if not result:
                 _emit_lifecycle(
@@ -481,9 +548,7 @@ def _run_tuning_loop(
 
             decision = finalize_decision(session, evaluation, result)
             sim.set_pid(
-                decision.safe_pid["p"],
-                decision.safe_pid["i"],
-                decision.safe_pid["d"],
+                decision.safe_pid["p"], decision.safe_pid["i"], decision.safe_pid["d"]
             )
             publish_event(
                 event_sink,
@@ -509,20 +574,12 @@ def _run_tuning_loop(
         session.completed_reason = "keyboard_interrupt"
         _console(emit_console, "\n[INFO] Simulation interrupted by keyboard.")
         _emit_lifecycle(
-            event_sink,
-            start_time,
-            "stopped",
-            "Simulation interrupted by keyboard.",
+            event_sink, start_time, "stopped", "Simulation interrupted by keyboard."
         )
     except Exception as exc:
         session.completed_reason = "error"
         _console(emit_console, f"\n[ERROR] Simulation failed: {exc}")
-        _emit_lifecycle(
-            event_sink,
-            start_time,
-            "error",
-            f"Simulation failed: {exc}",
-        )
+        _emit_lifecycle(event_sink, start_time, "error", f"Simulation failed: {exc}")
         raise
     finally:
         elapsed_sec = now_elapsed(start_time)
@@ -550,15 +607,23 @@ def _run_tuning_loop(
     }
 
 
-def determine_tui_mode(force_plain: bool, matlab_model_path: str) -> tuple[bool, str | None]:
+def determine_tui_mode(
+    force_plain: bool, matlab_model_path: str
+) -> tuple[bool, str | None]:
     if force_plain:
         return False, None
 
     if matlab_model_path:
-        return False, "Simulink mode does not support the TUI yet; falling back to plain output."
+        return (
+            False,
+            "Simulink mode does not support the TUI yet; falling back to plain output.",
+        )
 
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return False, "The TUI requires an interactive terminal; falling back to plain output."
+        return (
+            False,
+            "The TUI requires an interactive terminal; falling back to plain output.",
+        )
 
     try:
         # Import probing is more reliable than find_spec() in frozen executables.
@@ -573,8 +638,7 @@ def determine_tui_mode(force_plain: bool, matlab_model_path: str) -> tuple[bool,
 
 
 def _run_python_simulation_with_tui(
-    warm_start: bool = True,
-    doctor_checks: list[Any] | None = None,
+    warm_start: bool = True, doctor_checks: list[Any] | None = None
 ) -> dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
@@ -611,8 +675,7 @@ def _run_python_simulation_with_tui(
 
 
 def _run_python_simulation_plain(
-    warm_start: bool = True,
-    doctor_checks: list[Any] | None = None,
+    warm_start: bool = True, doctor_checks: list[Any] | None = None
 ) -> dict[str, Any]:
     print("=" * 60)
     print("  LLM PID Tuner PRO - Simulation")
@@ -683,10 +746,7 @@ def _run_simulink_simulation() -> dict[str, Any] | None:
             "Simulink",
             llm_mode="simulink",
             prompt_context=_build_simulink_prompt_context(
-                matlab_model_path,
-                pid_block_path,
-                output_signal,
-                sim_step_time,
+                matlab_model_path, pid_block_path, output_signal, sim_step_time
             ),
             emit_console=True,
             disable_early_exit=True,
@@ -711,20 +771,18 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
     if use_tui:
         try:
             return _run_python_simulation_with_tui(
-                warm_start=True,
-                doctor_checks=doctor_checks,
+                warm_start=True, doctor_checks=doctor_checks
             )
         except Exception as exc:
-            print(f"[WARN] Failed to start the TUI ({exc}); falling back to plain output.")
+            print(
+                f"[WARN] Failed to start the TUI ({exc}); falling back to plain output."
+            )
             debug_enabled = bool(CONFIG.get("LLM_DEBUG_OUTPUT"))
             if debug_enabled:
                 traceback.print_exc()
 
     print_doctor_report(doctor_checks)
-    return _run_python_simulation_plain(
-        warm_start=True,
-        doctor_checks=doctor_checks,
-    )
+    return _run_python_simulation_plain(warm_start=True, doctor_checks=doctor_checks)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -734,7 +792,14 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Disable the Textual dashboard and use plain console logs.",
     )
+    parser.add_argument(
+        "--lang", choices=["zh", "en"], help="Override display language (zh or en)."
+    )
     args = parser.parse_args(argv)
+
+    if args.lang:
+        set_language(args.lang)
+
     run_simulation(force_plain=args.plain)
 
 

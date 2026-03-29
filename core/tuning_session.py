@@ -81,18 +81,22 @@ def create_tuning_session(
 
 
 def evaluate_completed_round(
-    state: TuningSessionState,
-    current_pid: dict[str, float],
+    state: TuningSessionState, current_pid: dict[str, float]
 ) -> RoundEvaluation:
     metrics = state.buffer.calculate_advanced_metrics()
     round_index = state.round_num + 1
+    # 检测重试：同一轮因 pause 被中断后重新进入，last_round 已等于 round_index
+    is_retry = state.last_round == round_index
     state.last_round = round_index
     state.last_metrics = dict(metrics)
-    state.stable_rounds = (
-        state.stable_rounds + 1
-        if is_good_enough(metrics, state.good_enough_rules)
-        else 0
-    )
+
+    if is_retry:
+        # 重试时不累加 stable_rounds，保留上次结果，避免同一批数据重复计分
+        pass
+    elif is_good_enough(metrics, state.good_enough_rules):
+        state.stable_rounds += 1
+    else:
+        state.stable_rounds = 0
 
     previous_best = state.best_result
     state.best_result = maybe_update_best_result(
@@ -132,10 +136,7 @@ def evaluate_completed_round(
     )
 
 
-def apply_rollback(
-    state: TuningSessionState,
-    rollback_pid: dict[str, float],
-) -> None:
+def apply_rollback(state: TuningSessionState, rollback_pid: dict[str, float]) -> None:
     state.rollback_count += 1
     state.round_num += 1
     state.buffer.current_pid = dict(rollback_pid)
@@ -149,7 +150,9 @@ def record_rollback_round(
     *,
     target_round: int | None = None,
 ) -> str:
-    target_label = f"round {target_round}" if target_round is not None else "the best stable round"
+    target_label = (
+        f"round {target_round}" if target_round is not None else "the best stable round"
+    )
     analysis = (
         "Automatic rollback triggered because this round regressed against "
         f"{target_label}. Reverted to "
@@ -178,12 +181,8 @@ def finalize_decision(
     if not result:
         result = build_fallback_suggestion(evaluation.current_pid, evaluation.metrics)
 
-    safe_pid, guardrail_notes = apply_pid_guardrails(
-        evaluation.current_pid, result
-    )
-    analysis = str(
-        result.get("analysis_summary", "No analysis summary was provided.")
-    )
+    safe_pid, guardrail_notes = apply_pid_guardrails(evaluation.current_pid, result)
+    analysis = str(result.get("analysis_summary", "No analysis summary was provided."))
     thought = str(result.get("thought_process", ""))
     action = str(result.get("tuning_action", "UNKNOWN"))
     fallback_used = bool(result.get("fallback_used"))
@@ -218,10 +217,7 @@ def finalize_decision(
 
 
 def build_tuning_result(
-    state: TuningSessionState,
-    *,
-    final_pid: dict[str, float],
-    stopped: bool,
+    state: TuningSessionState, *, final_pid: dict[str, float], stopped: bool
 ) -> dict[str, Any]:
     return {
         "provider": CONFIG["LLM_PROVIDER"],

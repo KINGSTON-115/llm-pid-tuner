@@ -31,14 +31,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Launch mode (`tune` / `sim`) or a serial port like COM5.",
     )
     parser.add_argument(
-        "extra",
-        nargs="*",
-        help="Additional arguments forwarded to the selected mode.",
+        "extra", nargs="*", help="Additional arguments forwarded to the selected mode."
     )
     parser.add_argument(
         "--plain",
         action="store_true",
         help="When using `sim`, disable the Textual dashboard and use plain logs.",
+    )
+    parser.add_argument(
+        "--lang",
+        choices=["zh", "en"],
+        help="Override display language (zh or en); forwarded to simulator.",
     )
     return parser
 
@@ -81,8 +84,12 @@ def prompt_launch_mode(default_mode: str = MODE_SIM) -> str:
     return normalized
 
 
-def run_simulation(force_plain: bool) -> None:
-    sim_args = ["--plain"] if force_plain else []
+def run_simulation(force_plain: bool, lang: str | None = None) -> None:
+    sim_args: list[str] = []
+    if force_plain:
+        sim_args.append("--plain")
+    if lang:
+        sim_args.extend(["--lang", lang])
     simulator.main(sim_args)
 
 
@@ -94,13 +101,16 @@ def dispatch(
     mode_or_port: str | None,
     extra: list[str],
     force_plain: bool = False,
+    lang: str | None = None,
 ) -> None:
     normalized = normalize_mode(mode_or_port)
 
     if normalized == MODE_SIM:
         if extra:
-            raise SystemExit("Simulator mode does not accept extra positional arguments.")
-        run_simulation(force_plain)
+            raise SystemExit(
+                "Simulator mode does not accept extra positional arguments."
+            )
+        run_simulation(force_plain, lang=lang)
         return
 
     if normalized == MODE_TUNE:
@@ -120,7 +130,7 @@ def dispatch(
         return
 
     if force_plain:
-        run_simulation(True)
+        run_simulation(True, lang=lang)
         return
 
     if not can_prompt():
@@ -132,7 +142,7 @@ def dispatch(
         run_tuner([])
         return
     if choice == MODE_SIM:
-        run_simulation(force_plain=False)
+        run_simulation(force_plain=False, lang=lang)
         safe_pause("Press Enter to exit...")
         return
 
@@ -142,7 +152,9 @@ def dispatch(
 def main(argv: list[str] | None = None) -> None:
     try:
         args = build_parser().parse_args(argv)
-        dispatch(args.mode_or_port, list(args.extra), force_plain=args.plain)
+        dispatch(
+            args.mode_or_port, list(args.extra), force_plain=args.plain, lang=args.lang
+        )
     except Exception as exc:
         print(f"[ERROR] Launcher failed: {exc}")
         if can_prompt():

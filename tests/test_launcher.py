@@ -16,7 +16,7 @@ class LauncherDispatchTests(unittest.TestCase):
             with patch.object(launcher, "run_tuner") as run_tuner:
                 launcher.main(["sim"])
 
-        run_simulation.assert_called_once_with(False)
+        run_simulation.assert_called_once_with(False, lang=None)
         run_tuner.assert_not_called()
 
     def test_plain_flag_without_mode_runs_plain_simulator(self):
@@ -24,8 +24,14 @@ class LauncherDispatchTests(unittest.TestCase):
             with patch.object(launcher, "run_tuner") as run_tuner:
                 launcher.main(["--plain"])
 
-        run_simulation.assert_called_once_with(True)
+        run_simulation.assert_called_once_with(True, lang=None)
         run_tuner.assert_not_called()
+
+    def test_lang_flag_is_forwarded_to_simulator(self):
+        with patch.object(launcher, "run_simulation") as run_simulation:
+            launcher.main(["sim", "--lang", "en"])
+
+        run_simulation.assert_called_once_with(False, lang="en")
 
     def test_legacy_serial_port_routes_to_tuner(self):
         with patch.object(launcher, "run_tuner") as run_tuner:
