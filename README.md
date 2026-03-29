@@ -253,15 +253,14 @@ python simulator.py
 
 ### 分支说明（重要）
 
-- `latest-verified` 分支：当前最新、已验证可用的集成代码，建议源码运行和二次开发优先使用
-- `dev` 分支：开发分支，适合继续迭代中的功能验证
+- `dev` 分支：当前最新开发代码，功能更新会先进入 `dev`
 - `main` 分支：稳定版分支，以稳定可用为主，但不一定是最新代码
-- 如果你想源码运行或做针对性调教，建议优先拉取 `latest-verified` 分支
+- 如果你想源码运行或做针对性调教，建议优先拉取 `dev` 分支
 
 ### 安装依赖
 
 ```bash
-git clone -b latest-verified https://github.com/KINGSTON-115/llm-pid-tuner.git
+git clone -b dev https://github.com/KINGSTON-115/llm-pid-tuner.git
 cd llm-pid-tuner
 pip install -r requirements.txt
 ```

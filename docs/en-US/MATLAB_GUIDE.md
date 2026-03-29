@@ -2,7 +2,7 @@
 
 This guide explains how to use llm-pid-tuner to tune PID parameters on a MATLAB/Simulink simulation model with LLM assistance.
 
-If you plan to run from source, adapt the model integration yourself, or do targeted development work, use the `latest-verified` branch instead of `main`.
+If you plan to run from source, adapt the model integration yourself, or do targeted development work, use the `dev` branch instead of `main`.
 
 ---
 
