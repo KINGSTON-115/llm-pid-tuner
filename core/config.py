@@ -91,8 +91,8 @@ def _parse_env_value(default_value: Any, raw_value: str) -> Any:
 
 def load_config(create_if_missing: bool = True, verbose: bool = True) -> None:
     """Load config from disk and environment variables."""
-    global CONFIG
-    CONFIG = dict(DEFAULT_CONFIG)
+    CONFIG.clear()
+    CONFIG.update(DEFAULT_CONFIG)
 
     if os.path.exists(CONFIG_PATH):
         try:

@@ -169,17 +169,40 @@ class SimulinkBridge:
             return [str(raw_value)]
         return [str(value) for value in values]
 
+    def _with_suppressed_engine_warnings(self, callback):
+        if self._eng is None or not hasattr(self._eng, "eval"):
+            return callback()
+
+        warnings_disabled = False
+        try:
+            self._eng.eval("warning('off','all');", nargout=0)  # type: ignore[union-attr]
+            warnings_disabled = True
+        except Exception:
+            return callback()
+
+        try:
+            return callback()
+        finally:
+            if warnings_disabled:
+                try:
+                    self._eng.eval("warning('on','all');", nargout=0)  # type: ignore[union-attr]
+                except Exception:
+                    pass
+
     def _find_blocks_by_type(self, block_type: str) -> list[str]:
-        raw_blocks = self._eng.find_system(  # type: ignore[union-attr]
-            self._model_name,
-            "LookUnderMasks",
-            "all",
-            "FollowLinks",
-            "on",
-            "BlockType",
-            block_type,
-            nargout=1,
-        )
+        def _call_find_system():
+            return self._eng.find_system(  # type: ignore[union-attr]
+                self._model_name,
+                "LookUnderMasks",
+                "all",
+                "FollowLinks",
+                "on",
+                "BlockType",
+                block_type,
+                nargout=1,
+            )
+
+        raw_blocks = self._with_suppressed_engine_warnings(_call_find_system)
         return self._to_string_list(raw_blocks)
 
     def _resolve_setpoint_block(self) -> tuple[str | None, str | None]:

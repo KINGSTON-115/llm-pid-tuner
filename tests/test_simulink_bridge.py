@@ -14,6 +14,7 @@ class _FakeEngine:
         self._sim_output = sim_output
         self.blocks = {}
         self.set_param_calls = []
+        self.eval_calls = []
 
     def set_param(self, *_args, **_kwargs):
         self.set_param_calls.append(_args)
@@ -44,6 +45,10 @@ class _FakeEngine:
 
     def get_param(self, block_path, parameter_name, nargout=1):
         return self.blocks[block_path][parameter_name]
+
+    def eval(self, expression, nargout=0):
+        self.eval_calls.append((expression, nargout))
+        return None
 
 
 class SimulinkBridgeCompatTests(unittest.TestCase):
@@ -132,6 +137,23 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         self.assertIn(
             ("demo/Setpoint", "Value", "180.0"),
             bridge._eng.set_param_calls,
+        )
+
+    def test_find_blocks_by_type_temporarily_suppresses_engine_warnings(self):
+        bridge = self._make_bridge({})
+        bridge._eng.blocks = {
+            "demo/Step": {"BlockType": "Step"},
+        }
+
+        blocks = bridge._find_blocks_by_type("Step")
+
+        self.assertEqual(blocks, ["demo/Step"])
+        self.assertEqual(
+            bridge._eng.eval_calls,
+            [
+                ("warning('off','all');", 0),
+                ("warning('on','all');", 0),
+            ],
         )
 
 

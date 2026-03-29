@@ -79,7 +79,8 @@ class ConfigLoadTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 os.chdir(temp_dir)
-                core_config.CONFIG = dict(DEFAULT_CONFIG)
+                core_config.CONFIG.clear()
+                core_config.CONFIG.update(DEFAULT_CONFIG)
                 core_config.load_config(create_if_missing=True, verbose=False)
                 generated = json.loads(
                     Path("config.json").read_text(encoding="utf-8")
@@ -87,9 +88,42 @@ class ConfigLoadTests(unittest.TestCase):
                 os.chdir(original_cwd)
         finally:
             os.chdir(original_cwd)
-            core_config.CONFIG = original_config
+            core_config.CONFIG.clear()
+            core_config.CONFIG.update(original_config)
 
         self.assertEqual(generated, expected)
+
+    def test_load_config_updates_imported_config_reference_in_place(self):
+        imported_config = CONFIG
+        original_config = dict(core_config.CONFIG)
+        original_cwd = os.getcwd()
+        loaded_base_url = None
+        loaded_model_name = None
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                os.chdir(temp_dir)
+                Path("config.json").write_text(
+                    json.dumps(
+                        {
+                            "LLM_API_BASE_URL": "http://127.0.0.1:8000/v1",
+                            "LLM_MODEL_NAME": "demo-model",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                core_config.load_config(create_if_missing=False, verbose=False)
+                loaded_base_url = imported_config["LLM_API_BASE_URL"]
+                loaded_model_name = imported_config["LLM_MODEL_NAME"]
+                os.chdir(original_cwd)
+        finally:
+            os.chdir(original_cwd)
+            core_config.CONFIG.clear()
+            core_config.CONFIG.update(original_config)
+
+        self.assertIs(imported_config, core_config.CONFIG)
+        self.assertEqual(loaded_base_url, "http://127.0.0.1:8000/v1")
+        self.assertEqual(loaded_model_name, "demo-model")
 
 
 class LLMFallbackTests(unittest.TestCase):
