@@ -1,4 +1,7 @@
+import json
+import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -7,9 +10,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import core.config as core_config
 import simulator
 from core.buffer import AdvancedDataBuffer
-from core.config import CONFIG, load_config
+from core.config import CONFIG, DEFAULT_CONFIG, load_config
 from core.tuning_session import (
     RoundEvaluation,
     create_tuning_session,
@@ -39,6 +43,11 @@ class ConfigLoadTests(unittest.TestCase):
             "GOOD_ENOUGH_STEADY_STATE_ERROR",
             "GOOD_ENOUGH_OVERSHOOT",
             "REQUIRED_STABLE_ROUNDS",
+            "MATLAB_MODEL_PATH",
+            "MATLAB_PID_BLOCK_PATH",
+            "MATLAB_OUTPUT_SIGNAL",
+            "MATLAB_SIM_STEP_TIME",
+            "MATLAB_SETPOINT",
         ]
         for key in required_keys:
             self.assertIn(key, CONFIG, f"CONFIG missing key {key}")
@@ -56,6 +65,31 @@ class ConfigLoadTests(unittest.TestCase):
             load_config(create_if_missing=False, verbose=False)
         except Exception as exc:  # pragma: no cover - failure branch
             self.fail(f"load_config raised: {exc}")
+
+    def test_generated_config_matches_template(self):
+        expected = json.loads(
+            (Path(__file__).parent.parent / "config.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        original_config = dict(core_config.CONFIG)
+        original_cwd = os.getcwd()
+        generated = None
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                os.chdir(temp_dir)
+                core_config.CONFIG = dict(DEFAULT_CONFIG)
+                core_config.load_config(create_if_missing=True, verbose=False)
+                generated = json.loads(
+                    Path("config.json").read_text(encoding="utf-8")
+                )
+                os.chdir(original_cwd)
+        finally:
+            os.chdir(original_cwd)
+            core_config.CONFIG = original_config
+
+        self.assertEqual(generated, expected)
 
 
 class LLMFallbackTests(unittest.TestCase):

@@ -1,87 +1,76 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-core/config.py - 全局配置管理
+"""Global runtime configuration helpers."""
 
-提供 CONFIG 字典、配置文件加载及运行时初始化函数。
-其他模块直接从本模块导入 CONFIG 和 initialize_runtime_config。
-"""
-
-import sys
-
-
-def ensure_utf8_console():
-    """在 Windows 下强制设置控制台的输入输出编码为 UTF-8"""
-    if sys.platform == "win32":
-        try:
-            import ctypes
-
-            # 设置控制台输出代码页为 UTF-8 (65001)
-            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
-            # 同时也设置输入代码页，防止后续输入出问题
-            ctypes.windll.kernel32.SetConsoleCP(65001)
-        except Exception as e:
-            pass
-
-        # 强制重置 stdout/stderr 为 UTF-8（分别检查，避免 stdout 已是 UTF-8 时漏掉 stderr）
-        import io
-
-        def _wrap_if_needed(stream):
-            if not hasattr(stream, "encoding") or not stream.encoding:
-                return
-            if stream.encoding.lower() == "utf-8":
-                return
-            try:
-                return io.TextIOWrapper(
-                    stream.buffer, encoding="utf-8", line_buffering=True
-                )
-            except AttributeError:
-                return None
-
-        wrapped_stdout = _wrap_if_needed(sys.stdout)
-        if wrapped_stdout is not None:
-            sys.stdout = wrapped_stdout
-        wrapped_stderr = _wrap_if_needed(sys.stderr)
-        if wrapped_stderr is not None:
-            sys.stderr = wrapped_stderr
-
-
+import io
 import json
 import os
+import sys
 from typing import Any
 
-# ============================================================================
-# 默认配置
-# ============================================================================
 
-CONFIG: dict = {
-    "SERIAL_PORT"                   : "AUTO",  # "AUTO" 或具体端口号 (如 "COM3")
-    "BAUD_RATE"                     : 115200,
-    "LLM_API_KEY"                   : "your-api-key-here",
-    "LLM_API_BASE_URL"              : "https://api.openai.com/v1",
-    "LLM_MODEL_NAME"                : "gpt-4",
-    "LLM_PROVIDER"                  : "openai",
-    "HTTP_PROXY"                    : "",
-    "HTTPS_PROXY"                   : "",
-    "ALL_PROXY"                     : "",
-    "NO_PROXY"                      : "",
-    "BUFFER_SIZE"                   : 100,
-    "MIN_ERROR_THRESHOLD"           : 0.3,
-    "MAX_TUNING_ROUNDS"             : 50,
-    "LLM_REQUEST_TIMEOUT"           : 60,
-    "LLM_DEBUG_OUTPUT"              : False,
-    "GOOD_ENOUGH_AVG_ERROR"         : 1.2,
-    "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.3,
-    "GOOD_ENOUGH_OVERSHOOT"         : 2.0,
-    "REQUIRED_STABLE_ROUNDS"        : 2,
-    # MATLAB/Simulink 模式专属配置（使用 matlab_tuner.py 时填写）
-    "MATLAB_MODEL_PATH"             : "",      # Simulink .slx 文件完整路径
-    "MATLAB_PID_BLOCK_PATH"         : "",      # PID 模块路径，如 "my_model/PID Controller"
-    "MATLAB_OUTPUT_SIGNAL"          : "y_out", # To Workspace 变量名
-    "MATLAB_SIM_STEP_TIME"          : 10.0,    # 每轮仿真时长（仿真秒数）
-    "MATLAB_SETPOINT"               : 200.0,   # 调参目标值
+def ensure_utf8_console() -> None:
+    """Force UTF-8 console IO on Windows when possible."""
+    if sys.platform != "win32":
+        return
+
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
+
+    def _wrap_if_needed(stream: Any) -> Any:
+        encoding = getattr(stream, "encoding", None)
+        if not encoding or encoding.lower() == "utf-8":
+            return None
+        buffer = getattr(stream, "buffer", None)
+        if buffer is None:
+            return None
+        try:
+            return io.TextIOWrapper(buffer, encoding="utf-8", line_buffering=True)
+        except Exception:
+            return None
+
+    wrapped_stdout = _wrap_if_needed(sys.stdout)
+    if wrapped_stdout is not None:
+        sys.stdout = wrapped_stdout
+
+    wrapped_stderr = _wrap_if_needed(sys.stderr)
+    if wrapped_stderr is not None:
+        sys.stderr = wrapped_stderr
+
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "SERIAL_PORT": "AUTO",
+    "BAUD_RATE": 115200,
+    "LLM_API_KEY": "your-api-key-here",
+    "LLM_API_BASE_URL": "https://api.openai.com/v1",
+    "LLM_MODEL_NAME": "gpt-4o",
+    "LLM_PROVIDER": "openai",
+    "HTTP_PROXY": "",
+    "HTTPS_PROXY": "",
+    "ALL_PROXY": "",
+    "NO_PROXY": "",
+    "BUFFER_SIZE": 100,
+    "MIN_ERROR_THRESHOLD": 0.3,
+    "MAX_TUNING_ROUNDS": 50,
+    "LLM_REQUEST_TIMEOUT": 60,
+    "LLM_DEBUG_OUTPUT": False,
+    "GOOD_ENOUGH_AVG_ERROR": 0.1,
+    "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.05,
+    "GOOD_ENOUGH_OVERSHOOT": 1.0,
+    "REQUIRED_STABLE_ROUNDS": 10,
+    "MATLAB_MODEL_PATH": "",
+    "MATLAB_PID_BLOCK_PATH": "",
+    "MATLAB_OUTPUT_SIGNAL": "y_out",
+    "MATLAB_SIM_STEP_TIME": 15.0,
+    "MATLAB_SETPOINT": 200.0,
 }
 
+CONFIG: dict[str, Any] = dict(DEFAULT_CONFIG)
 CONFIG_PATH = "config.json"
 PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
 
@@ -97,45 +86,44 @@ def _parse_env_value(default_value: Any, raw_value: str) -> Any:
 
 
 def load_config(create_if_missing: bool = True, verbose: bool = True) -> None:
-    """加载配置文件；按需创建，避免 import 时产生副作用"""
+    """Load config from disk and environment variables."""
     global CONFIG
+    CONFIG = dict(DEFAULT_CONFIG)
 
-    # 1. 尝试读取配置文件
     if os.path.exists(CONFIG_PATH):
         try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                user_config = json.load(f)
-                CONFIG.update(user_config)
-                if verbose:
-                    print(f"[INFO] 已加载配置文件: {CONFIG_PATH}")
-        except Exception as e:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
+                user_config = json.load(handle)
+            CONFIG.update(user_config)
             if verbose:
-                print(f"[WARN] 配置文件加载失败: {e}，将使用默认值。")
+                print(f"[INFO] 已加载配置文件: {CONFIG_PATH}")
+        except Exception as exc:
+            if verbose:
+                print(f"[WARN] 配置文件加载失败: {exc}，将使用默认值。")
     elif create_if_missing:
-        # 2. 如果不存在，自动创建默认配置
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump(CONFIG, f, indent=4, ensure_ascii=False)
+            with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
+                json.dump(CONFIG, handle, indent=4, ensure_ascii=False)
             if verbose:
                 print(f"[INFO] 未找到配置文件，已生成默认配置: {CONFIG_PATH}")
                 print(f"[HINT] 请打开 {CONFIG_PATH} 修改您的 API Key 和串口设置。")
-        except Exception as e:
+        except Exception as exc:
             if verbose:
-                print(f"[WARN] 无法创建配置文件: {e}")
+                print(f"[WARN] 无法创建配置文件: {exc}")
 
-    # 3. 环境变量覆盖 (优先级最高)
-    for key in CONFIG:
+    for key in list(CONFIG):
         env_val = os.getenv(key)
-        if env_val:
-            try:
-                CONFIG[key] = _parse_env_value(CONFIG[key], env_val)
-            except Exception:
-                if verbose:
-                    print(f"[WARN] 环境变量 {key} 值无效，已忽略。")
+        if not env_val:
+            continue
+        try:
+            CONFIG[key] = _parse_env_value(CONFIG[key], env_val)
+        except Exception:
+            if verbose:
+                print(f"[WARN] 环境变量 {key} 值无效，已忽略。")
 
 
 def _apply_proxy_env_from_config() -> None:
-    """将配置中的代理写入环境变量（仅在环境未显式设置时生效）。"""
+    """Populate proxy env vars from config when the environment is unset."""
     for key in PROXY_KEYS:
         raw_value = CONFIG.get(key)
         if raw_value is None:
@@ -143,7 +131,8 @@ def _apply_proxy_env_from_config() -> None:
         if not isinstance(raw_value, str):
             if CONFIG.get("LLM_DEBUG_OUTPUT"):
                 print(
-                    f"[WARN] 代理配置 {key} 应为字符串，当前类型为 {type(raw_value).__name__}，已忽略。"
+                    f"[WARN] 代理配置 {key} 应为字符串，当前类型为 "
+                    f"{type(raw_value).__name__}，已忽略。"
                 )
             continue
         value = raw_value.strip()
@@ -159,7 +148,7 @@ def _apply_proxy_env_from_config() -> None:
 def initialize_runtime_config(
     create_if_missing: bool = True, verbose: bool = True
 ) -> None:
-    """加载配置文件并更新 CONFIG。可安全地多次调用。"""
+    """Initialize runtime config and proxy environment variables."""
     ensure_utf8_console()
     load_config(create_if_missing=create_if_missing, verbose=verbose)
     _apply_proxy_env_from_config()
