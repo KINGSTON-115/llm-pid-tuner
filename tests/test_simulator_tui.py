@@ -179,11 +179,13 @@ class SimulatorLoopTests(unittest.TestCase):
                 pid_block_path,
                 output_signal,
                 sim_step_time,
+                matlab_root="",
             ):
                 self.model_path = model_path
                 self.setpoint = setpoint
                 self.pid_block_path = pid_block_path
                 self.output_signal = output_signal
+                self.matlab_root = matlab_root
                 self.sim_step_time = sim_step_time
                 self.kp = 1.0
                 self.ki = 0.1
@@ -244,6 +246,7 @@ class SimulatorLoopTests(unittest.TestCase):
                 pid_block_path,
                 output_signal,
                 sim_step_time,
+                matlab_root="",
             ):
                 pass
 
@@ -288,6 +291,7 @@ class SimulatorLoopTests(unittest.TestCase):
                 pid_block_path,
                 output_signal,
                 sim_step_time,
+                matlab_root="",
             ):
                 self.kp = 1.0
                 self.ki = 0.1

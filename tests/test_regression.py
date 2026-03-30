@@ -45,6 +45,7 @@ class ConfigLoadTests(unittest.TestCase):
             "REQUIRED_STABLE_ROUNDS",
             "MATLAB_MODEL_PATH",
             "MATLAB_PID_BLOCK_PATH",
+            "MATLAB_ROOT",
             "MATLAB_OUTPUT_SIGNAL",
             "MATLAB_SIM_STEP_TIME",
             "MATLAB_SETPOINT",
