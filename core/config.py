@@ -22,10 +22,26 @@ def ensure_utf8_console() -> None:
     except Exception:
         pass
 
-    def _wrap_if_needed(stream: Any) -> Any:
+    def _retarget_stream_if_needed(stream: Any) -> Any:
         encoding = getattr(stream, "encoding", None)
         if not encoding or encoding.lower() == "utf-8":
             return None
+
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", line_buffering=True)
+                return None
+            except Exception:
+                pass
+
+        is_tty = getattr(stream, "isatty", lambda: False)
+        try:
+            if is_tty():
+                return None
+        except Exception:
+            pass
+
         buffer = getattr(stream, "buffer", None)
         if buffer is None:
             return None
@@ -34,11 +50,11 @@ def ensure_utf8_console() -> None:
         except Exception:
             return None
 
-    wrapped_stdout = _wrap_if_needed(sys.stdout)
+    wrapped_stdout = _retarget_stream_if_needed(sys.stdout)
     if wrapped_stdout is not None:
         sys.stdout = wrapped_stdout
 
-    wrapped_stderr = _wrap_if_needed(sys.stderr)
+    wrapped_stderr = _retarget_stream_if_needed(sys.stderr)
     if wrapped_stderr is not None:
         sys.stderr = wrapped_stderr
 
