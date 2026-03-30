@@ -1,12 +1,14 @@
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sim.simulink_bridge import SimulinkBridge
+from sim.simulink_bridge import SimulinkBridge, _prepare_matlab_root
 
 
 class _FakeEngine:
@@ -53,12 +55,21 @@ class _FakeEngine:
 
 class SimulinkBridgeCompatTests(unittest.TestCase):
     def _make_bridge(self, sim_output):
-        with patch("sim.simulink_bridge._MATLAB_AVAILABLE", True):
+        fake_engine_module = type(
+            "_FakeMatlabEngineModule",
+            (),
+            {"start_matlab": staticmethod(lambda: None)},
+        )
+        with patch(
+            "sim.simulink_bridge._load_matlab_engine",
+            return_value=fake_engine_module,
+        ):
             bridge = SimulinkBridge(
                 model_path="C:/models/demo.slx",
                 setpoint=200.0,
                 pid_block_path="demo/PID Controller",
                 output_signal="y_out",
+                matlab_root="C:/Program Files/MATLAB/R2022b",
                 sim_step_time=10.0,
             )
         bridge._eng = _FakeEngine(sim_output)
@@ -155,6 +166,68 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
                 ("warning('on','all');", 0),
             ],
         )
+
+    def test_prepare_matlab_root_prepends_runtime_paths(self):
+        original_sys_path = list(sys.path)
+        original_path = os.environ.get("PATH")
+        original_mwe_install = os.environ.get("MWE_INSTALL")
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                matlab_root = Path(temp_dir) / "MATLAB" / "R2022b"
+                (matlab_root / "bin" / "win64").mkdir(parents=True)
+                (matlab_root / "extern" / "bin" / "win64").mkdir(parents=True)
+                (
+                    matlab_root
+                    / "extern"
+                    / "engines"
+                    / "python"
+                    / "dist"
+                    / "matlab"
+                    / "engine"
+                    / "win64"
+                ).mkdir(parents=True)
+
+                with patch("sim.simulink_bridge.os.add_dll_directory", Mock(), create=True):
+                    _prepare_matlab_root(str(matlab_root))
+
+                self.assertEqual(os.environ.get("MWE_INSTALL"), str(matlab_root))
+                self.assertEqual(
+                    sys.path[0],
+                    str(matlab_root / "extern" / "bin" / "win64"),
+                )
+                self.assertEqual(
+                    sys.path[1],
+                    str(
+                        matlab_root
+                        / "extern"
+                        / "engines"
+                        / "python"
+                        / "dist"
+                        / "matlab"
+                        / "engine"
+                        / "win64"
+                    ),
+                )
+                self.assertEqual(
+                    sys.path[2],
+                    str(matlab_root / "extern" / "engines" / "python" / "dist"),
+                )
+                self.assertTrue(
+                    os.environ.get("PATH", "").startswith(
+                        str(matlab_root / "extern" / "bin" / "win64")
+                    )
+                )
+        finally:
+            sys.path[:] = original_sys_path
+            if original_path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = original_path
+            if original_mwe_install is None:
+                os.environ.pop("MWE_INSTALL", None)
+            else:
+                os.environ["MWE_INSTALL"] = original_mwe_install
 
 
 if __name__ == "__main__":

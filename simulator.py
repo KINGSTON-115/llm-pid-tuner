@@ -825,6 +825,7 @@ def _run_simulink_simulation(
 
     matlab_model_path = CONFIG.get("MATLAB_MODEL_PATH", "").strip()
     pid_block_path = CONFIG.get("MATLAB_PID_BLOCK_PATH", "").strip()
+    matlab_root = CONFIG.get("MATLAB_ROOT", "").strip()
     output_signal = CONFIG.get("MATLAB_OUTPUT_SIGNAL", "").strip()
 
     try:
@@ -852,6 +853,7 @@ def _run_simulink_simulation(
         setpoint=setpoint,
         pid_block_path=pid_block_path,
         output_signal=output_signal,
+        matlab_root=matlab_root,
         sim_step_time=sim_step_time,
     )
 

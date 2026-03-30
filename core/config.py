@@ -85,6 +85,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "REQUIRED_STABLE_ROUNDS"        : 10,
     "MATLAB_MODEL_PATH"             : "",
     "MATLAB_PID_BLOCK_PATH"         : "",
+    "MATLAB_ROOT"                   : "",
     "MATLAB_OUTPUT_SIGNAL"          : "y_out",
     "MATLAB_SIM_STEP_TIME"          : 15.0,
     "MATLAB_SETPOINT"               : 200.0,
