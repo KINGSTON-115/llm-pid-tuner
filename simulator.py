@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
+import io
 from queue import Queue
 import sys
 import time
@@ -69,6 +71,12 @@ def choose_tui_language(default: str | None = None) -> str:
 def _console(enabled: bool, message: str) -> None:
     if enabled:
         print(message)
+
+
+def _maybe_silence_stdout(enabled: bool):
+    if enabled:
+        return contextlib.nullcontext()
+    return contextlib.redirect_stdout(io.StringIO())
 
 
 def _emit_lifecycle(
@@ -647,11 +655,7 @@ def determine_tui_mode(
     if force_plain:
         return False, None
 
-    if matlab_model_path:
-        return (
-            False,
-            "Simulink mode does not support the TUI yet; falling back to plain output.",
-        )
+    _ = matlab_model_path
 
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return (
@@ -753,13 +757,70 @@ def _run_python_simulation_plain(
     )
 
 
+def _run_simulink_simulation_with_tui(
+    doctor_checks: list[Any] | None = None,
+    initial_pid: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    from sim.tui import SimulationTUIApp
+
+    event_queue: Queue[dict[str, Any]] = Queue()
+    controller = SimulationController()
+    event_sink = QueueEventSink(event_queue)
+    result_box: dict[str, Any] = {}
+    language = choose_tui_language()
+
+    def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
+        def worker() -> None:
+            result = _run_simulink_simulation(
+                initial_pid=pid,
+                doctor_checks=doctor_checks,
+                event_sink=event_sink,
+                controller=app.controller,
+                emit_console=False,
+            )
+            result_box["result"] = result
+            app._last_result = result or {}
+
+        return worker
+
+    def next_round_factory(last_result: dict[str, Any]) -> Callable[[], None]:
+        pid = last_result.get("final_pid")
+        return make_worker(pid if isinstance(pid, dict) else None)
+
+    app = SimulationTUIApp(
+        event_queue=event_queue,
+        controller=controller,
+        worker_target=make_worker(initial_pid),
+        event_sink=event_sink,
+        mode_label="Simulink",
+        language=language,
+        next_round_factory=next_round_factory,
+    )
+    app.run()
+    return result_box.get("result", {})
+
+
 def _run_simulink_simulation(
     initial_pid: dict[str, float] | None = None,
+    doctor_checks: list[Any] | None = None,
+    event_sink: QueueEventSink | None = None,
+    controller: SimulationController | None = None,
+    emit_console: bool = True,
 ) -> dict[str, Any] | None:
+    def _emit_terminal_error(message: str) -> None:
+        _console(emit_console, f"[ERROR] {message}")
+        publish_event(
+            event_sink,
+            EVENT_LIFECYCLE,
+            phase="error",
+            message=message,
+            elapsed_sec=0.0,
+        )
+
     try:
         from sim.simulink_bridge import SimulinkBridge
     except ImportError as exc:
-        print(f"[ERROR] {exc}")
+        _emit_terminal_error(str(exc))
         return None
 
     matlab_model_path = CONFIG.get("MATLAB_MODEL_PATH", "").strip()
@@ -770,21 +831,21 @@ def _run_simulink_simulation(
         sim_step_time = float(CONFIG.get("MATLAB_SIM_STEP_TIME", 10.0))
         setpoint = float(CONFIG.get("MATLAB_SETPOINT", 200.0))
     except (TypeError, ValueError) as exc:
-        print(f"[ERROR] Invalid Simulink numeric configuration: {exc}")
+        _emit_terminal_error(f"Invalid Simulink numeric configuration: {exc}")
         return None
 
     if not pid_block_path:
-        print("[ERROR] MATLAB_PID_BLOCK_PATH is required for Simulink mode.")
+        _emit_terminal_error("MATLAB_PID_BLOCK_PATH is required for Simulink mode.")
         return None
     if not output_signal:
-        print("[ERROR] MATLAB_OUTPUT_SIGNAL is required for Simulink mode.")
+        _emit_terminal_error("MATLAB_OUTPUT_SIGNAL is required for Simulink mode.")
         return None
 
-    print("=" * 60)
-    print("  LLM PID Tuner PRO - Simulink")
-    print("=" * 60)
-    print(f"Setpoint: {setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}")
-    print(f"Simulink model: {matlab_model_path}")
+    _console(emit_console, "=" * 60)
+    _console(emit_console, "  LLM PID Tuner PRO - Simulink")
+    _console(emit_console, "=" * 60)
+    _console(emit_console, f"Setpoint: {setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}")
+    _console(emit_console, f"Simulink model: {matlab_model_path}")
 
     sim = SimulinkBridge(
         model_path=matlab_model_path,
@@ -795,9 +856,10 @@ def _run_simulink_simulation(
     )
 
     try:
-        sim.connect()
+        with _maybe_silence_stdout(emit_console):
+            sim.connect()
     except Exception as exc:
-        print(f"[ERROR] Failed to connect to Simulink: {exc}")
+        _emit_terminal_error(f"Failed to connect to Simulink: {exc}")
         return None
 
     if initial_pid:
@@ -812,11 +874,15 @@ def _run_simulink_simulation(
             prompt_context=_build_simulink_prompt_context(
                 matlab_model_path, pid_block_path, output_signal, sim_step_time
             ),
-            emit_console=True,
+            event_sink=event_sink,
+            controller=controller,
+            emit_console=emit_console,
+            doctor_checks=doctor_checks,
             disable_early_exit=True,
         )
     finally:
-        sim.disconnect()
+        with _maybe_silence_stdout(emit_console):
+            sim.disconnect()
 
 
 def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
@@ -829,8 +895,19 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
         print(f"[WARN] {fallback_message}")
 
     if matlab_model_path:
+        if use_tui:
+            try:
+                return _run_simulink_simulation_with_tui(doctor_checks=doctor_checks)
+            except Exception as exc:
+                print(
+                    f"[WARN] Failed to start the TUI ({exc}); falling back to plain output."
+                )
+                debug_enabled = bool(CONFIG.get("LLM_DEBUG_OUTPUT"))
+                if debug_enabled:
+                    traceback.print_exc()
+
         print_doctor_report(doctor_checks)
-        return _run_simulink_simulation()
+        return _run_simulink_simulation(doctor_checks=doctor_checks)
 
     if use_tui:
         try:
