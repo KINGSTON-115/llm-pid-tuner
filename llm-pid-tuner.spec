@@ -17,6 +17,9 @@ ROOT_DIR = Path(globals().get("SPECPATH", Path.cwd())).resolve()
 PYTHON_PREFIX = Path(sys.prefix).resolve()
 
 hiddenimports = collect_submodules("rich._unicode_data") + ["_ssl", "_hashlib"]
+
+if importlib.util.find_spec("textual") is not None:
+    hiddenimports += ["sim.tui"]
 datas = []
 binaries = []
 

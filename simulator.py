@@ -647,11 +647,7 @@ def determine_tui_mode(
     if force_plain:
         return False, None
 
-    if matlab_model_path:
-        return (
-            False,
-            "Simulink mode does not support the TUI yet; falling back to plain output.",
-        )
+    _ = matlab_model_path
 
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return (
@@ -753,8 +749,55 @@ def _run_python_simulation_plain(
     )
 
 
+def _run_simulink_simulation_with_tui(
+    doctor_checks: list[Any] | None = None,
+    initial_pid: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    from sim.tui import SimulationTUIApp
+
+    event_queue: Queue[dict[str, Any]] = Queue()
+    controller = SimulationController()
+    event_sink = QueueEventSink(event_queue)
+    result_box: dict[str, Any] = {}
+    language = choose_tui_language()
+
+    def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
+        def worker() -> None:
+            result = _run_simulink_simulation(
+                initial_pid=pid,
+                doctor_checks=doctor_checks,
+                event_sink=event_sink,
+                controller=app.controller,
+                emit_console=False,
+            )
+            result_box["result"] = result
+            app._last_result = result or {}
+
+        return worker
+
+    def next_round_factory(last_result: dict[str, Any]) -> Callable[[], None]:
+        pid = last_result.get("final_pid")
+        return make_worker(pid if isinstance(pid, dict) else None)
+
+    app = SimulationTUIApp(
+        event_queue=event_queue,
+        controller=controller,
+        worker_target=make_worker(initial_pid),
+        event_sink=event_sink,
+        mode_label="Simulink",
+        language=language,
+        next_round_factory=next_round_factory,
+    )
+    app.run()
+    return result_box.get("result", {})
+
+
 def _run_simulink_simulation(
     initial_pid: dict[str, float] | None = None,
+    doctor_checks: list[Any] | None = None,
+    event_sink: QueueEventSink | None = None,
+    controller: SimulationController | None = None,
+    emit_console: bool = True,
 ) -> dict[str, Any] | None:
     try:
         from sim.simulink_bridge import SimulinkBridge
@@ -812,7 +855,10 @@ def _run_simulink_simulation(
             prompt_context=_build_simulink_prompt_context(
                 matlab_model_path, pid_block_path, output_signal, sim_step_time
             ),
-            emit_console=True,
+            event_sink=event_sink,
+            controller=controller,
+            emit_console=emit_console,
+            doctor_checks=doctor_checks,
             disable_early_exit=True,
         )
     finally:
@@ -829,8 +875,19 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
         print(f"[WARN] {fallback_message}")
 
     if matlab_model_path:
+        if use_tui:
+            try:
+                return _run_simulink_simulation_with_tui(doctor_checks=doctor_checks)
+            except Exception as exc:
+                print(
+                    f"[WARN] Failed to start the TUI ({exc}); falling back to plain output."
+                )
+                debug_enabled = bool(CONFIG.get("LLM_DEBUG_OUTPUT"))
+                if debug_enabled:
+                    traceback.print_exc()
+
         print_doctor_report(doctor_checks)
-        return _run_simulink_simulation()
+        return _run_simulink_simulation(doctor_checks=doctor_checks)
 
     if use_tui:
         try:
