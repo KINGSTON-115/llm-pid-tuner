@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
+import io
 from queue import Queue
 import sys
 import time
@@ -69,6 +71,12 @@ def choose_tui_language(default: str | None = None) -> str:
 def _console(enabled: bool, message: str) -> None:
     if enabled:
         print(message)
+
+
+def _maybe_silence_stdout(enabled: bool):
+    if enabled:
+        return contextlib.nullcontext()
+    return contextlib.redirect_stdout(io.StringIO())
 
 
 def _emit_lifecycle(
@@ -799,10 +807,20 @@ def _run_simulink_simulation(
     controller: SimulationController | None = None,
     emit_console: bool = True,
 ) -> dict[str, Any] | None:
+    def _emit_terminal_error(message: str) -> None:
+        _console(emit_console, f"[ERROR] {message}")
+        publish_event(
+            event_sink,
+            EVENT_LIFECYCLE,
+            phase="error",
+            message=message,
+            elapsed_sec=0.0,
+        )
+
     try:
         from sim.simulink_bridge import SimulinkBridge
     except ImportError as exc:
-        print(f"[ERROR] {exc}")
+        _emit_terminal_error(str(exc))
         return None
 
     matlab_model_path = CONFIG.get("MATLAB_MODEL_PATH", "").strip()
@@ -813,21 +831,21 @@ def _run_simulink_simulation(
         sim_step_time = float(CONFIG.get("MATLAB_SIM_STEP_TIME", 10.0))
         setpoint = float(CONFIG.get("MATLAB_SETPOINT", 200.0))
     except (TypeError, ValueError) as exc:
-        print(f"[ERROR] Invalid Simulink numeric configuration: {exc}")
+        _emit_terminal_error(f"Invalid Simulink numeric configuration: {exc}")
         return None
 
     if not pid_block_path:
-        print("[ERROR] MATLAB_PID_BLOCK_PATH is required for Simulink mode.")
+        _emit_terminal_error("MATLAB_PID_BLOCK_PATH is required for Simulink mode.")
         return None
     if not output_signal:
-        print("[ERROR] MATLAB_OUTPUT_SIGNAL is required for Simulink mode.")
+        _emit_terminal_error("MATLAB_OUTPUT_SIGNAL is required for Simulink mode.")
         return None
 
-    print("=" * 60)
-    print("  LLM PID Tuner PRO - Simulink")
-    print("=" * 60)
-    print(f"Setpoint: {setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}")
-    print(f"Simulink model: {matlab_model_path}")
+    _console(emit_console, "=" * 60)
+    _console(emit_console, "  LLM PID Tuner PRO - Simulink")
+    _console(emit_console, "=" * 60)
+    _console(emit_console, f"Setpoint: {setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}")
+    _console(emit_console, f"Simulink model: {matlab_model_path}")
 
     sim = SimulinkBridge(
         model_path=matlab_model_path,
@@ -838,9 +856,10 @@ def _run_simulink_simulation(
     )
 
     try:
-        sim.connect()
+        with _maybe_silence_stdout(emit_console):
+            sim.connect()
     except Exception as exc:
-        print(f"[ERROR] Failed to connect to Simulink: {exc}")
+        _emit_terminal_error(f"Failed to connect to Simulink: {exc}")
         return None
 
     if initial_pid:
@@ -862,7 +881,8 @@ def _run_simulink_simulation(
             disable_early_exit=True,
         )
     finally:
-        sim.disconnect()
+        with _maybe_silence_stdout(emit_console):
+            sim.disconnect()
 
 
 def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:

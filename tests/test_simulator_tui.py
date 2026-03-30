@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import sys
 import threading
 import time
@@ -230,6 +231,98 @@ class SimulatorLoopTests(unittest.TestCase):
         self.assertEqual(captured["prompt_context"]["model_path"], "C:/models/demo.slx")
         self.assertFalse(captured["prompt_context"]["pwm_signal_available"])
         self.assertIn("placeholder 0.0", captured["prompt_context"]["pwm_field_note"])
+
+    def test_run_simulink_simulation_emits_terminal_error_on_connect_failure(self):
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+
+        class FakeBridge:
+            def __init__(
+                self,
+                model_path,
+                setpoint,
+                pid_block_path,
+                output_signal,
+                sim_step_time,
+            ):
+                pass
+
+            def connect(self):
+                raise RuntimeError("connect boom")
+
+            def disconnect(self):
+                return None
+
+        with patch("sim.simulink_bridge.SimulinkBridge", FakeBridge):
+            with patch.dict(
+                simulator.CONFIG,
+                {
+                    "MATLAB_MODEL_PATH": "C:/models/demo.slx",
+                    "MATLAB_PID_BLOCK_PATH": "demo/PID Controller",
+                    "MATLAB_OUTPUT_SIGNAL": "y_out",
+                    "MATLAB_SIM_STEP_TIME": 12.5,
+                    "MATLAB_SETPOINT": 180.0,
+                },
+                clear=False,
+            ):
+                result = simulator._run_simulink_simulation(
+                    event_sink=event_sink,
+                    emit_console=False,
+                )
+
+        self.assertIsNone(result)
+        events = drain_event_queue(event_queue)
+        self.assertTrue(events)
+        self.assertEqual(events[-1]["type"], EVENT_LIFECYCLE)
+        self.assertEqual(events[-1]["phase"], "error")
+        self.assertIn("connect boom", events[-1]["message"])
+
+    def test_run_simulink_simulation_suppresses_plain_output_in_tui_mode(self):
+        captured = {}
+
+        class FakeBridge:
+            def __init__(
+                self,
+                model_path,
+                setpoint,
+                pid_block_path,
+                output_signal,
+                sim_step_time,
+            ):
+                self.kp = 1.0
+                self.ki = 0.1
+                self.kd = 0.05
+
+            def connect(self):
+                print("bridge-connect")
+
+            def disconnect(self):
+                print("bridge-disconnect")
+
+        def fake_run_tuning_loop(*_args, **kwargs):
+            captured["emit_console"] = kwargs.get("emit_console")
+            return {"mode": "simulink"}
+
+        stdout = io.StringIO()
+        with patch("sim.simulink_bridge.SimulinkBridge", FakeBridge):
+            with patch.object(simulator, "_run_tuning_loop", side_effect=fake_run_tuning_loop):
+                with patch.dict(
+                    simulator.CONFIG,
+                    {
+                        "MATLAB_MODEL_PATH": "C:/models/demo.slx",
+                        "MATLAB_PID_BLOCK_PATH": "demo/PID Controller",
+                        "MATLAB_OUTPUT_SIGNAL": "y_out",
+                        "MATLAB_SIM_STEP_TIME": 12.5,
+                        "MATLAB_SETPOINT": 180.0,
+                    },
+                    clear=False,
+                ):
+                    with patch("sys.stdout", stdout):
+                        result = simulator._run_simulink_simulation(emit_console=False)
+
+        self.assertEqual(result, {"mode": "simulink"})
+        self.assertFalse(captured["emit_console"])
+        self.assertEqual(stdout.getvalue(), "")
 
 
 class TuiModeTests(unittest.TestCase):
