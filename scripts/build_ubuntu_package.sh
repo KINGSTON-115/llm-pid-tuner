@@ -59,6 +59,7 @@ ARCH="$(dpkg --print-architecture)"
 GIT_SHA="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
 APP_VERSION="${APP_VERSION:-0.0.0+git${GIT_SHA}}"
 DEB_VERSION="${DEB_VERSION:-${APP_VERSION}-1}"
+ARTIFACT_BASENAME="${ARTIFACT_BASENAME:-$APP_NAME}"
 
 echo "==> Root: $ROOT_DIR"
 echo "==> Version: $APP_VERSION"
@@ -83,7 +84,7 @@ if [ ! -x "$BIN_PATH" ]; then
     exit 1
 fi
 
-BUNDLE_NAME="${APP_NAME}-ubuntu-${APP_VERSION}"
+BUNDLE_NAME="$APP_NAME"
 BUNDLE_DIR="$BUILD_DIR/$BUNDLE_NAME"
 
 mkdir -p "$BUNDLE_DIR"
@@ -105,7 +106,7 @@ EOF
 
 chmod 755 "$BUNDLE_DIR/run.sh"
 
-TAR_PATH="$OUTPUT_DIR/${BUNDLE_NAME}.tar.gz"
+TAR_PATH="$OUTPUT_DIR/${ARTIFACT_BASENAME}.tar.gz"
 tar -C "$BUILD_DIR" -czf "$TAR_PATH" "$BUNDLE_NAME"
 
 DEB_ROOT="$BUILD_DIR/deb-root"
@@ -163,7 +164,7 @@ Description: LLM-assisted PID tuning toolkit packaged for Ubuntu
  A self-contained Ubuntu package for running the LLM PID Tuner launcher.
 EOF
 
-DEB_PATH="$OUTPUT_DIR/${APP_NAME}_${DEB_VERSION}_${ARCH}.deb"
+DEB_PATH="$OUTPUT_DIR/${ARTIFACT_BASENAME}.deb"
 dpkg-deb --build --root-owner-group "$DEB_ROOT" "$DEB_PATH"
 
 (

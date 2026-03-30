@@ -4,13 +4,25 @@
 
 import os
 import sys
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import i18n
+
+
+def _fake_windll(*, return_value=None, side_effect=None):
+    return SimpleNamespace(
+        kernel32=SimpleNamespace(
+            GetUserDefaultUILanguage=Mock(
+                return_value=return_value,
+                side_effect=side_effect,
+            )
+        )
+    )
 
 
 class TestSetLanguageGetLanguageTr(unittest.TestCase):
@@ -96,30 +108,39 @@ class TestDetectLanguageWindows(unittest.TestCase):
     """Windows：模拟 GetUserDefaultUILanguage 返回值。"""
 
     @patch.object(i18n.sys, "platform", "win32")
-    @patch("ctypes.windll.kernel32.GetUserDefaultUILanguage", return_value=0x0804)
-    def test_ui_language_chinese(self, _mock_lang):
+    def test_ui_language_chinese(self):
         with patch.dict(
             os.environ,
             {"LANG": ""},
             clear=False,
         ):
-            self.assertEqual(i18n._detect_language(), "zh")
+            with patch(
+                "ctypes.windll",
+                new=_fake_windll(return_value=0x0804),
+                create=True,
+            ):
+                self.assertEqual(i18n._detect_language(), "zh")
 
     @patch.object(i18n.sys, "platform", "win32")
-    @patch("ctypes.windll.kernel32.GetUserDefaultUILanguage", return_value=0x0409)
-    def test_ui_language_english(self, _mock_lang):
+    def test_ui_language_english(self):
         with patch.dict(
             os.environ,
             {"LANG": ""},
             clear=False,
         ):
-            self.assertEqual(i18n._detect_language(), "en")
+            with patch(
+                "ctypes.windll",
+                new=_fake_windll(return_value=0x0409),
+                create=True,
+            ):
+                self.assertEqual(i18n._detect_language(), "en")
 
     @patch.object(i18n.sys, "platform", "win32")
     def test_ctypes_failure_falls_back_to_lang_env(self):
         with patch(
-            "ctypes.windll.kernel32.GetUserDefaultUILanguage",
-            side_effect=RuntimeError("no dll"),
+            "ctypes.windll",
+            new=_fake_windll(side_effect=RuntimeError("no dll")),
+            create=True,
         ):
             with patch.dict(
                 os.environ,
