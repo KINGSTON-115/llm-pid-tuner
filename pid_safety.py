@@ -88,6 +88,8 @@ def apply_pid_guardrails(
 
         cfg           = limits.get(key, DEFAULT_PID_LIMITS[key])
         bounded_value = max(cfg["min"], min(cfg["max"], raw_value))
+        if current_value >= cfg["max"] and raw_value > current_value:
+            notes.append(f"{key.upper()} 已达上限 {cfg['max']:.4f}，将不会继续升高")
 
         max_increase_ratio = max(1.0, cfg.get("max_increase_ratio", 1.0))
         if current_value > 0:

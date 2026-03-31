@@ -199,6 +199,25 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertEqual(result["completed_reason"], "error")
         self.assertTrue(any(event.get("phase") == "error" for event in events))
 
+    def test_run_hardware_tuner_tui_failure_falls_back_to_plain_runner(self):
+        with patch.object(tuner, "initialize_runtime_config"):
+            with patch.object(tuner, "resolve_serial_port", return_value="COM9"):
+                with patch.dict(tuner.CONFIG, {"LLM_DEBUG_OUTPUT": False}, clear=False):
+                    with patch.object(
+                        tuner,
+                        "_run_hardware_tuning_with_tui",
+                        side_effect=RuntimeError("tui boom"),
+                    ):
+                        with patch.object(
+                            tuner,
+                            "_run_hardware_tuning_plain",
+                            return_value={"mode": "plain"},
+                        ) as plain:
+                            result = tuner.run_hardware_tuner(force_plain=False)
+
+        self.assertEqual(result, {"mode": "plain"})
+        plain.assert_called_once_with("COM9", initial_pid=None)
+
 
 if __name__ == "__main__":
     unittest.main()

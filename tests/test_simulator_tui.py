@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import importlib.util
 import io
 import sys
@@ -30,6 +31,8 @@ from sim.runtime import (
     SimulationController,
     drain_event_queue,
 )
+
+DEFAULT_DOCTOR_CHECKS = [DoctorCheck("api", "PASS", "ok")]
 
 
 class QueueEventSinkTests(unittest.TestCase):
@@ -330,66 +333,23 @@ class SimulatorLoopTests(unittest.TestCase):
 
 
 class TuiModeTests(unittest.TestCase):
-    def test_non_tty_terminal_falls_back_to_plain_mode(self):
-        with patch.object(sys.stdin, "isatty", return_value=False):
-            with patch.object(sys.stdout, "isatty", return_value=False):
-                use_tui, message = simulator.determine_tui_mode(False, "")
-
-        self.assertFalse(use_tui)
-        self.assertIn("interactive terminal", message)
-
-    def test_simulink_mode_can_use_tui(self):
-        with patch.object(sys.stdin, "isatty", return_value=True):
-            with patch.object(sys.stdout, "isatty", return_value=True):
-                with patch("simulator.importlib.import_module") as import_module:
-                    with patch.object(simulator, "_ensure_windows_vt_support") as ensure_vt:
-                        use_tui, message = simulator.determine_tui_mode(False, "model.slx")
+    def test_simulink_prompt_defaults_to_tui(self):
+        with patch("builtins.input", return_value=""):
+            use_tui = simulator.choose_simulink_ui_mode(False)
 
         self.assertTrue(use_tui)
-        self.assertIsNone(message)
-        import_module.assert_called_once_with("sim.tui")
-        ensure_vt.assert_called_once_with()
 
-    def test_missing_textual_falls_back_to_plain_mode(self):
-        with patch.object(sys.stdin, "isatty", return_value=True):
-            with patch.object(sys.stdout, "isatty", return_value=True):
-                with patch(
-                    "simulator.importlib.import_module",
-                    side_effect=ModuleNotFoundError("No module named 'textual'"),
-                ):
-                    use_tui, message = simulator.determine_tui_mode(False, "")
+    def test_simulink_prompt_can_choose_plain_mode(self):
+        with patch("builtins.input", return_value="2"):
+            use_tui = simulator.choose_simulink_ui_mode(False)
 
         self.assertFalse(use_tui)
-        self.assertIn("dependencies are missing", message)
 
-    def test_tui_mode_uses_import_probe(self):
-        with patch.object(sys.stdin, "isatty", return_value=True):
-            with patch.object(sys.stdout, "isatty", return_value=True):
-                with patch("simulator.importlib.import_module") as import_module:
-                    with patch.object(simulator, "_ensure_windows_vt_support") as ensure_vt:
-                        use_tui, message = simulator.determine_tui_mode(False, "")
+    def test_simulink_prompt_uses_tui_on_eof(self):
+        with patch("builtins.input", side_effect=EOFError):
+            use_tui = simulator.choose_simulink_ui_mode(False)
 
         self.assertTrue(use_tui)
-        self.assertIsNone(message)
-        import_module.assert_called_once_with("sim.tui")
-        ensure_vt.assert_called_once_with()
-
-    def test_windows_console_without_vt_falls_back_to_plain_mode(self):
-        with patch.object(sys.stdin, "isatty", return_value=True):
-            with patch.object(sys.stdout, "isatty", return_value=True):
-                with patch("simulator.importlib.import_module"):
-                    with patch.object(
-                        simulator,
-                        "_ensure_windows_vt_support",
-                        side_effect=RuntimeError(
-                            "The current Windows terminal does not support ANSI/VT updates for the TUI."
-                        ),
-                    ):
-                        use_tui, message = simulator.determine_tui_mode(False, "")
-
-        self.assertFalse(use_tui)
-        self.assertIn("ANSI/VT updates", message)
-        self.assertIn("Falling back to plain output", message)
 
     def test_plain_mode_uses_plain_runner(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
@@ -440,6 +400,128 @@ class TuiModeTests(unittest.TestCase):
         self.assertEqual(captured["sim"].kd, 0.1)
 
 
+class RunSimulationDispatchTests(unittest.TestCase):
+    def _run_with_runtime_patches(
+        self,
+        *,
+        config_updates: dict[str, object],
+        patches: dict[str, dict[str, object]],
+        force_plain: bool = False,
+    ) -> tuple[dict[str, object] | None, object, dict[str, object]]:
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(simulator, "ensure_runtime_config"))
+            stack.enter_context(
+                patch.object(
+                    simulator,
+                    "collect_doctor_checks",
+                    return_value=DEFAULT_DOCTOR_CHECKS,
+                )
+            )
+            doctor_report = stack.enter_context(
+                patch.object(simulator, "print_doctor_report")
+            )
+            stack.enter_context(patch.dict(simulator.CONFIG, config_updates, clear=False))
+
+            patched: dict[str, object] = {}
+            for name, patch_kwargs in patches.items():
+                patched[name] = stack.enter_context(
+                    patch.object(simulator, name, **patch_kwargs)
+                )
+
+            result = simulator.run_simulation(force_plain=force_plain)
+
+        return result, doctor_report, patched
+
+    def test_default_mode_uses_doctor_and_warm_start(self):
+        result, _doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={"MATLAB_MODEL_PATH": ""},
+            patches={
+                "_run_python_simulation_with_tui": {"return_value": {"mode": "tui"}},
+            },
+        )
+
+        self.assertEqual(result, {"mode": "tui"})
+        patched["_run_python_simulation_with_tui"].assert_called_once_with(
+            warm_start=True,
+            doctor_checks=DEFAULT_DOCTOR_CHECKS,
+        )
+
+    def test_simulink_mode_prefers_tui_when_available(self):
+        result, doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={"MATLAB_MODEL_PATH": "C:/models/demo.slx"},
+            patches={
+                "choose_simulink_ui_mode": {"return_value": True},
+                "_run_simulink_simulation_with_tui": {
+                    "return_value": {"mode": "simulink_tui"}
+                },
+            },
+        )
+
+        self.assertEqual(result, {"mode": "simulink_tui"})
+        patched["_run_simulink_simulation_with_tui"].assert_called_once_with(
+            doctor_checks=DEFAULT_DOCTOR_CHECKS
+        )
+        doctor_report.assert_not_called()
+
+    def test_simulink_mode_can_choose_plain_runner(self):
+        result, doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={"MATLAB_MODEL_PATH": "C:/models/demo.slx"},
+            patches={
+                "choose_simulink_ui_mode": {"return_value": False},
+                "_run_simulink_simulation": {
+                    "return_value": {"mode": "simulink_plain"}
+                },
+            },
+        )
+
+        self.assertEqual(result, {"mode": "simulink_plain"})
+        doctor_report.assert_called_once_with(DEFAULT_DOCTOR_CHECKS)
+        patched["_run_simulink_simulation"].assert_called_once_with(
+            doctor_checks=DEFAULT_DOCTOR_CHECKS
+        )
+
+    def test_tui_failure_falls_back_to_plain_runner(self):
+        result, doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={"MATLAB_MODEL_PATH": "", "LLM_DEBUG_OUTPUT": False},
+            patches={
+                "_run_python_simulation_with_tui": {
+                    "side_effect": RuntimeError("tui boom")
+                },
+                "_run_python_simulation_plain": {"return_value": {"mode": "plain"}},
+            },
+        )
+
+        self.assertEqual(result, {"mode": "plain"})
+        doctor_report.assert_called_once_with(DEFAULT_DOCTOR_CHECKS)
+        patched["_run_python_simulation_plain"].assert_called_once_with(
+            warm_start=True,
+            doctor_checks=DEFAULT_DOCTOR_CHECKS,
+        )
+
+    def test_simulink_tui_failure_falls_back_to_plain_runner(self):
+        result, doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={
+                "MATLAB_MODEL_PATH": "C:/models/demo.slx",
+                "LLM_DEBUG_OUTPUT": False,
+            },
+            patches={
+                "choose_simulink_ui_mode": {"return_value": True},
+                "_run_simulink_simulation_with_tui": {
+                    "side_effect": RuntimeError("tui boom")
+                },
+                "_run_simulink_simulation": {
+                    "return_value": {"mode": "simulink_plain"}
+                },
+            },
+        )
+
+        self.assertEqual(result, {"mode": "simulink_plain"})
+        doctor_report.assert_called_once_with(DEFAULT_DOCTOR_CHECKS)
+        patched["_run_simulink_simulation"].assert_called_once_with(
+            doctor_checks=DEFAULT_DOCTOR_CHECKS
+        )
+
+
 class PanelStateTests(unittest.TestCase):
     def test_replace_last_log_event_updates_existing_stream_line(self):
         from sim.tui import PanelState
@@ -466,101 +548,6 @@ class PanelStateTests(unittest.TestCase):
 
         self.assertEqual(len(state.event_history), 1)
         self.assertIn("hello", state.render_event_lines()[0])
-
-    def test_default_mode_uses_doctor_and_warm_start(self):
-        doctor_checks = [DoctorCheck("api", "PASS", "ok")]
-        with patch.object(simulator, "ensure_runtime_config"):
-            with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
-                with patch.dict(simulator.CONFIG, {"MATLAB_MODEL_PATH": ""}, clear=False):
-                    with patch.object(simulator, "determine_tui_mode", return_value=(True, None)):
-                        with patch.object(simulator, "_run_python_simulation_with_tui", return_value={"mode": "tui"}) as tui:
-                            result = simulator.run_simulation(force_plain=False)
-
-        self.assertEqual(result, {"mode": "tui"})
-        tui.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
-
-    def test_simulink_mode_prefers_tui_when_available(self):
-        doctor_checks = [DoctorCheck("api", "PASS", "ok")]
-        with patch.object(simulator, "ensure_runtime_config"):
-            with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
-                with patch.object(simulator, "determine_tui_mode", return_value=(True, None)):
-                    with patch.dict(
-                        simulator.CONFIG,
-                        {"MATLAB_MODEL_PATH": "C:/models/demo.slx"},
-                        clear=False,
-                    ):
-                        with patch.object(
-                            simulator,
-                            "_run_simulink_simulation_with_tui",
-                            return_value={"mode": "simulink_tui"},
-                        ) as tui:
-                            with patch.object(simulator, "print_doctor_report") as doctor_report:
-                                result = simulator.run_simulation(force_plain=False)
-
-        self.assertEqual(result, {"mode": "simulink_tui"})
-        tui.assert_called_once_with(doctor_checks=doctor_checks)
-        doctor_report.assert_not_called()
-
-    def test_tui_failure_falls_back_to_plain_runner(self):
-        doctor_checks = [DoctorCheck("api", "PASS", "ok")]
-        with patch.object(simulator, "ensure_runtime_config"):
-            with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
-                with patch.object(simulator, "print_doctor_report") as doctor_report:
-                    with patch.dict(
-                        simulator.CONFIG,
-                        {"MATLAB_MODEL_PATH": "", "LLM_DEBUG_OUTPUT": False},
-                        clear=False,
-                    ):
-                        with patch.object(
-                            simulator, "determine_tui_mode", return_value=(True, None)
-                        ):
-                            with patch.object(
-                                simulator,
-                                "_run_python_simulation_with_tui",
-                                side_effect=RuntimeError("tui boom"),
-                            ):
-                                with patch.object(
-                                    simulator,
-                                    "_run_python_simulation_plain",
-                                    return_value={"mode": "plain"},
-                                ) as plain:
-                                    result = simulator.run_simulation(force_plain=False)
-
-        self.assertEqual(result, {"mode": "plain"})
-        doctor_report.assert_called_once_with(doctor_checks)
-        plain.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
-
-    def test_simulink_tui_failure_falls_back_to_plain_runner(self):
-        doctor_checks = [DoctorCheck("api", "PASS", "ok")]
-        with patch.object(simulator, "ensure_runtime_config"):
-            with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
-                with patch.object(simulator, "print_doctor_report") as doctor_report:
-                    with patch.dict(
-                        simulator.CONFIG,
-                        {
-                            "MATLAB_MODEL_PATH": "C:/models/demo.slx",
-                            "LLM_DEBUG_OUTPUT": False,
-                        },
-                        clear=False,
-                    ):
-                        with patch.object(
-                            simulator, "determine_tui_mode", return_value=(True, None)
-                        ):
-                            with patch.object(
-                                simulator,
-                                "_run_simulink_simulation_with_tui",
-                                side_effect=RuntimeError("tui boom"),
-                            ):
-                                with patch.object(
-                                    simulator,
-                                    "_run_simulink_simulation",
-                                    return_value={"mode": "simulink_plain"},
-                                ) as plain:
-                                    result = simulator.run_simulation(force_plain=False)
-
-        self.assertEqual(result, {"mode": "simulink_plain"})
-        doctor_report.assert_called_once_with(doctor_checks)
-        plain.assert_called_once_with(doctor_checks=doctor_checks)
 
 
 @unittest.skipUnless(TEXTUAL_AVAILABLE, "textual is required")

@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import importlib
 import io
 from queue import Queue
-import sys
 import time
 import traceback
 from typing import Any
@@ -60,12 +58,6 @@ def _get_configured_setpoint(default: float = SETPOINT) -> float:
         return float(CONFIG.get("MATLAB_SETPOINT", default))
     except (TypeError, ValueError):
         return float(default)
-
-
-def choose_tui_language(default: str | None = None) -> str:
-    if default is None:
-        default = get_language()
-    return default
 
 
 def _console(enabled: bool, message: str) -> None:
@@ -601,6 +593,11 @@ def _run_tuning_loop(
                 fallback_used=decision.fallback_used,
                 guardrail_notes=list(decision.guardrail_notes),
             )
+            if decision.guardrail_notes:
+                _console(
+                    emit_console,
+                    f"[Guardrail] {'; '.join(decision.guardrail_notes)}",
+                )
 
             if decision.completed_reason == "llm_marked_done":
                 session.completed_reason = "llm_marked_done"
@@ -649,88 +646,20 @@ def _run_tuning_loop(
     }
 
 
-def determine_tui_mode(
-    force_plain: bool, matlab_model_path: str
-) -> tuple[bool, str | None]:
+def choose_simulink_ui_mode(force_plain: bool) -> bool:
     if force_plain:
-        return False, None
+        return False
 
-    _ = matlab_model_path
-
-    terminal_ok, terminal_message = _check_tui_terminal_support()
-    if not terminal_ok:
-        return False, terminal_message
-
-    try:
-        # Import probing is more reliable than find_spec() in frozen executables.
-        importlib.import_module("sim.tui")
-    except ImportError as exc:
-        return (
-            False,
-            f"TUI dependencies are missing: {exc}. Falling back to plain output.",
-        )
+    print("Simulink 显示模式")
+    print("[1] TUI 模式")
+    print("    若出现乱码或刷屏情况，请重启 exe 并选择 [2] 命令行模式")
+    print("[2] 命令行模式 (--plain 模式)")
 
     try:
-        # Textual relies on ANSI/VT rendering; classic Windows consoles may report
-        # TTY=True but still fail to redraw the screen correctly.
-        _ensure_windows_vt_support()
-    except RuntimeError as exc:
-        return False, f"{exc} Falling back to plain output."
-
-    return True, None
-
-
-def _check_tui_terminal_support() -> tuple[bool, str | None]:
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return (
-            False,
-            "The TUI requires an interactive terminal; falling back to plain output.",
-        )
-    return True, None
-
-
-def _ensure_windows_vt_support() -> None:
-    if sys.platform != "win32":
-        return
-
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32
-        kernel32.GetStdHandle.restype = wintypes.HANDLE
-        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-        kernel32.GetConsoleMode.restype = wintypes.BOOL
-        kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        kernel32.SetConsoleMode.restype = wintypes.BOOL
-
-        stdout_handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
-        invalid_handle = wintypes.HANDLE(-1).value
-        if stdout_handle in (None, 0, invalid_handle):
-            raise RuntimeError(
-                "The current Windows terminal does not expose a usable console handle."
-            )
-
-        mode = wintypes.DWORD()
-        if not kernel32.GetConsoleMode(stdout_handle, ctypes.byref(mode)):
-            raise RuntimeError(
-                "The current Windows terminal does not support Textual screen rendering."
-            )
-
-        enable_vt = 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
-        required_mode = mode.value | enable_vt
-        if required_mode != mode.value and not kernel32.SetConsoleMode(
-            stdout_handle, required_mode
-        ):
-            raise RuntimeError(
-                "The current Windows terminal does not support ANSI/VT updates for the TUI."
-            )
-    except RuntimeError:
-        raise
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to verify Windows console VT support ({exc})."
-        ) from exc
+        choice = input("Choose a mode [1]: ").strip().lower()
+    except EOFError:
+        return True
+    return choice not in {"2", "plain", "cmd", "command", "command-line"}
 
 
 def _run_python_simulation_with_tui(
@@ -744,7 +673,7 @@ def _run_python_simulation_with_tui(
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
     result_box: dict[str, Any] = {}
-    language = choose_tui_language()
+    language = get_language()
     setpoint = _get_configured_setpoint()
 
     def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
@@ -825,7 +754,7 @@ def _run_simulink_simulation_with_tui(
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
     result_box: dict[str, Any] = {}
-    language = choose_tui_language()
+    language = get_language()
 
     def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
         def worker() -> None:
@@ -949,12 +878,9 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
     ensure_runtime_config(verbose=True)
     doctor_checks = collect_doctor_checks()
     matlab_model_path = CONFIG.get("MATLAB_MODEL_PATH", "").strip()
-    use_tui, fallback_message = determine_tui_mode(force_plain, matlab_model_path)
-
-    if fallback_message:
-        print(f"[WARN] {fallback_message}")
 
     if matlab_model_path:
+        use_tui = choose_simulink_ui_mode(force_plain)
         if use_tui:
             try:
                 return _run_simulink_simulation_with_tui(doctor_checks=doctor_checks)
@@ -969,7 +895,7 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
         print_doctor_report(doctor_checks)
         return _run_simulink_simulation(doctor_checks=doctor_checks)
 
-    if use_tui:
+    if not force_plain:
         try:
             return _run_python_simulation_with_tui(
                 warm_start=True, doctor_checks=doctor_checks
