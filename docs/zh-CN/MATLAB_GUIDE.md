@@ -113,11 +113,12 @@ whos y_out   % 应该能看到 y_out 是 timeseries 类型
 {
   "LLM_API_KEY": "你的key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
-  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_MODEL_NAME": "gpt-4o",
   "LLM_PROVIDER": "openai",
 
   "MATLAB_MODEL_PATH"     : "C:/models/my_pid_model.slx",
   "MATLAB_PID_BLOCK_PATH" : "my_pid_model/PID Controller",
+  "MATLAB_ROOT"           : "C:/Program Files/MATLAB/R2022b",
   "MATLAB_OUTPUT_SIGNAL"  : "y_out",
   "MATLAB_SIM_STEP_TIME"  : 10.0,
   "MATLAB_SETPOINT"       : 200.0
@@ -128,11 +129,18 @@ whos y_out   % 应该能看到 y_out 是 timeseries 类型
 | :--- | :--- | :--- |
 | `MATLAB_MODEL_PATH` | Simulink `.slx` 文件完整路径 | `C:/models/my_model.slx` |
 | `MATLAB_PID_BLOCK_PATH` | PID 模块在模型中的完整路径 | `my_model/PID Controller` |
+| `MATLAB_ROOT` | MATLAB 安装根目录 | `C:/Program Files/MATLAB/R2022b` |
 | `MATLAB_OUTPUT_SIGNAL` | To Workspace 变量名 | `y_out` |
 | `MATLAB_SIM_STEP_TIME` | 每轮调参运行的仿真时长（仿真秒数） | `10.0` |
 | `MATLAB_SETPOINT` | 调参目标值，需与模型中 Setpoint 一致 | `200.0` |
 
 `MATLAB_PID_BLOCK_PATH` 的格式是**模型名/模块名**，模型名就是 `.slx` 文件名去掉扩展名。如果 PID 块在子系统里，路径写成 `my_model/子系统名/PID Controller`。
+
+`MATLAB_ROOT` 填 MATLAB 的安装根目录，不是 `extern/engines/python` 子目录。
+
+- 如果你用的是打包版 `llm-pid-tuner.exe`，建议把 `MATLAB_ROOT` 一起填上，程序会根据这个目录补 MATLAB Engine 运行时路径
+- 如果你是源码运行，而且当前 Python 环境已经能 `import matlab.engine`，`MATLAB_ROOT` 可以留空
+- 如果源码运行仍然报 `No module named matlab.engine`，先检查第 1 步的 Engine 安装，再补 `MATLAB_ROOT`
 
 ---
 

@@ -69,7 +69,7 @@ If `config.json` does not exist, the program generates a default one automatical
 
 ### 4. Edit `config.json`
 
-At minimum, set these fields:
+At minimum, start with the hardware-mode fields below:
 
 ```json
 {
@@ -77,10 +77,12 @@ At minimum, set these fields:
   "BAUD_RATE": 115200,
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
-  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_MODEL_NAME": "gpt-4o",
   "LLM_PROVIDER": "openai"
 }
 ```
+
+If you only want to try `simulator.py` first and are not connecting real hardware yet, you can leave `SERIAL_PORT` unset and just fill the LLM fields.
 
 For OpenAI-compatible providers such as MiniMax, DeepSeek, Ollama, or LM Studio, keep `LLM_PROVIDER` as `openai` and point `LLM_API_BASE_URL` to the provider's `/v1` endpoint.
 
@@ -129,18 +131,66 @@ In practice, this means the tool tries to be useful on real hardware, not just a
 
 ---
 
-## Key config fields
+## How to fill `config.json`
 
-| Field               | Meaning                  | Beginner advice                                                                                                    |
-| :------------------ | :----------------------- | :----------------------------------------------------------------------------------------------------------------- |
-| `SERIAL_PORT`       | Serial port or `AUTO`    | Start with `AUTO`                                                                                                  |
-| `BAUD_RATE`         | Serial baud rate         | Match your firmware                                                                                                |
-| `LLM_API_KEY`       | Model API key            | Required                                                                                                           |
-| `LLM_API_BASE_URL`  | API base URL             | OpenAI-compatible endpoints usually end with `/v1`                                                                 |
-| `LLM_MODEL_NAME`    | Model name               | Example: `gpt-4`, `MiniMax-M2.5`                                                                                   |
-| `LLM_PROVIDER`      | Provider type            | Use `openai` for OpenAI-compatible APIs, `openai_claude` for Claude relays, and `anthropic` for native Claude APIs |
-| `BUFFER_SIZE`       | Samples per tuning round | Keep the default first                                                                                             |
-| `MAX_TUNING_ROUNDS` | Maximum rounds           | Keep the default first                                                                                             |
+On the first run of `tuner.py`, `simulator.py`, or `llm-pid-tuner.exe`, the app generates a default `config.json` automatically if one does not exist.
+
+If you prefer starting from a template, check `config.example.json`.
+
+### Start with these fields
+
+**1. Minimum config for real hardware**
+
+```json
+{
+  "SERIAL_PORT": "AUTO",
+  "BAUD_RATE": 115200,
+  "LLM_API_KEY": "sk-your-key",
+  "LLM_API_BASE_URL": "https://api.openai.com/v1",
+  "LLM_MODEL_NAME": "gpt-4o",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+**2. Minimum config for the built-in Python simulator**
+
+```json
+{
+  "LLM_API_KEY": "sk-your-key",
+  "LLM_API_BASE_URL": "https://api.openai.com/v1",
+  "LLM_MODEL_NAME": "gpt-4o",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+**3. Extra fields for Simulink mode**
+
+```json
+{
+  "MATLAB_MODEL_PATH": "C:/models/my_pid_model.slx",
+  "MATLAB_PID_BLOCK_PATH": "my_pid_model/PID Controller",
+  "MATLAB_ROOT": "C:/Program Files/MATLAB/R2022b",
+  "MATLAB_OUTPUT_SIGNAL": "y_out",
+  "MATLAB_SIM_STEP_TIME": 15.0,
+  "MATLAB_SETPOINT": 200.0
+}
+```
+
+### Config groups by use case
+
+| Group | When needed | Fields | Notes |
+| :---- | :---------- | :----- | :---- |
+| Serial hardware | Real hardware tuning | `SERIAL_PORT` `BAUD_RATE` | Start with `SERIAL_PORT: "AUTO"` and match the firmware baud rate |
+| LLM basics | Required in every mode | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | This is the core set needed for any tuning run |
+| Tuning behavior | Optional | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` | Leave defaults unless you are tuning strategy or debugging |
+| Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT` | Points to the model, PID block, MATLAB install, and output signal |
+| Proxy | Only if you need one | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | Leave empty to disable |
+
+### When should I fill `MATLAB_ROOT`?
+
+- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `C:/Program Files/MATLAB/R2022b`
+- For source runs, you can leave it empty if the current Python environment already imports `matlab.engine` successfully
+- If source mode still fails with `No module named matlab.engine` or cannot locate the runtime, fill `MATLAB_ROOT` and follow the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)
 
 Environment variables are also supported and override `config.json`, but beginners usually find `config.json` easier.
 
@@ -181,7 +231,12 @@ The current runtime is hardened for OpenAI-compatible endpoints and includes a m
 
 If you already have a MATLAB/Simulink model, you can tune its PID parameters directly with LLM assistance — no real hardware needed.
 
-Set `MATLAB_MODEL_PATH` in `config.json` to your Simulink `.slx` file path, then run `python simulator.py`. The tool switches to MATLAB mode automatically.
+Set these fields in `config.json`, then run `python simulator.py` or choose the Simulink mode from the packaged launcher:
+
+- `MATLAB_MODEL_PATH`: path to the Simulink `.slx` file
+- `MATLAB_PID_BLOCK_PATH`: full path to the PID block inside the model
+- `MATLAB_OUTPUT_SIGNAL`: To Workspace variable name
+- `MATLAB_ROOT`: MATLAB install root; recommended for the packaged app, optional for source runs when `matlab.engine` already imports in your Python environment
 
 For full setup instructions, model requirements, and troubleshooting, see the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
 
@@ -225,14 +280,42 @@ python doctor.py
 
 ## Run from source
 
+If you want the latest behavior from source, prefer `dev` over `main`. New fixes, TUI changes, and pre-release validation land on `dev` first, while `main` is the slower-moving stable branch.
+
+### Fresh clone: use `dev`
+
 ```bash
-git clone https://github.com/KINGSTON-115/llm-pid-tuner.git
+git clone -b dev https://github.com/KINGSTON-115/llm-pid-tuner.git
 cd llm-pid-tuner
-pip install -r requirements.txt
-python tuner.py
 ```
 
-Optional tools:
+### Existing clone: switch to `dev` and update
+
+```bash
+git fetch origin
+git checkout dev
+git pull --ff-only origin dev
+```
+
+### Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+If you plan to run Simulink from source, make sure this same Python environment can import `matlab.engine`. The [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md) covers that setup.
+
+### Before you run
+
+- `python tuner.py`: fill LLM settings and serial settings
+- `python simulator.py`: fill LLM settings
+- Simulink mode: also fill the `MATLAB_*` fields
+
+If `config.json` does not exist yet, the program will create a default one on first run. You can also start from `config.example.json`.
+
+### Common commands
+
+- `python tuner.py`
 
 - `python simulator.py`
 - `python simulator.py --plain`
