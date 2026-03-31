@@ -173,11 +173,14 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         original_sys_path = list(sys.path)
         original_path = os.environ.get("PATH")
         original_mwe_install = os.environ.get("MWE_INSTALL")
+        original_matlab_root = os.environ.get("MATLAB_ROOT")
 
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 matlab_root = Path(temp_dir) / "MATLAB" / "R2022b"
                 (matlab_root / "bin" / "win64").mkdir(parents=True)
+                (matlab_root / "runtime" / "win64").mkdir(parents=True)
+                (matlab_root / "sys" / "os" / "win64").mkdir(parents=True)
                 (matlab_root / "extern" / "bin" / "win64").mkdir(parents=True)
                 (
                     matlab_root
@@ -194,6 +197,7 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
                     _prepare_matlab_root(str(matlab_root))
 
                 self.assertEqual(os.environ.get("MWE_INSTALL"), str(matlab_root))
+                self.assertEqual(os.environ.get("MATLAB_ROOT"), str(matlab_root))
                 self.assertEqual(
                     sys.path[0],
                     str(matlab_root / "extern" / "bin" / "win64"),
@@ -215,11 +219,16 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
                     sys.path[2],
                     str(matlab_root / "extern" / "engines" / "python" / "dist"),
                 )
-                self.assertTrue(
-                    os.environ.get("PATH", "").startswith(
-                        str(matlab_root / "extern" / "bin" / "win64")
-                    )
-                )
+                matlab_paths = [
+                    path
+                    for path in os.environ.get("PATH", "").split(os.pathsep)
+                    if path
+                ]
+                self.assertEqual(matlab_paths[0], str(matlab_root / "extern" / "bin" / "win64"))
+                self.assertIn(str(matlab_root / "bin" / "win64"), matlab_paths)
+                self.assertIn(str(matlab_root / "runtime" / "win64"), matlab_paths)
+                self.assertIn(str(matlab_root / "sys" / "os" / "win64"), matlab_paths)
+                self.assertIn(str(matlab_root / "bin"), matlab_paths)
         finally:
             sys.path[:] = original_sys_path
             if original_path is None:
@@ -230,6 +239,10 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
                 os.environ.pop("MWE_INSTALL", None)
             else:
                 os.environ["MWE_INSTALL"] = original_mwe_install
+            if original_matlab_root is None:
+                os.environ.pop("MATLAB_ROOT", None)
+            else:
+                os.environ["MATLAB_ROOT"] = original_matlab_root
 
     def test_load_matlab_engine_prefers_configured_runtime_over_stale_modules(self):
         original_sys_path = list(sys.path)
