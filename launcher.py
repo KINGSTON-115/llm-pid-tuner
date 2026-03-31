@@ -70,7 +70,7 @@ def prompt_launch_mode(default_mode: str = MODE_SIM) -> str:
     print("  LLM PID Tuner PRO - Launcher")
     print("=" * 60)
     print("[1] Hardware tuning (Arduino / ESP32 / serial device)")
-    print("[2] Local simulation dashboard (new TUI)")
+    print("[2] Local simulation / Simulink")
     print("[Q] Quit")
 
     default_choice = "2" if default_mode == MODE_SIM else "1"

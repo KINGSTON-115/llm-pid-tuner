@@ -388,6 +388,41 @@ class TuningSessionHistoryTests(unittest.TestCase):
         self.assertEqual(decision.safe_pid["p"], 500.0)
         self.assertEqual(state.buffer.current_pid["p"], 500.0)
 
+    def test_finalize_decision_reports_simulink_p_upper_limit(self):
+        state = create_tuning_session(
+            initial_pid={"p": 5000.0, "i": 0.5, "d": 0.0},
+            setpoint=200.0,
+        )
+        evaluation = RoundEvaluation(
+            round_index=1,
+            metrics={
+                "avg_error": 5.0,
+                "steady_state_error": 1.8,
+                "overshoot": 0.0,
+                "status": "SLOW_RESPONSE",
+            },
+            current_pid={"p": 5000.0, "i": 0.5, "d": 0.0},
+            stable_rounds=0,
+        )
+
+        decision = finalize_decision(
+            state,
+            evaluation,
+            {
+                "analysis_summary": "Try increasing P again.",
+                "thought_process": "Current P is still too low.",
+                "tuning_action": "BOOST_RESPONSE",
+                "p": 6000.0,
+                "i": 0.5,
+                "d": 0.0,
+                "status": "TUNING",
+            },
+            limits=get_pid_limits("simulink"),
+        )
+
+        self.assertEqual(decision.safe_pid["p"], 5000.0)
+        self.assertIn("P 已达上限 5000.0000", "; ".join(decision.guardrail_notes))
+
 
 class BufferTests(unittest.TestCase):
     def _make_data_point(self, temp: float, setpoint: float = 200.0) -> dict:

@@ -13,10 +13,10 @@ tuner.py - LLM PID 自动调参系统 (History-Aware + Chain-of-Thought)
 from __future__ import annotations
 
 import argparse
-import importlib
 from queue import Queue
 import sys
 import time
+import traceback
 from typing import Any, Callable
 
 from core.config import CONFIG, initialize_runtime_config
@@ -99,21 +99,6 @@ def choose_tui_language(default: str = "zh") -> str:
     if choice in {"2", "en", "english"}:
         return "en"
     return default
-
-
-def determine_tui_mode(force_plain: bool) -> tuple[bool, str | None]:
-    if force_plain:
-        return False, None
-
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return False, "The TUI requires an interactive terminal; falling back to plain output."
-
-    try:
-        importlib.import_module("sim.tui")
-    except ImportError as exc:
-        return False, f"TUI dependencies are missing: {exc}. Falling back to plain output."
-
-    return True, None
 
 
 def _console(enabled: bool, message: str, *, end: str = "\n") -> None:
@@ -570,12 +555,13 @@ def run_hardware_tuner(
         safe_pause()
         return {"completed_reason": "no_serial_port"}
 
-    use_tui, fallback_message = determine_tui_mode(force_plain)
-    if fallback_message:
-        print(f"[WARN] {fallback_message}")
-
-    if use_tui:
-        return _run_hardware_tuning_with_tui(serial_port, initial_pid=initial_pid)
+    if not force_plain:
+        try:
+            return _run_hardware_tuning_with_tui(serial_port, initial_pid=initial_pid)
+        except Exception as exc:
+            print(f"[WARN] Failed to start the TUI ({exc}); falling back to plain output.")
+            if bool(CONFIG.get("LLM_DEBUG_OUTPUT")):
+                traceback.print_exc()
     return _run_hardware_tuning_plain(serial_port, initial_pid=initial_pid)
 
 
