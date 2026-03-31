@@ -6,11 +6,7 @@ import importlib.util
 from pathlib import Path
 import sys
 
-from PyInstaller.utils.hooks import (
-    collect_data_files,
-    collect_dynamic_libs,
-    collect_submodules,
-)
+from PyInstaller.utils.hooks import collect_submodules
 
 
 ROOT_DIR = Path(globals().get("SPECPATH", Path.cwd())).resolve()
@@ -22,6 +18,13 @@ if importlib.util.find_spec("textual") is not None:
     hiddenimports += ["sim.tui"]
 datas = []
 binaries = []
+excludes = [
+    # Simulink mode must load the user's local MATLAB Engine from MATLAB_ROOT at runtime.
+    # Freezing the build machine's engine makes the exe machine-specific.
+    "matlab",
+    "matlab.engine",
+    "matlabmultidimarrayforpython",
+]
 
 
 def add_optional_binary(binary_name: str, source_dir: Path, target_dir: str = ".") -> None:
@@ -33,20 +36,6 @@ def add_optional_binary(binary_name: str, source_dir: Path, target_dir: str = ".
 for binary_name in ("libssl-3-x64.dll", "libcrypto-3-x64.dll"):
     add_optional_binary(binary_name, PYTHON_PREFIX / "Library" / "bin")
 
-if importlib.util.find_spec("matlab") is not None:
-    import matlab
-    import matlab.engine
-    from matlab.engine import pythonengine
-    import matlabmultidimarrayforpython
-
-    hiddenimports += collect_submodules("matlab")
-    datas += collect_data_files("matlab")
-    binaries += collect_dynamic_libs("matlab")
-    binaries += [
-        (str(Path(pythonengine.__file__).resolve()), "."),
-        (str(Path(matlabmultidimarrayforpython.__file__).resolve()), "."),
-    ]
-
 a = Analysis(
     ["launcher.py"],
     pathex=[str(ROOT_DIR)],
@@ -56,7 +45,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludes,
     noarchive=False,
     optimize=0,
 )

@@ -3,11 +3,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import Mock, patch
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import sim.simulink_bridge as simulink_bridge
 from sim.simulink_bridge import SimulinkBridge, _prepare_matlab_root
 
 
@@ -228,6 +230,80 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
                 os.environ.pop("MWE_INSTALL", None)
             else:
                 os.environ["MWE_INSTALL"] = original_mwe_install
+
+    def test_load_matlab_engine_prefers_configured_runtime_over_stale_modules(self):
+        original_sys_path = list(sys.path)
+        original_path = os.environ.get("PATH")
+        original_mwe_install = os.environ.get("MWE_INSTALL")
+        original_matlab_root = os.environ.get("MATLAB_ROOT")
+        original_engine = simulink_bridge._MATLAB_ENGINE
+        original_modules = {
+            name: module
+            for name, module in sys.modules.items()
+            if name == "matlab" or name.startswith("matlab.")
+        }
+
+        try:
+            stale_matlab = ModuleType("matlab")
+            stale_matlab.__file__ = "C:/other/site-packages/matlab/__init__.py"
+            stale_engine = ModuleType("matlab.engine")
+            stale_engine.__file__ = "C:/other/site-packages/matlab/engine/__init__.py"
+            sys.modules["matlab"] = stale_matlab
+            sys.modules["matlab.engine"] = stale_engine
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                matlab_root = Path(temp_dir) / "MATLAB" / "R2024b"
+                (matlab_root / "bin" / "win64").mkdir(parents=True)
+                (matlab_root / "extern" / "bin" / "win64").mkdir(parents=True)
+                (
+                    matlab_root
+                    / "extern"
+                    / "engines"
+                    / "python"
+                    / "dist"
+                    / "matlab"
+                    / "engine"
+                    / "win64"
+                ).mkdir(parents=True)
+
+                imported_engine = ModuleType("matlab.engine")
+
+                def fake_import(module_name: str):
+                    self.assertEqual(module_name, "matlab.engine")
+                    self.assertNotIn("matlab", sys.modules)
+                    self.assertNotIn("matlab.engine", sys.modules)
+                    return imported_engine
+
+                with patch("sim.simulink_bridge.os.add_dll_directory", Mock(), create=True):
+                    with patch(
+                        "sim.simulink_bridge.importlib.import_module",
+                        side_effect=fake_import,
+                    ) as import_module:
+                        simulink_bridge._MATLAB_ENGINE = None
+                        loaded = simulink_bridge._load_matlab_engine(str(matlab_root))
+
+                self.assertIs(loaded, imported_engine)
+                self.assertIs(simulink_bridge._MATLAB_ENGINE, imported_engine)
+                import_module.assert_called_once_with("matlab.engine")
+        finally:
+            simulink_bridge._MATLAB_ENGINE = original_engine
+            for module_name in list(sys.modules):
+                if module_name == "matlab" or module_name.startswith("matlab."):
+                    sys.modules.pop(module_name, None)
+            sys.modules.update(original_modules)
+            sys.path[:] = original_sys_path
+            if original_path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = original_path
+            if original_mwe_install is None:
+                os.environ.pop("MWE_INSTALL", None)
+            else:
+                os.environ["MWE_INSTALL"] = original_mwe_install
+            if original_matlab_root is None:
+                os.environ.pop("MATLAB_ROOT", None)
+            else:
+                os.environ["MATLAB_ROOT"] = original_matlab_root
 
 
 if __name__ == "__main__":
