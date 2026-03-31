@@ -73,7 +73,7 @@ At minimum, start with the hardware-mode fields below:
   "BAUD_RATE": 115200,
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
-  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_MODEL_NAME": "gpt-4o",
   "LLM_PROVIDER": "openai"
 }
 ```
@@ -131,6 +131,8 @@ In practice, this means the tool tries to be useful on real hardware, not just a
 
 On the first run of `tuner.py`, `simulator.py`, or `llm-pid-tuner.exe`, the app generates a default `config.json` automatically if one does not exist.
 
+If you prefer starting from a template, check `config.example.json`.
+
 ### Start with these fields
 
 **1. Minimum config for real hardware**
@@ -141,7 +143,7 @@ On the first run of `tuner.py`, `simulator.py`, or `llm-pid-tuner.exe`, the app 
   "BAUD_RATE": 115200,
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
-  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_MODEL_NAME": "gpt-4o",
   "LLM_PROVIDER": "openai"
 }
 ```
@@ -152,7 +154,7 @@ On the first run of `tuner.py`, `simulator.py`, or `llm-pid-tuner.exe`, the app 
 {
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
-  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_MODEL_NAME": "gpt-4o",
   "LLM_PROVIDER": "openai"
 }
 ```
@@ -163,6 +165,7 @@ On the first run of `tuner.py`, `simulator.py`, or `llm-pid-tuner.exe`, the app 
 {
   "MATLAB_MODEL_PATH": "C:/models/my_pid_model.slx",
   "MATLAB_PID_BLOCK_PATH": "my_pid_model/PID Controller",
+  "MATLAB_ROOT": "C:/Program Files/MATLAB/R2022b",
   "MATLAB_OUTPUT_SIGNAL": "y_out",
   "MATLAB_SIM_STEP_TIME": 15.0,
   "MATLAB_SETPOINT": 200.0
@@ -176,14 +179,14 @@ On the first run of `tuner.py`, `simulator.py`, or `llm-pid-tuner.exe`, the app 
 | Serial hardware | Real hardware tuning | `SERIAL_PORT` `BAUD_RATE` | Start with `SERIAL_PORT: "AUTO"` and match the firmware baud rate |
 | LLM basics | Required in every mode | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | This is the core set needed for any tuning run |
 | Tuning behavior | Optional | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` | Leave defaults unless you are tuning strategy or debugging |
-| Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT` | Points to the model, PID block, output signal, and target |
+| Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT` | Points to the model, PID block, MATLAB install, and output signal |
 | Proxy | Only if you need one | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | Leave empty to disable |
 
-### Simulink note
+### When should I fill `MATLAB_ROOT`?
 
-- Before running Simulink mode, make sure the current environment already has MATLAB Engine API for Python installed
-- `MATLAB_MODEL_PATH`, `MATLAB_PID_BLOCK_PATH`, and `MATLAB_OUTPUT_SIGNAL` are the key fields to get right first
-- For setup steps and model preparation details, see the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)
+- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `C:/Program Files/MATLAB/R2022b`
+- For source runs, you can leave it empty if the current Python environment already imports `matlab.engine` successfully
+- If source mode still fails with `No module named matlab.engine` or cannot locate the runtime, fill `MATLAB_ROOT` and follow the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)
 
 Environment variables are also supported and override `config.json`, but beginners usually find `config.json` easier.
 
@@ -229,6 +232,7 @@ Set these fields in `config.json`, then run `python simulator.py` or choose the 
 - `MATLAB_MODEL_PATH`: path to the Simulink `.slx` file
 - `MATLAB_PID_BLOCK_PATH`: full path to the PID block inside the model
 - `MATLAB_OUTPUT_SIGNAL`: To Workspace variable name
+- `MATLAB_ROOT`: MATLAB install root; recommended for the packaged app, optional for source runs when `matlab.engine` already imports in your Python environment
 
 For full setup instructions, model requirements, and troubleshooting, see the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
 
@@ -303,7 +307,7 @@ If you plan to run Simulink from source, make sure this same Python environment 
 - `python simulator.py`: fill LLM settings
 - Simulink mode: also fill the `MATLAB_*` fields
 
-If `config.json` does not exist yet, the program will create a default one on first run.
+If `config.json` does not exist yet, the program will create a default one on first run. You can also start from `config.example.json`.
 
 ### Common commands
 
