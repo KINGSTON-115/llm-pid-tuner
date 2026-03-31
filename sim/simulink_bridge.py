@@ -105,6 +105,9 @@ def _prepare_matlab_root(matlab_root: str) -> None:
     engine_dir = os.path.join(dist_dir, "matlab", "engine", arch)
     extern_bin_dir = os.path.join(root_path, "extern", "bin", arch)
     bin_dir = os.path.join(root_path, "bin", arch)
+    runtime_dir = os.path.join(root_path, "runtime", arch)
+    sys_os_dir = os.path.join(root_path, "sys", "os", arch)
+    bin_root_dir = os.path.join(root_path, "bin")
 
     required_paths = {
         "MATLAB_ROOT": root_path,
@@ -128,10 +131,17 @@ def _prepare_matlab_root(matlab_root: str) -> None:
     _prepend_unique_path(sys.path, dist_dir)
     _prepend_unique_path(sys.path, engine_dir)
     _prepend_unique_path(sys.path, extern_bin_dir)
-    _prepend_unique_env_path(path_var, bin_dir)
-    _prepend_unique_env_path(path_var, extern_bin_dir)
-    _register_dll_directory(bin_dir)
-    _register_dll_directory(extern_bin_dir)
+    for dll_dir in (
+        bin_root_dir,
+        runtime_dir,
+        sys_os_dir,
+        bin_dir,
+        extern_bin_dir,
+    ):
+        if not os.path.exists(dll_dir):
+            continue
+        _prepend_unique_env_path(path_var, dll_dir)
+        _register_dll_directory(dll_dir)
 
 
 def _load_matlab_engine(matlab_root: str = ""):
