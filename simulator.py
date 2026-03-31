@@ -657,11 +657,9 @@ def determine_tui_mode(
 
     _ = matlab_model_path
 
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return (
-            False,
-            "The TUI requires an interactive terminal; falling back to plain output.",
-        )
+    terminal_ok, terminal_message = _check_tui_terminal_support()
+    if not terminal_ok:
+        return False, terminal_message
 
     try:
         # Import probing is more reliable than find_spec() in frozen executables.
@@ -672,7 +670,67 @@ def determine_tui_mode(
             f"TUI dependencies are missing: {exc}. Falling back to plain output.",
         )
 
+    try:
+        # Textual relies on ANSI/VT rendering; classic Windows consoles may report
+        # TTY=True but still fail to redraw the screen correctly.
+        _ensure_windows_vt_support()
+    except RuntimeError as exc:
+        return False, f"{exc} Falling back to plain output."
+
     return True, None
+
+
+def _check_tui_terminal_support() -> tuple[bool, str | None]:
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return (
+            False,
+            "The TUI requires an interactive terminal; falling back to plain output.",
+        )
+    return True, None
+
+
+def _ensure_windows_vt_support() -> None:
+    if sys.platform != "win32":
+        return
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetConsoleMode.restype = wintypes.BOOL
+        kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.SetConsoleMode.restype = wintypes.BOOL
+
+        stdout_handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        invalid_handle = wintypes.HANDLE(-1).value
+        if stdout_handle in (None, 0, invalid_handle):
+            raise RuntimeError(
+                "The current Windows terminal does not expose a usable console handle."
+            )
+
+        mode = wintypes.DWORD()
+        if not kernel32.GetConsoleMode(stdout_handle, ctypes.byref(mode)):
+            raise RuntimeError(
+                "The current Windows terminal does not support Textual screen rendering."
+            )
+
+        enable_vt = 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        required_mode = mode.value | enable_vt
+        if required_mode != mode.value and not kernel32.SetConsoleMode(
+            stdout_handle, required_mode
+        ):
+            raise RuntimeError(
+                "The current Windows terminal does not support ANSI/VT updates for the TUI."
+            )
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to verify Windows console VT support ({exc})."
+        ) from exc
 
 
 def _run_python_simulation_with_tui(
