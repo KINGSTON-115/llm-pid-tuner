@@ -86,7 +86,7 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 ### 第 4 步：填写 `config.json`
 
-打开 `config.json`，至少把这几个字段改掉：
+打开 `config.json`，至少先把“硬件模式最小必填项”改掉：
 
 ```json
 {
@@ -94,10 +94,12 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
   "BAUD_RATE": 115200,
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
-  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_MODEL_NAME": "gpt-4o",
   "LLM_PROVIDER": "openai"
 }
 ```
+
+如果你只是想先跑 `simulator.py` 看效果，没有接真实串口，也可以先不填 `SERIAL_PORT`，只把 LLM 相关字段填好。
 
 如果你要用 **MiniMax / DeepSeek / Ollama / LM Studio** 这类 OpenAI 兼容接口，通常这样配就行：
 
@@ -156,23 +158,66 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 ---
 
-## `config.json` 字段说明
+## `config.json` 怎么填
 
-下面是实际程序会读取的关键配置项。
+第一次运行 `tuner.py`、`simulator.py` 或 `llm-pid-tuner.exe` 时，如果当前目录没有 `config.json`，程序会自动生成一份默认配置。
 
-| 字段                  | 作用                           | 新手建议                                                                                     |
-| :-------------------- | :----------------------------- | :------------------------------------------------------------------------------------------- |
-| `SERIAL_PORT`         | 串口号，支持 `AUTO` 或具体端口 | 不确定就先用 `AUTO`                                                                          |
-| `BAUD_RATE`           | 串口波特率                     | 与你的单片机保持一致，默认 `115200`                                                          |
-| `LLM_API_KEY`         | 模型服务密钥                   | 必填                                                                                         |
-| `LLM_API_BASE_URL`    | 模型接口地址                   | OpenAI 兼容接口一般都以 `/v1` 结尾                                                           |
-| `LLM_MODEL_NAME`      | 具体模型名                     | 例如 `gpt-4`、`MiniMax-M2.5`                                                                 |
-| `LLM_PROVIDER`        | 提供商类型                     | OpenAI 兼容接口填 `openai`；Claude 中转站可选 `openai_claude`；Claude 原生接口填 `anthropic` |
-| `BUFFER_SIZE`         | 每轮分析采样点数               | 一般不要乱改，先用默认                                                                       |
-| `MIN_ERROR_THRESHOLD` | 判定足够接近目标的阈值         | 先用默认                                                                                     |
-| `MAX_TUNING_ROUNDS`   | 最大调参轮数                   | 新手保持默认                                                                                 |
-| `LLM_REQUEST_TIMEOUT` | LLM 请求超时秒数               | 网络慢时可适当加大                                                                           |
-| `LLM_DEBUG_OUTPUT`    | 是否打印更详细的 LLM 输出      | 排查问题时再开                                                                               |
+如果你喜欢先看模板，也可以直接参考仓库里的 `config.example.json`。
+
+### 先改这些就能跑起来
+
+**1. 真实硬件模式最小必填**
+
+```json
+{
+  "SERIAL_PORT": "AUTO",
+  "BAUD_RATE": 115200,
+  "LLM_API_KEY": "sk-your-key",
+  "LLM_API_BASE_URL": "https://api.openai.com/v1",
+  "LLM_MODEL_NAME": "gpt-4o",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+**2. 本地 Python 仿真最小必填**
+
+```json
+{
+  "LLM_API_KEY": "sk-your-key",
+  "LLM_API_BASE_URL": "https://api.openai.com/v1",
+  "LLM_MODEL_NAME": "gpt-4o",
+  "LLM_PROVIDER": "openai"
+}
+```
+
+**3. Simulink 模式额外补这几项**
+
+```json
+{
+  "MATLAB_MODEL_PATH": "C:/models/my_pid_model.slx",
+  "MATLAB_PID_BLOCK_PATH": "my_pid_model/PID Controller",
+  "MATLAB_ROOT": "C:/Program Files/MATLAB/R2022b",
+  "MATLAB_OUTPUT_SIGNAL": "y_out",
+  "MATLAB_SIM_STEP_TIME": 15.0,
+  "MATLAB_SETPOINT": 200.0
+}
+```
+
+### 按场景看配置项
+
+| 分类 | 什么时候需要 | 字段 | 说明 |
+| :--- | :--- | :--- | :--- |
+| 硬件串口 | 真实硬件调参 | `SERIAL_PORT` `BAUD_RATE` | `SERIAL_PORT` 不确定先填 `AUTO`，`BAUD_RATE` 要和固件一致 |
+| LLM 基础 | 所有模式都需要 | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | 这是最核心的一组配置，不填就无法调参 |
+| 调参行为 | 想微调策略时再改 | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` | 新手建议先保持默认，只有在采样不够、网络慢或需要排查日志时再动 |
+| Simulink | 只在 MATLAB/Simulink 模式下需要 | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT` | 指向模型、PID 模块、MATLAB 安装目录和仿真输出 |
+| 代理 | 只有需要代理时才填 | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | 留空就是不启用 |
+
+### `MATLAB_ROOT` 什么时候要填
+
+- 用打包版 `exe` 跑 Simulink 时，建议直接填 `MATLAB_ROOT`，例如 `C:/Program Files/MATLAB/R2022b`
+- 源码方式运行时，如果你当前这个 Python 环境已经能正常 `import matlab.engine`，`MATLAB_ROOT` 可以留空
+- 如果源码运行也报 `No module named matlab.engine`，或者 MATLAB Engine 路径找不到，就把 `MATLAB_ROOT` 填上，同时按 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md) 安装 Engine
 
 ### 关于环境变量
 
@@ -226,7 +271,12 @@ $env:LLM_PROVIDER="openai"
 
 如果你已经有 MATLAB/Simulink 仿真模型，可以直接让 LLM 对你的模型进行 PID 调参，无需真实硬件。
 
-在 `config.json` 里填写 `MATLAB_MODEL_PATH`（Simulink `.slx` 文件路径），再运行 `python simulator.py`，程序会自动切换到 MATLAB 模式。
+在 `config.json` 里至少填写下面这些字段，再运行 `python simulator.py` 或打包版启动器里的 Simulink 模式：
+
+- `MATLAB_MODEL_PATH`：Simulink `.slx` 文件路径
+- `MATLAB_PID_BLOCK_PATH`：模型里的 PID 模块完整路径
+- `MATLAB_OUTPUT_SIGNAL`：To Workspace 输出变量名
+- `MATLAB_ROOT`：MATLAB 安装根目录；打包版建议填写，源码运行如果当前 Python 已装好 MATLAB Engine 可以留空
 
 详细配置步骤、模型准备方法和常见问题，见 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)。
 
@@ -253,22 +303,51 @@ python simulator.py
 
 ### 分支说明（重要）
 
-- `dev` 分支：当前最新开发代码，功能更新会先进入 `dev`
-- `main` 分支：稳定版分支，以稳定可用为主，但不一定是最新代码
-- 如果你想源码运行或做针对性调教，建议优先拉取 `dev` 分支
+- `dev` 分支：当前最新开发代码，功能修复、TUI 改动、打包前验证都会先进入这里
+- `main` 分支：更偏稳定展示和正式 release，同步会慢一些，不保证是当前最新行为
+- 如果你想源码运行、跟进最近修复，或者准备提 PR，建议直接拉 `dev`
 
-### 安装依赖
+### 新拉仓库：直接拉 `dev`
 
 ```bash
 git clone -b dev https://github.com/KINGSTON-115/llm-pid-tuner.git
 cd llm-pid-tuner
+```
+
+### 你已经拉过仓库：切到 `dev` 并更新
+
+```bash
+git fetch origin
+git checkout dev
+git pull --ff-only origin dev
+```
+
+### 安装依赖
+
+```bash
 pip install -r requirements.txt
 ```
+
+如果你要跑 Simulink 源码模式，还需要让当前这个 Python 环境能导入 `matlab.engine`。不会配的话，直接看 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)。
+
+### 运行前先确认配置
+
+- 跑 `python tuner.py`：至少填好 LLM 配置和串口配置
+- 跑 `python simulator.py`：至少填好 LLM 配置
+- 跑 Simulink：再额外补 `MATLAB_*` 相关字段
+
+第一次运行时如果没有 `config.json`，程序会自动生成一份默认配置；你也可以直接从 `config.example.json` 开始改。
 
 ### 运行仿真
 
 ```bash
 python simulator.py
+```
+
+如果你想用旧式纯日志输出，而不是 TUI：
+
+```bash
+python simulator.py --plain
 ```
 
 ### 连接真实硬件
