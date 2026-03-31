@@ -342,11 +342,13 @@ class TuiModeTests(unittest.TestCase):
         with patch.object(sys.stdin, "isatty", return_value=True):
             with patch.object(sys.stdout, "isatty", return_value=True):
                 with patch("simulator.importlib.import_module") as import_module:
-                    use_tui, message = simulator.determine_tui_mode(False, "model.slx")
+                    with patch.object(simulator, "_ensure_windows_vt_support") as ensure_vt:
+                        use_tui, message = simulator.determine_tui_mode(False, "model.slx")
 
         self.assertTrue(use_tui)
         self.assertIsNone(message)
         import_module.assert_called_once_with("sim.tui")
+        ensure_vt.assert_called_once_with()
 
     def test_missing_textual_falls_back_to_plain_mode(self):
         with patch.object(sys.stdin, "isatty", return_value=True):
@@ -364,11 +366,30 @@ class TuiModeTests(unittest.TestCase):
         with patch.object(sys.stdin, "isatty", return_value=True):
             with patch.object(sys.stdout, "isatty", return_value=True):
                 with patch("simulator.importlib.import_module") as import_module:
-                    use_tui, message = simulator.determine_tui_mode(False, "")
+                    with patch.object(simulator, "_ensure_windows_vt_support") as ensure_vt:
+                        use_tui, message = simulator.determine_tui_mode(False, "")
 
         self.assertTrue(use_tui)
         self.assertIsNone(message)
         import_module.assert_called_once_with("sim.tui")
+        ensure_vt.assert_called_once_with()
+
+    def test_windows_console_without_vt_falls_back_to_plain_mode(self):
+        with patch.object(sys.stdin, "isatty", return_value=True):
+            with patch.object(sys.stdout, "isatty", return_value=True):
+                with patch("simulator.importlib.import_module"):
+                    with patch.object(
+                        simulator,
+                        "_ensure_windows_vt_support",
+                        side_effect=RuntimeError(
+                            "The current Windows terminal does not support ANSI/VT updates for the TUI."
+                        ),
+                    ):
+                        use_tui, message = simulator.determine_tui_mode(False, "")
+
+        self.assertFalse(use_tui)
+        self.assertIn("ANSI/VT updates", message)
+        self.assertIn("Falling back to plain output", message)
 
     def test_plain_mode_uses_plain_runner(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
