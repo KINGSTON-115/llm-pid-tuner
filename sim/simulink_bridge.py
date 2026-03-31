@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from typing import Callable, Optional
@@ -63,6 +64,36 @@ def _register_dll_directory(path: str) -> None:
     _DLL_DIRECTORY_HANDLES.append(handle)
 
 
+def _purge_stale_matlab_modules(matlab_root: str) -> None:
+    root = matlab_root.strip()
+    if not root:
+        return
+
+    dist_dir = os.path.normcase(
+        os.path.abspath(os.path.join(root, "extern", "engines", "python", "dist"))
+    )
+    expected_prefix = dist_dir + os.sep
+    stale_modules: list[str] = []
+
+    for module_name, module in list(sys.modules.items()):
+        if module_name != "matlab" and not module_name.startswith("matlab."):
+            continue
+        module_file = getattr(module, "__file__", "")
+        if not module_file:
+            stale_modules.append(module_name)
+            continue
+        module_path = os.path.normcase(os.path.abspath(module_file))
+        if module_path == dist_dir or module_path.startswith(expected_prefix):
+            continue
+        stale_modules.append(module_name)
+
+    for module_name in stale_modules:
+        sys.modules.pop(module_name, None)
+
+    if stale_modules:
+        importlib.invalidate_caches()
+
+
 def _prepare_matlab_root(matlab_root: str) -> None:
     root = matlab_root.strip()
     if not root:
@@ -109,9 +140,10 @@ def _load_matlab_engine(matlab_root: str = ""):
         return _MATLAB_ENGINE
 
     _prepare_matlab_root(matlab_root)
+    _purge_stale_matlab_modules(matlab_root)
 
     try:
-        import matlab.engine as matlab_engine  # type: ignore
+        matlab_engine = importlib.import_module("matlab.engine")
     except Exception as exc:
         if matlab_root.strip():
             raise ImportError(
