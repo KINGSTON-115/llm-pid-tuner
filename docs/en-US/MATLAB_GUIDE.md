@@ -115,11 +115,12 @@ Add these fields alongside your existing LLM configuration:
 {
   "LLM_API_KEY": "your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
-  "LLM_MODEL_NAME": "gpt-4",
+  "LLM_MODEL_NAME": "gpt-4o",
   "LLM_PROVIDER": "openai",
 
   "MATLAB_MODEL_PATH"     : "C:/models/my_pid_model.slx",
   "MATLAB_PID_BLOCK_PATH" : "my_pid_model/PID Controller",
+  "MATLAB_ROOT"           : "C:/Program Files/MATLAB/R2022b",
   "MATLAB_OUTPUT_SIGNAL"  : "y_out",
   "MATLAB_SIM_STEP_TIME"  : 10.0,
   "MATLAB_SETPOINT"       : 200.0
@@ -130,11 +131,18 @@ Add these fields alongside your existing LLM configuration:
 | :--- | :--- | :--- |
 | `MATLAB_MODEL_PATH` | Full path to the `.slx` file | `C:/models/my_model.slx` |
 | `MATLAB_PID_BLOCK_PATH` | Full block path inside the model | `my_model/PID Controller` |
+| `MATLAB_ROOT` | MATLAB installation root directory | `C:/Program Files/MATLAB/R2022b` |
 | `MATLAB_OUTPUT_SIGNAL` | To Workspace variable name | `y_out` |
 | `MATLAB_SIM_STEP_TIME` | Simulation time per tuning round (sim seconds) | `10.0` |
 | `MATLAB_SETPOINT` | Target value — must match the Setpoint in your model | `200.0` |
 
 `MATLAB_PID_BLOCK_PATH` follows the format **model_name/block_name**. The model name is the `.slx` filename without the extension. If the PID block is inside a subsystem, write `my_model/Subsystem/PID Controller`.
+
+`MATLAB_ROOT` should point to the MATLAB install root, not the `extern/engines/python` subdirectory.
+
+- For the packaged `llm-pid-tuner.exe`, filling `MATLAB_ROOT` is recommended so the app can derive the MATLAB Engine runtime paths
+- For source runs, you can leave it empty if the current Python environment already imports `matlab.engine`
+- If source mode still fails with `No module named matlab.engine`, first verify Step 1, then add `MATLAB_ROOT`
 
 ---
 
