@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
+import io
 import os
 import sys
 from typing import Callable, Optional
@@ -12,6 +14,7 @@ from typing import Callable, Optional
 
 _MATLAB_ENGINE = None
 _DLL_DIRECTORY_HANDLES: list[object] = []
+_MATLAB_RUNTIME_DIAGNOSTICS: dict[str, object] = {}
 
 
 def _runtime_layout() -> tuple[str, str]:
@@ -53,15 +56,16 @@ def _prepend_unique_env_path(var_name: str, new_path: str) -> None:
     os.environ[var_name] = new_path
 
 
-def _register_dll_directory(path: str) -> None:
+def _register_dll_directory(path: str) -> str | None:
     add_dll_directory = getattr(os, "add_dll_directory", None)
     if not callable(add_dll_directory):
-        return
+        return "os.add_dll_directory is unavailable"
     try:
         handle = add_dll_directory(path)
-    except Exception:
-        return
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
     _DLL_DIRECTORY_HANDLES.append(handle)
+    return None
 
 
 def _purge_stale_matlab_modules(matlab_root: str) -> None:
@@ -95,6 +99,7 @@ def _purge_stale_matlab_modules(matlab_root: str) -> None:
 
 
 def _prepare_matlab_root(matlab_root: str) -> None:
+    global _MATLAB_RUNTIME_DIAGNOSTICS
     root = matlab_root.strip()
     if not root:
         return
@@ -108,6 +113,7 @@ def _prepare_matlab_root(matlab_root: str) -> None:
     runtime_dir = os.path.join(root_path, "runtime", arch)
     sys_os_dir = os.path.join(root_path, "sys", "os", arch)
     bin_root_dir = os.path.join(root_path, "bin")
+    matlab_package_dir = os.path.join(dist_dir, "matlab")
 
     required_paths = {
         "MATLAB_ROOT": root_path,
@@ -131,17 +137,67 @@ def _prepare_matlab_root(matlab_root: str) -> None:
     _prepend_unique_path(sys.path, dist_dir)
     _prepend_unique_path(sys.path, engine_dir)
     _prepend_unique_path(sys.path, extern_bin_dir)
-    for dll_dir in (
+    dll_search_dirs = (
+        dist_dir,
+        matlab_package_dir,
+        engine_dir,
         bin_root_dir,
         runtime_dir,
         sys_os_dir,
         bin_dir,
         extern_bin_dir,
-    ):
+    )
+    dll_registration_errors: list[str] = []
+    configured_dll_dirs: list[str] = []
+    for dll_dir in dll_search_dirs:
         if not os.path.exists(dll_dir):
             continue
         _prepend_unique_env_path(path_var, dll_dir)
-        _register_dll_directory(dll_dir)
+        configured_dll_dirs.append(dll_dir)
+        registration_error = _register_dll_directory(dll_dir)
+        if registration_error:
+            dll_registration_errors.append(f"{dll_dir} -> {registration_error}")
+
+    _MATLAB_RUNTIME_DIAGNOSTICS = {
+        "root": root_path,
+        "sys_path_entries": [extern_bin_dir, engine_dir, dist_dir],
+        "dll_search_dirs": configured_dll_dirs,
+        "dll_registration_errors": dll_registration_errors,
+        "path_variable": path_var,
+    }
+
+
+def _format_runtime_diagnostics() -> str:
+    if not _MATLAB_RUNTIME_DIAGNOSTICS:
+        return " Runtime preparation did not record diagnostics."
+
+    parts = []
+    sys_path_entries = _MATLAB_RUNTIME_DIAGNOSTICS.get("sys_path_entries", [])
+    dll_search_dirs = _MATLAB_RUNTIME_DIAGNOSTICS.get("dll_search_dirs", [])
+    registration_errors = _MATLAB_RUNTIME_DIAGNOSTICS.get(
+        "dll_registration_errors", []
+    )
+    path_variable = _MATLAB_RUNTIME_DIAGNOSTICS.get("path_variable", "")
+
+    if sys_path_entries:
+        parts.append(
+            " sys.path prepared: "
+            + ", ".join(str(path) for path in sys_path_entries)
+        )
+    if dll_search_dirs:
+        parts.append(
+            " DLL search dirs prepared: "
+            + ", ".join(str(path) for path in dll_search_dirs)
+        )
+    if path_variable:
+        parts.append(f" DLL env var: {path_variable}.")
+    if registration_errors:
+        parts.append(
+            " add_dll_directory failures: "
+            + "; ".join(str(item) for item in registration_errors)
+        )
+
+    return "".join(parts)
 
 
 def _load_matlab_engine(matlab_root: str = ""):
@@ -159,6 +215,7 @@ def _load_matlab_engine(matlab_root: str = ""):
             raise ImportError(
                 "[SimulinkBridge] Failed to initialize MATLAB Engine with the configured "
                 f"MATLAB_ROOT='{matlab_root.strip()}'."
+                + _format_runtime_diagnostics()
             ) from exc
         raise ImportError(
             "[SimulinkBridge] Failed to initialize MATLAB Engine. "
@@ -197,26 +254,47 @@ class SimulinkBridge:
         self._model_name = ""
         self._current_sim_time = 0.0
         self._last_data: list[dict] = []
+        self._warned_output_signal_fallback = False
 
     def connect(self) -> None:
         print("[Simulink] Starting MATLAB Engine, please wait...")
-        self._eng = self._matlab_engine.start_matlab()
+        try:
+            self._eng = self._with_suppressed_engine_output(
+                lambda: self._matlab_engine.start_matlab()
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "[SimulinkBridge] Failed to start MATLAB Engine. "
+                "Check whether MATLAB is properly installed and licensed."
+            ) from exc
 
         self._model_name = os.path.splitext(os.path.basename(self.model_path))[0]
         model_dir = os.path.dirname(os.path.abspath(self.model_path))
 
-        self._eng.addpath(model_dir, nargout=0)
-        self._eng.load_system(self.model_path, nargout=0)
+        try:
+            self._call_engine_method("addpath", model_dir, nargout=0)
+            self._call_engine_method("load_system", self.model_path, nargout=0)
+        except Exception as exc:
+            raise RuntimeError(
+                f"[SimulinkBridge] Failed to load Simulink model '{self.model_path}'. "
+                "Check MATLAB_MODEL_PATH and model dependencies."
+            ) from exc
         print(f"[Simulink] Loaded model: {self._model_name}")
         self._apply_model_setpoint()
 
-        self._eng.set_param(self._model_name, "SimulationMode", "normal", nargout=0)
+        self._call_engine_method(
+            "set_param",
+            self._model_name,
+            "SimulationMode",
+            "normal",
+            nargout=0,
+        )
         self._current_sim_time = 0.0
 
         try:
-            self.kp = float(self._eng.get_param(self.pid_block_path, "P", nargout=1))
-            self.ki = float(self._eng.get_param(self.pid_block_path, "I", nargout=1))
-            self.kd = float(self._eng.get_param(self.pid_block_path, "D", nargout=1))
+            self.kp = float(self._call_engine_method("get_param", self.pid_block_path, "P"))
+            self.ki = float(self._call_engine_method("get_param", self.pid_block_path, "I"))
+            self.kd = float(self._call_engine_method("get_param", self.pid_block_path, "D"))
             print(
                 f"[Simulink] Initial PID: P={self.kp}, I={self.ki}, D={self.kd}"
             )
@@ -244,15 +322,28 @@ class SimulinkBridge:
     def set_pid(self, p: float, i: float, d: float) -> None:
         self.kp, self.ki, self.kd = p, i, d
         if self._eng is not None:
-            self._eng.set_param(self.pid_block_path, "P", str(p), nargout=0)
-            self._eng.set_param(self.pid_block_path, "I", str(i), nargout=0)
-            self._eng.set_param(self.pid_block_path, "D", str(d), nargout=0)
+            for param_name, value in (("P", p), ("I", i), ("D", d)):
+                self._call_engine_method(
+                    "set_param",
+                    self.pid_block_path,
+                    param_name,
+                    str(value),
+                    nargout=0,
+                )
 
-    def _get_field_or_none(self, obj: object, field_name: str) -> Optional[object]:
-        try:
-            return self._eng.getfield(obj, field_name, nargout=1)  # type: ignore[union-attr]
-        except Exception:
-            return None
+    def _get_field_or_none(
+        self, obj: object, field_name: str, *, allow_get: bool = False
+    ) -> Optional[object]:
+        if allow_get:
+            # Prefer .get() for SimulationOutput-like containers because failed getfield()
+            # calls can print noisy MATLAB diagnostics directly to the console.
+            resolved = self._try_engine_method("get", obj, field_name)
+            if resolved is not None:
+                return resolved
+        return self._try_engine_method("getfield", obj, field_name)
+
+    def _is_timeseries_object(self, obj: object) -> bool:
+        return bool(self._try_engine_method("isa", obj, "timeseries"))
 
     def _to_string_list(self, raw_value: object) -> list[str]:
         if raw_value is None:
@@ -285,9 +376,42 @@ class SimulinkBridge:
                 except Exception:
                     pass
 
+    def _with_suppressed_engine_output(self, callback: Callable[[], object]):
+        if self._eng is None:
+            return callback()
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()):
+                return callback()
+
+    def _call_engine_method(
+        self, method_name: str, *args: object, nargout: int = 1, quiet: bool = True
+    ) -> object:
+        if self._eng is None:
+            raise RuntimeError(
+                "[SimulinkBridge] MATLAB Engine is not connected. Call connect() first."
+            )
+        method = getattr(self._eng, method_name)
+        if quiet:
+            return self._with_suppressed_engine_output(
+                lambda: method(*args, nargout=nargout)
+            )
+        return method(*args, nargout=nargout)
+
+    def _try_engine_method(
+        self, method_name: str, *args: object, nargout: int = 1, quiet: bool = True
+    ) -> Optional[object]:
+        try:
+            return self._call_engine_method(
+                method_name, *args, nargout=nargout, quiet=quiet
+            )
+        except Exception:
+            return None
+
     def _find_blocks_by_type(self, block_type: str) -> list[str]:
         def _call_find_system():
-            return self._eng.find_system(  # type: ignore[union-attr]
+            return self._call_engine_method(
+                "find_system",
                 self._model_name,
                 "LookUnderMasks",
                 "all",
@@ -296,9 +420,12 @@ class SimulinkBridge:
                 "BlockType",
                 block_type,
                 nargout=1,
+                quiet=False,
             )
 
-        raw_blocks = self._with_suppressed_engine_warnings(_call_find_system)
+        raw_blocks = self._with_suppressed_engine_output(
+            lambda: self._with_suppressed_engine_warnings(_call_find_system)
+        )
         return self._to_string_list(raw_blocks)
 
     def _resolve_setpoint_block(self) -> tuple[str | None, str | None]:
@@ -352,12 +479,19 @@ class SimulinkBridge:
             )
             return
 
-        self._eng.set_param(  # type: ignore[union-attr]
-            block_path,
-            parameter_name,
-            str(self.setpoint),
-            nargout=0,
-        )
+        try:
+            self._call_engine_method(
+                "set_param",
+                block_path,
+                parameter_name,
+                str(self.setpoint),
+                nargout=0,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"[SimulinkBridge] Failed to sync MATLAB_SETPOINT={self.setpoint} "
+                f"to block '{block_path}'."
+            ) from exc
         print(
             f"[Simulink] Synced setpoint {self.setpoint} to {block_path} "
             f"({parameter_name})."
@@ -390,30 +524,75 @@ class SimulinkBridge:
         return [self._to_float_scalar(item) for item in values]
 
     def _resolve_signal_container(self, sim_out: object) -> object:
-        direct_signal = self._get_field_or_none(sim_out, self.output_signal)
-        if direct_signal is not None:
-            return direct_signal
+        # Try several candidates: user-specified, then 'yout' as a fallback
+        candidates = [self.output_signal]
+        if self.output_signal != "yout":
+            candidates.append("yout")
 
-        out_container = self._get_field_or_none(sim_out, "out")
-        if out_container is not None:
-            nested_signal = self._get_field_or_none(out_container, self.output_signal)
-            if nested_signal is not None:
-                return nested_signal
+        for signal_name in candidates:
+            # 1. Direct signal (simOut.y_out or simOut.get('y_out'))
+            direct_signal = self._get_field_or_none(
+                sim_out, signal_name, allow_get=True
+            )
+            if direct_signal is not None:
+                if signal_name != self.output_signal:
+                    self._warn_output_signal_fallback(signal_name)
+                return direct_signal
 
-        raise RuntimeError(
-            f"[SimulinkBridge] Could not find signal '{self.output_signal}' in the "
-            "simulation output. Tried simOut.<signal> and simOut.out.<signal>."
+            # 2. Nested in 'out' (simOut.out.y_out)
+            out_container = self._get_field_or_none(sim_out, "out", allow_get=True)
+            if out_container is not None:
+                nested_signal = self._get_field_or_none(out_container, signal_name)
+                if nested_signal is not None:
+                    if signal_name != self.output_signal:
+                        self._warn_output_signal_fallback(signal_name)
+                    return nested_signal
+
+            # 3. In 'logsout' (simOut.logsout.get('y_out'))
+            logsout = self._get_field_or_none(sim_out, "logsout", allow_get=True)
+            if logsout is not None:
+                nested_signal = self._try_engine_method("get", logsout, signal_name)
+                if nested_signal is not None:
+                    if signal_name != self.output_signal:
+                        self._warn_output_signal_fallback(signal_name)
+                    return nested_signal
+
+        # If we reached here, we failed. Try to get available field names to help the user.
+        available_fields = []
+        try:
+            # SimulationOutput properties
+            field_names_raw = self._eng.fieldnames(sim_out, nargout=1)  # type: ignore[union-attr]
+            available_fields = self._to_string_list(field_names_raw)
+        except Exception:
+            pass
+
+        error_msg = (
+            f"[SimulinkBridge] Could not find signal '{self.output_signal}' in the simulation output. "
+            f"Tried simOut.<signal>, simOut.out.<signal>, simOut.logsout.<signal> etc."
+        )
+        if available_fields:
+            error_msg += f" Available fields in simOut: {', '.join(available_fields)}"
+
+        raise RuntimeError(error_msg)
+
+    def _warn_output_signal_fallback(self, resolved_signal: str) -> None:
+        if self._warned_output_signal_fallback:
+            return
+        self._warned_output_signal_fallback = True
+        print(
+            f"[Simulink][WARN] Configured MATLAB_OUTPUT_SIGNAL='{self.output_signal}', "
+            f"but simulation output used '{resolved_signal}'. Update your config or model to match."
         )
 
     def _resolve_time_vector(self, sim_out: object) -> list[float]:
         for candidate in ("tout", "time", "Time"):
-            raw_time = self._get_field_or_none(sim_out, candidate)
+            raw_time = self._get_field_or_none(sim_out, candidate, allow_get=True)
             if raw_time is not None:
                 values = self._to_float_series(raw_time)
                 if values:
                     return values
 
-        out_container = self._get_field_or_none(sim_out, "out")
+        out_container = self._get_field_or_none(sim_out, "out", allow_get=True)
         if out_container is not None:
             for candidate in ("tout", "time", "Time"):
                 raw_time = self._get_field_or_none(out_container, candidate)
@@ -430,16 +609,31 @@ class SimulinkBridge:
                 "[SimulinkBridge] MATLAB Engine is not connected. Call connect() first."
             )
 
-        self._eng.set_param(
-            self._model_name, "StopTime", str(self.sim_step_time), nargout=0
-        )
-        sim_out = self._eng.sim(self._model_name, nargout=1)
+        try:
+            self._call_engine_method(
+                "set_param",
+                self._model_name,
+                "StopTime",
+                str(self.sim_step_time),
+                nargout=0,
+            )
+            sim_out = self._call_engine_method("sim", self._model_name)
+        except Exception as exc:
+            raise RuntimeError(
+                f"[SimulinkBridge] MATLAB simulation failed while running '{self._model_name}'. "
+                "Check the model for compile/runtime errors in MATLAB."
+            ) from exc
 
         try:
             signal_container = self._resolve_signal_container(sim_out)
 
-            raw_time = self._get_field_or_none(signal_container, "Time")
-            raw_output = self._get_field_or_none(signal_container, "Data")
+            if self._is_timeseries_object(signal_container):
+                raw_time = self._get_field_or_none(signal_container, "Time")
+                raw_output = self._get_field_or_none(signal_container, "Data")
+            else:
+                raw_time = None
+                raw_output = None
+
             if raw_time is not None and raw_output is not None:
                 time_values = self._to_float_series(raw_time)
                 output_values = self._to_float_series(raw_output)
