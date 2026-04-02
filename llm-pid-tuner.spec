@@ -33,6 +33,10 @@ def add_optional_binary(binary_name: str, source_dir: Path, target_dir: str = ".
         binaries.append((str(candidate), target_dir))
 
 
+for binary_name in ("python3.dll",):
+    add_optional_binary(binary_name, PYTHON_PREFIX)
+    add_optional_binary(binary_name, PYTHON_PREFIX / "DLLs")
+
 for binary_name in ("libssl-3-x64.dll", "libcrypto-3-x64.dll"):
     add_optional_binary(binary_name, PYTHON_PREFIX / "Library" / "bin")
 

@@ -1,6 +1,6 @@
 import os
+import shutil
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -32,6 +32,16 @@ class _FakeEngine:
             return obj[field_name]
         raise KeyError(field_name)
 
+    def get(self, obj, field_name, nargout=1):
+        if isinstance(obj, dict) and field_name in obj:
+            return obj[field_name]
+        return None
+
+    def fieldnames(self, obj, nargout=1):
+        if isinstance(obj, dict):
+            return list(obj.keys())
+        return []
+
     def find_system(self, _model_name, *args, **kwargs):
         block_type = None
         for index in range(0, len(args), 2):
@@ -54,8 +64,36 @@ class _FakeEngine:
         self.eval_calls.append((expression, nargout))
         return None
 
+    def isa(self, obj, class_name, nargout=1):
+        if class_name == "timeseries" and isinstance(obj, dict):
+            return "Time" in obj and "Data" in obj
+        return False
+
 
 class SimulinkBridgeCompatTests(unittest.TestCase):
+    def _make_temp_matlab_root(self, folder_name: str) -> Path:
+        root = Path(__file__).resolve().parent.parent / "artifacts" / folder_name
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def _populate_matlab_root(self, matlab_root: Path, *, include_runtime_dirs: bool) -> None:
+        (matlab_root / "bin" / "win64").mkdir(parents=True)
+        (matlab_root / "extern" / "bin" / "win64").mkdir(parents=True)
+        (
+            matlab_root
+            / "extern"
+            / "engines"
+            / "python"
+            / "dist"
+            / "matlab"
+            / "engine"
+            / "win64"
+        ).mkdir(parents=True)
+        if include_runtime_dirs:
+            (matlab_root / "runtime" / "win64").mkdir(parents=True)
+            (matlab_root / "sys" / "os" / "win64").mkdir(parents=True)
+
     def _make_bridge(self, sim_output):
         fake_engine_module = type(
             "_FakeMatlabEngineModule",
@@ -127,6 +165,52 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         self.assertEqual(bridge.get_data()[0]["input"], 80.0)
         self.assertEqual(bridge.get_data()[1]["input"], 90.0)
 
+    def test_run_step_reads_from_logsout(self):
+        sim_output = {
+            "logsout": {
+                "y_out": {
+                    "Time": [[0.0], [1.0]],
+                    "Data": [[200.0], [210.0]],
+                }
+            }
+        }
+        bridge = self._make_bridge(sim_output)
+
+        bridge.run_step()
+
+        self.assertEqual(len(bridge.get_data()), 2)
+        self.assertEqual(bridge.get_data()[0]["input"], 200.0)
+        self.assertEqual(bridge.get_data()[1]["input"], 210.0)
+
+    def test_run_step_reads_from_yout_fallback(self):
+        # Case: user configured y_out but model outputs yout
+        sim_output = {
+            "yout": [[10.0], [15.0]]
+        }
+        bridge = self._make_bridge(sim_output)
+        bridge.output_signal = "y_out"
+
+        with patch("builtins.print") as print_mock:
+            bridge.run_step()
+
+        self.assertEqual(len(bridge.get_data()), 2)
+        self.assertEqual(bridge.get_data()[0]["input"], 10.0)
+        self.assertEqual(bridge.get_data()[1]["input"], 15.0)
+        print_mock.assert_any_call(
+            "[Simulink][WARN] Configured MATLAB_OUTPUT_SIGNAL='y_out', "
+            "but simulation output used 'yout'. Update your config or model to match."
+        )
+
+    def test_run_step_fails_with_available_fields_in_error(self):
+        sim_output = {
+            "mismatched_signal": [1, 2, 3]
+        }
+        bridge = self._make_bridge(sim_output)
+        bridge.output_signal = "y_out"
+
+        with self.assertRaisesRegex(RuntimeError, "Available fields in simOut: mismatched_signal"):
+            bridge.run_step()
+
     def test_apply_model_setpoint_updates_step_block(self):
         bridge = self._make_bridge({})
         bridge.setpoint = 300.0
@@ -174,15 +258,25 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         original_path = os.environ.get("PATH")
         original_mwe_install = os.environ.get("MWE_INSTALL")
         original_matlab_root = os.environ.get("MATLAB_ROOT")
+        temp_root = None
 
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                matlab_root = Path(temp_dir) / "MATLAB" / "R2022b"
-                (matlab_root / "bin" / "win64").mkdir(parents=True)
-                (matlab_root / "runtime" / "win64").mkdir(parents=True)
-                (matlab_root / "sys" / "os" / "win64").mkdir(parents=True)
-                (matlab_root / "extern" / "bin" / "win64").mkdir(parents=True)
-                (
+            temp_root = self._make_temp_matlab_root("test_prepare_matlab_root")
+            matlab_root = temp_root / "MATLAB" / "R2022b"
+            self._populate_matlab_root(matlab_root, include_runtime_dirs=True)
+
+            with patch("sim.simulink_bridge.os.add_dll_directory", Mock(), create=True):
+                _prepare_matlab_root(str(matlab_root))
+
+            self.assertEqual(os.environ.get("MWE_INSTALL"), str(matlab_root))
+            self.assertEqual(os.environ.get("MATLAB_ROOT"), str(matlab_root))
+            self.assertEqual(
+                sys.path[0],
+                str(matlab_root / "extern" / "bin" / "win64"),
+            )
+            self.assertEqual(
+                sys.path[1],
+                str(
                     matlab_root
                     / "extern"
                     / "engines"
@@ -191,45 +285,46 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
                     / "matlab"
                     / "engine"
                     / "win64"
-                ).mkdir(parents=True)
-
-                with patch("sim.simulink_bridge.os.add_dll_directory", Mock(), create=True):
-                    _prepare_matlab_root(str(matlab_root))
-
-                self.assertEqual(os.environ.get("MWE_INSTALL"), str(matlab_root))
-                self.assertEqual(os.environ.get("MATLAB_ROOT"), str(matlab_root))
-                self.assertEqual(
-                    sys.path[0],
-                    str(matlab_root / "extern" / "bin" / "win64"),
-                )
-                self.assertEqual(
-                    sys.path[1],
-                    str(
-                        matlab_root
-                        / "extern"
-                        / "engines"
-                        / "python"
-                        / "dist"
-                        / "matlab"
-                        / "engine"
-                        / "win64"
-                    ),
-                )
-                self.assertEqual(
-                    sys.path[2],
-                    str(matlab_root / "extern" / "engines" / "python" / "dist"),
-                )
-                matlab_paths = [
-                    path
-                    for path in os.environ.get("PATH", "").split(os.pathsep)
-                    if path
-                ]
-                self.assertEqual(matlab_paths[0], str(matlab_root / "extern" / "bin" / "win64"))
-                self.assertIn(str(matlab_root / "bin" / "win64"), matlab_paths)
-                self.assertIn(str(matlab_root / "runtime" / "win64"), matlab_paths)
-                self.assertIn(str(matlab_root / "sys" / "os" / "win64"), matlab_paths)
-                self.assertIn(str(matlab_root / "bin"), matlab_paths)
+                ),
+            )
+            self.assertEqual(
+                sys.path[2],
+                str(matlab_root / "extern" / "engines" / "python" / "dist"),
+            )
+            matlab_paths = [
+                path
+                for path in os.environ.get("PATH", "").split(os.pathsep)
+                if path
+            ]
+            self.assertEqual(matlab_paths[0], str(matlab_root / "extern" / "bin" / "win64"))
+            self.assertIn(
+                str(matlab_root / "extern" / "engines" / "python" / "dist"),
+                matlab_paths,
+            )
+            self.assertIn(
+                str(matlab_root / "extern" / "engines" / "python" / "dist" / "matlab"),
+                matlab_paths,
+            )
+            self.assertIn(
+                str(
+                    matlab_root
+                    / "extern"
+                    / "engines"
+                    / "python"
+                    / "dist"
+                    / "matlab"
+                    / "engine"
+                    / "win64"
+                ),
+                matlab_paths,
+            )
+            self.assertIn(str(matlab_root / "bin" / "win64"), matlab_paths)
+            self.assertIn(str(matlab_root / "runtime" / "win64"), matlab_paths)
+            self.assertIn(str(matlab_root / "sys" / "os" / "win64"), matlab_paths)
+            self.assertIn(str(matlab_root / "bin"), matlab_paths)
         finally:
+            if temp_root is not None:
+                shutil.rmtree(temp_root, ignore_errors=True)
             sys.path[:] = original_sys_path
             if original_path is None:
                 os.environ.pop("PATH", None)
@@ -255,6 +350,7 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
             for name, module in sys.modules.items()
             if name == "matlab" or name.startswith("matlab.")
         }
+        temp_root = None
 
         try:
             stale_matlab = ModuleType("matlab")
@@ -264,41 +360,32 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
             sys.modules["matlab"] = stale_matlab
             sys.modules["matlab.engine"] = stale_engine
 
-            with tempfile.TemporaryDirectory() as temp_dir:
-                matlab_root = Path(temp_dir) / "MATLAB" / "R2024b"
-                (matlab_root / "bin" / "win64").mkdir(parents=True)
-                (matlab_root / "extern" / "bin" / "win64").mkdir(parents=True)
-                (
-                    matlab_root
-                    / "extern"
-                    / "engines"
-                    / "python"
-                    / "dist"
-                    / "matlab"
-                    / "engine"
-                    / "win64"
-                ).mkdir(parents=True)
+            temp_root = self._make_temp_matlab_root("test_load_matlab_engine")
+            matlab_root = temp_root / "MATLAB" / "R2024b"
+            self._populate_matlab_root(matlab_root, include_runtime_dirs=False)
 
-                imported_engine = ModuleType("matlab.engine")
+            imported_engine = ModuleType("matlab.engine")
 
-                def fake_import(module_name: str):
-                    self.assertEqual(module_name, "matlab.engine")
-                    self.assertNotIn("matlab", sys.modules)
-                    self.assertNotIn("matlab.engine", sys.modules)
-                    return imported_engine
+            def fake_import(module_name: str):
+                self.assertEqual(module_name, "matlab.engine")
+                self.assertNotIn("matlab", sys.modules)
+                self.assertNotIn("matlab.engine", sys.modules)
+                return imported_engine
 
-                with patch("sim.simulink_bridge.os.add_dll_directory", Mock(), create=True):
-                    with patch(
-                        "sim.simulink_bridge.importlib.import_module",
-                        side_effect=fake_import,
-                    ) as import_module:
-                        simulink_bridge._MATLAB_ENGINE = None
-                        loaded = simulink_bridge._load_matlab_engine(str(matlab_root))
+            with patch("sim.simulink_bridge.os.add_dll_directory", Mock(), create=True):
+                with patch(
+                    "sim.simulink_bridge.importlib.import_module",
+                    side_effect=fake_import,
+                ) as import_module:
+                    simulink_bridge._MATLAB_ENGINE = None
+                    loaded = simulink_bridge._load_matlab_engine(str(matlab_root))
 
-                self.assertIs(loaded, imported_engine)
-                self.assertIs(simulink_bridge._MATLAB_ENGINE, imported_engine)
-                import_module.assert_called_once_with("matlab.engine")
+            self.assertIs(loaded, imported_engine)
+            self.assertIs(simulink_bridge._MATLAB_ENGINE, imported_engine)
+            import_module.assert_called_once_with("matlab.engine")
         finally:
+            if temp_root is not None:
+                shutil.rmtree(temp_root, ignore_errors=True)
             simulink_bridge._MATLAB_ENGINE = original_engine
             for module_name in list(sys.modules):
                 if module_name == "matlab" or module_name.startswith("matlab."):
