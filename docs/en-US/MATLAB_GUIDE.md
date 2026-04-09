@@ -359,7 +359,12 @@ Do not fill every advanced field on day one. The stable pattern is:
 llm-pid-tuner.exe
 ```
 
-Choose "Simulink simulation tuning" from the menu. The tool starts the MATLAB Engine, loads the model, and begins tuning automatically. When tuning finishes, press Enter to exit. The final parameters are saved back to the `.slx` file.
+Choose "Simulink simulation tuning" from the menu. The tool will:
+1. **Run environment diagnostics**: Automatically use `doctor.py` logic to check if MATLAB Engine is available and config fields are complete.
+2. **Pre-Tuning Dialog** (interactive mode): Prompt you for natural language tuning preferences (e.g., "no overshoot allowed").
+3. **Start tuning**: Launch MATLAB Engine, load the model, and begin tuning. 
+
+When tuning finishes, press Enter to exit. The final parameters are saved back to the `.slx` file.
 
 ### Option B: call `simulator.py` directly
 
@@ -368,6 +373,10 @@ python simulator.py
 ```
 
 When `MATLAB_MODEL_PATH` is set, `simulator.py` switches into Simulink mode automatically. No extra flags are required.
+If you want to explicitly force the interface language (e.g., Chinese), use the `--lang` flag:
+```bash
+python simulator.py --lang zh
+```
 
 ---
 
