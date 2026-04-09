@@ -2,28 +2,6 @@
 
 This guide explains how to use llm-pid-tuner to tune PID parameters on a MATLAB/Simulink simulation model with LLM assistance.
 
-If you plan to run from source, adapt the model integration yourself, or do targeted development work, use the `dev` branch instead of `main`.
-
----
-
-## Quick Start (download the exe, no Python required)
-
-If you don't want to set up a Python environment, just download the pre-built exe:
-
-1. Download the latest `llm-pid-tuner.exe` from the Releases page
-2. Place `llm-pid-tuner.exe` and `config.json` in the same folder
-3. Edit `config.json` — fill in your LLM API key and Simulink settings (see Step 3 below)
-4. Double-click `llm-pid-tuner.exe`, or run it from a terminal:
-   ```
-   llm-pid-tuner.exe
-   ```
-5. Select "Simulink simulation tuning" from the menu — the tool starts MATLAB automatically and begins tuning
-6. Press Enter to exit when tuning completes; results are saved back to the `.slx` file automatically
-
-> **Prerequisite:** MATLAB must be installed and licensed on your machine. The exe bundles the MATLAB Engine connector but still requires a local MATLAB installation.
-
----
-
 ## Quick Start (download the exe, no Python required)
 
 If you don't want to set up a Python environment, just download the pre-built exe:
@@ -78,9 +56,9 @@ cd <MATLAB_ROOT>/extern/engines/python
 python setup.py install
 ```
 
-Example path on Windows (replace with your MATLAB version):
+Example path on Windows (replace with the MATLAB version installed on your machine):
 ```
-D:\Program Files\MATLAB\R2022b\extern\engines\python
+D:\Program Files\MATLAB\R2025b\extern\engines\python
 ```
 
 Verify the install:
@@ -140,7 +118,7 @@ Add these fields alongside your existing LLM configuration:
 
   "MATLAB_MODEL_PATH"     : "C:/models/my_pid_model.slx",
   "MATLAB_PID_BLOCK_PATH" : "my_pid_model/PID Controller",
-  "MATLAB_ROOT"           : "C:/Program Files/MATLAB/R2022b",
+  "MATLAB_ROOT"           : "D:/Program Files/MATLAB/R2025b",
   "MATLAB_OUTPUT_SIGNAL"  : "y_out",
   "MATLAB_SIM_STEP_TIME"  : 10.0,
   "MATLAB_SETPOINT"       : 200.0
@@ -151,7 +129,7 @@ Add these fields alongside your existing LLM configuration:
 | :--- | :--- | :--- |
 | `MATLAB_MODEL_PATH` | Full path to the `.slx` file | `C:/models/my_model.slx` |
 | `MATLAB_PID_BLOCK_PATH` | Full block path inside the model | `my_model/PID Controller` |
-| `MATLAB_ROOT` | MATLAB installation root directory | `C:/Program Files/MATLAB/R2022b` |
+| `MATLAB_ROOT` | MATLAB installation root directory | `D:/Program Files/MATLAB/R2025b` |
 | `MATLAB_OUTPUT_SIGNAL` | To Workspace variable name | `y_out` |
 | `MATLAB_SIM_STEP_TIME` | Simulation time per tuning round (sim seconds) | `10.0` |
 | `MATLAB_SETPOINT` | Target value — must match the Setpoint in your model | `200.0` |
