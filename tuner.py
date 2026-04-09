@@ -145,6 +145,8 @@ def _run_hardware_tuning_loop(
         stream_callback=llm_stream_callback,
         log_callback=llm_log_callback,
         emit_console=emit_console,
+        timeout=CONFIG.get("LLM_REQUEST_TIMEOUT", 60.0),
+        debug_output=CONFIG.get("LLM_DEBUG_OUTPUT", False),
     )
 
     _emit_lifecycle(

@@ -112,6 +112,7 @@ class ProviderResolutionTests(unittest.TestCase):
         self.assertEqual(type(tuner.client).__name__, "FakeOpenAI")
 
     def test_native_anthropic_provider_routes_to_messages_api(self):
+        from llm.providers import HTTPFallbackProvider
         tuner = LLMTuner(
             "test-key",
             "https://api.anthropic.com",
@@ -119,11 +120,17 @@ class ProviderResolutionTests(unittest.TestCase):
             "anthropic"
         )
         fake_requests  = FakeRequests({"content": [{"text": "ok"}]})
-        tuner.requests = fake_requests  # type: ignore[assignment]
-        content        = tuner._request_via_http(
-            [{"role": "user", "content": "hello"}],
-            [{"role": "user", "content": "hello"}],
+        provider = HTTPFallbackProvider(
+            "test-key", "https://api.anthropic.com", "claude-3-5-sonnet", 60.0, True, requests_module=fake_requests
         )
+        chunks = []
+        provider.execute_request(
+            [{"role": "user", "content": "hello"}],
+            [{"role": "user", "content": "hello"}],
+            system_prompt="",
+            on_chunk=chunks.append,
+        )
+        content = "".join(chunks)
 
         self.assertEqual(tuner.provider, "anthropic")
         self.assertEqual(content, "ok")
@@ -134,6 +141,7 @@ class ProviderResolutionTests(unittest.TestCase):
         self.assertTrue(fake_requests.calls[0]["stream"], "HTTP 请求应使用 stream=True")
 
     def test_claude_openai_transport_uses_chat_completions_endpoint(self):
+        from llm.providers import HTTPFallbackProvider
         tuner = LLMTuner(
             "test-key",
             "https://relay.example.com/v1",
@@ -143,12 +151,18 @@ class ProviderResolutionTests(unittest.TestCase):
         fake_requests  = FakeRequests(
             {"choices": [{"message": {"content": '{"status":"DONE"}'}}]}
         )
-        tuner.requests = fake_requests  # type: ignore[assignment]
-
-        content = tuner._request_via_http(
-            [{"role": "user", "content": "hello"}],
-            [{"role": "user", "content": "hello"}],
+        provider = HTTPFallbackProvider(
+            "test-key", "https://relay.example.com/v1", "claude-3-5-sonnet", 60.0, False, requests_module=fake_requests
         )
+
+        chunks = []
+        provider.execute_request(
+            [{"role": "user", "content": "hello"}],
+            [{"role": "user", "content": "hello"}],
+            system_prompt="",
+            on_chunk=chunks.append,
+        )
+        content = "".join(chunks)
 
         self.assertEqual(content, '{"status":"DONE"}')
         self.assertEqual(
@@ -157,7 +171,7 @@ class ProviderResolutionTests(unittest.TestCase):
         )
         self.assertEqual(
             fake_requests.calls[0]["headers"].get("Authorization"),
-            "Bearer test-key"
+            "Bearer test-key",
         )
         self.assertTrue(fake_requests.calls[0]["stream"], "HTTP 请求应使用 stream=True")
 

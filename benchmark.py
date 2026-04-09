@@ -51,6 +51,10 @@ def create_llm_tuner() -> LLMTuner:
         CONFIG["LLM_API_BASE_URL"],
         CONFIG["LLM_MODEL_NAME"],
         CONFIG["LLM_PROVIDER"],
+        stream_callback=lambda _chunk, _done: None,
+        emit_console=False,
+        timeout=CONFIG.get("LLM_REQUEST_TIMEOUT", 60.0),
+        debug_output=CONFIG.get("LLM_DEBUG_OUTPUT", False),
     )
 
 

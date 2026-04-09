@@ -316,6 +316,8 @@ def _run_tuning_loop(
             if controller is not None
             else None
         ),
+        timeout=CONFIG.get("LLM_REQUEST_TIMEOUT", 60.0),
+        debug_output=CONFIG.get("LLM_DEBUG_OUTPUT", False),
     )
     session = create_tuning_session(
         initial_pid={"p": sim.kp, "i": sim.ki, "d": sim.kd}, setpoint=setpoint

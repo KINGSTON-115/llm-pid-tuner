@@ -182,11 +182,15 @@ def _build_prompt_context_from_result(
 
 def _summarize_user_request(language: str, user_text: str) -> dict[str, Any] | None:
     tuner = LLMTuner(
-        CONFIG["LLM_API_KEY"],
-        CONFIG["LLM_API_BASE_URL"],
-        CONFIG["LLM_MODEL_NAME"],
-        CONFIG["LLM_PROVIDER"],
+        api_key=CONFIG["LLM_API_KEY"],
+        base_url=CONFIG["LLM_API_BASE_URL"],
+        model=CONFIG["LLM_MODEL_NAME"],
+        provider=CONFIG["LLM_PROVIDER"],
+        stream_callback=None,
+        log_callback=None,
         emit_console=False,
+        timeout=CONFIG.get("LLM_REQUEST_TIMEOUT", 60),
+        debug_output=CONFIG.get("LLM_DEBUG_OUTPUT", False),
     )
     return tuner.request_json(
         system_prompt=get_pre_tuning_dialog_system_prompt(language),

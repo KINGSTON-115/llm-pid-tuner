@@ -202,8 +202,11 @@ class LLMFallbackTests(unittest.TestCase):
             def post(self, *args, **kwargs):
                 return FakeResponse()
 
+        from llm.providers import HTTPFallbackProvider
         tuner = self._make_tuner_without_sdk("openai")
-        tuner.requests = FakeRequests()  # type: ignore[assignment]
+        tuner.llm_client = HTTPFallbackProvider(
+            tuner.api_key, tuner.base_url, tuner.model, tuner.timeout, is_anthropic=False, requests_module=FakeRequests()
+        )
         tuner.stream_callback = lambda _text, done: done_updates.append(done)
 
         result = tuner._execute_request(
@@ -239,13 +242,15 @@ class LLMFallbackTests(unittest.TestCase):
         ]
 
         tuner = self._make_tuner_without_sdk("openai")
+        from llm.providers import OpenAISDKProvider
+        tuner.llm_client = OpenAISDKProvider(tuner.api_key, tuner.base_url, tuner.model, tuner.timeout)
         tuner.use_sdk = True
         tuner.client = types.SimpleNamespace(
             chat=types.SimpleNamespace(
                 completions=types.SimpleNamespace(create=lambda **kwargs: iter(chunks))
             )
         )
-        tuner._request_via_http = lambda *args, **kwargs: self.fail("unexpected HTTP fallback")  # type: ignore[method-assign]
+        tuner.llm_client.client = tuner.client
 
         result = tuner._execute_request(
             [{"role": "user", "content": "hello"}],
@@ -269,6 +274,8 @@ class LLMFallbackTests(unittest.TestCase):
                 self.choices = [FakeChoice(message=FakeMessage(content))]
 
         tuner = self._make_tuner_without_sdk("openai")
+        from llm.providers import OpenAISDKProvider
+        tuner.llm_client = OpenAISDKProvider(tuner.api_key, tuner.base_url, tuner.model, tuner.timeout)
         tuner.use_sdk = True
         tuner.client = types.SimpleNamespace(
             chat=types.SimpleNamespace(
@@ -277,7 +284,7 @@ class LLMFallbackTests(unittest.TestCase):
                 )
             )
         )
-        tuner._request_via_http = lambda *args, **kwargs: self.fail("unexpected HTTP fallback")  # type: ignore[method-assign]
+        tuner.llm_client.client = tuner.client
 
         result = tuner._execute_request(
             [{"role": "user", "content": "hello"}],

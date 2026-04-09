@@ -11,10 +11,10 @@ import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional
 
-from core.config import CONFIG
 from llm.prompts import SYSTEM_PROMPT, build_user_prompt, get_system_prompt
 from llm.response_parser import parse_json_response
 from llm.stream_formatter import JSONStreamFormatter
+from llm.providers import BaseLLMProvider, OpenAISDKProvider, AnthropicSDKProvider, HTTPFallbackProvider
 
 
 class LLMTuner:
@@ -28,40 +28,46 @@ class LLMTuner:
         log_callback: Optional[Callable[[str, str], None]] = None,
         emit_console: bool = True,
         abort_check: Optional[Callable[[], bool]] = None,
+        timeout: float = 60.0,
+        debug_output: bool = False,
     ):
         self.api_key = api_key
         self.base_url = (base_url or "").rstrip("/")
         self.model = model
         self.provider_choice = self._normalize_provider_choice(provider)
         self.provider = self._resolve_transport()
-        self.timeout = CONFIG.get("LLM_REQUEST_TIMEOUT", 60)
-        self.debug_output = CONFIG.get("LLM_DEBUG_OUTPUT", False)
+        self.timeout = timeout
+        self.debug_output = debug_output
         self.emit_console = emit_console
         self.stream_callback = stream_callback
         self.log_callback = log_callback
         self.abort_check = abort_check
-        self.use_sdk = False
-        self.client = None
 
+        self.llm_client: BaseLLMProvider = self._initialize_provider()
+        # For backward compatibility in tests
+        self.use_sdk = isinstance(self.llm_client, (OpenAISDKProvider, AnthropicSDKProvider))
+        self.client = getattr(self.llm_client, "client", None)
+        self.requests = getattr(self.llm_client, "requests", None)
+
+    def _initialize_provider(self) -> BaseLLMProvider:
         try:
             if self.provider == "openai":
-                import openai
-
-                self.client = openai.OpenAI(api_key=api_key, base_url=self.base_url)
+                return OpenAISDKProvider(self.api_key, self.base_url, self.model, self.timeout)
             elif self.provider == "anthropic":
-                import anthropic
-
-                self.client = anthropic.Anthropic(
-                    api_key=api_key, base_url=self.base_url
-                )
+                return AnthropicSDKProvider(self.api_key, self.base_url, self.model, self.timeout)
         except ImportError:
-            self.requests = self._import_requests()
+            pass
         except Exception:
             if self.debug_output:
                 traceback.print_exc()
-            self.requests = self._import_requests()
-        else:
-            self.use_sdk = True
+                
+        return HTTPFallbackProvider(
+            self.api_key, 
+            self.base_url, 
+            self.model, 
+            self.timeout, 
+            is_anthropic=(self.provider == "anthropic")
+        )
 
     @staticmethod
     def _normalize_provider_choice(provider: Optional[str]) -> str:
@@ -86,15 +92,6 @@ class LLMTuner:
         if self.provider_choice == "auto" and "api.anthropic.com" in base_url_lower:
             return "anthropic"
         return "openai"
-
-    def _import_requests(self):
-        import requests
-
-        return requests
-
-    def _ensure_requests(self) -> None:
-        if not hasattr(self, "requests") or self.requests is None:
-            self.requests = self._import_requests()
 
     def _interruptible_sleep(self, seconds: float) -> bool:
         """Poll `abort_check` every 0.1s while sleeping."""
@@ -122,38 +119,6 @@ class LLMTuner:
             formatter.process(full_content)
         if self.stream_callback is not None:
             self.stream_callback(full_content, done)
-
-    def _extract_openai_sdk_chunk_content(
-        self,
-        chunk: Any,
-        accumulated_content: str,
-    ) -> str:
-        choices = getattr(chunk, "choices", None) or []
-        if not choices:
-            return ""
-
-        choice = choices[0]
-        delta = getattr(choice, "delta", None)
-        if delta is not None:
-            delta_content = getattr(delta, "content", None)
-            if isinstance(delta_content, str) and delta_content:
-                return delta_content
-
-        message = getattr(choice, "message", None)
-        if message is None:
-            return ""
-
-        message_content = getattr(message, "content", None)
-        if not isinstance(message_content, str) or not message_content:
-            return ""
-
-        if not accumulated_content:
-            return message_content
-
-        if message_content.startswith(accumulated_content):
-            return message_content[len(accumulated_content) :]
-
-        return ""
 
     def _call_with_retry(
         self, func: Callable[..., str], *args: Any, **kwargs: Any
@@ -189,104 +154,6 @@ class LLMTuner:
             raise last_exception
         return ""
 
-    def _request_via_http(
-        self,
-        openai_msgs: List[Dict[str, Any]],
-        anthropic_msgs: List[Dict[str, Any]],
-        system_prompt: str = SYSTEM_PROMPT,
-    ) -> str:
-        self._ensure_requests()
-        full_content = ""
-        formatter = JSONStreamFormatter() if self.emit_console else None
-
-        if self.provider == "anthropic":
-            headers = {
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": self.model,
-                "system": system_prompt,
-                "messages": anthropic_msgs,
-                "temperature": 0.3,
-                "max_tokens": 1000,
-                "stream": True,
-            }
-            base_url = self.base_url.rstrip("/")
-            if not base_url.endswith("/v1"):
-                base_url = f"{base_url}/v1"
-            with self.requests.post(
-                f"{base_url}/messages",
-                headers=headers,
-                json=payload,
-                timeout=self.timeout,
-                stream=True,
-            ) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    line_str = line.decode("utf-8")
-                    if not line_str.startswith("data: "):
-                        continue
-                    data_str = line_str[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-                    if data.get("type") == "content_block_delta" and "delta" in data:
-                        chunk = data["delta"].get("text", "")
-                        if chunk:
-                            full_content += chunk
-                            self._emit_stream_update(full_content, formatter=formatter)
-                            if self.abort_check and self.abort_check():
-                                break
-        else:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": self.model,
-                "messages": openai_msgs,
-                "temperature": 0.3,
-                "stream": True,
-            }
-            with self.requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=self.timeout,
-                stream=True,
-            ) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    line_str = line.decode("utf-8")
-                    if not line_str.startswith("data: "):
-                        continue
-                    data_str = line_str[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = data.get("choices", [])
-                    if choices and "delta" in choices[0]:
-                        chunk = choices[0]["delta"].get("content", "")
-                        if chunk:
-                            full_content += chunk
-                            self._emit_stream_update(full_content, formatter=formatter)
-                            if self.abort_check and self.abort_check():
-                                break
-
-        return full_content
-
     def _execute_request(
         self,
         openai_msgs: List[Dict[str, Any]],
@@ -294,62 +161,53 @@ class LLMTuner:
         system_prompt: str = SYSTEM_PROMPT,
     ) -> str:
         self._emit_log("llm", "  LLM is thinking...")
-        full_content = ""
+        full_content = []
         formatter = JSONStreamFormatter() if self.emit_console else None
 
-        if self.use_sdk:
-            try:
-                if self.provider == "openai":
-                    resp = self.client.chat.completions.create(  # type: ignore
-                        model=self.model,
-                        messages=openai_msgs,
-                        temperature=0.3,
-                        stream=True,
-                    )
-                    for chunk in resp:
-                        content_chunk = self._extract_openai_sdk_chunk_content(
-                            chunk,
-                            full_content,
-                        )
-                        if content_chunk:
-                            full_content += content_chunk
-                            self._emit_stream_update(full_content, formatter=formatter)
-                            if self.abort_check and self.abort_check():
-                                break
-                elif self.provider == "anthropic":
-                    with self.client.messages.stream(  # type: ignore
-                        model=self.model,
-                        system=system_prompt,
-                        messages=anthropic_msgs,
-                        temperature=0.3,
-                        max_tokens=1000,
-                    ) as stream:
-                        for text in stream.text_stream:
-                            if text:
-                                full_content += text
-                                self._emit_stream_update(
-                                    full_content, formatter=formatter
-                                )
-                                if self.abort_check and self.abort_check():
-                                    break
-            except Exception as sdk_error:
+        def on_chunk(chunk: str) -> None:
+            full_content.append(chunk)
+            self._emit_stream_update("".join(full_content), formatter=formatter)
+
+        try:
+            self.llm_client.execute_request(
+                openai_msgs=openai_msgs,
+                anthropic_msgs=anthropic_msgs,
+                system_prompt=system_prompt,
+                on_chunk=on_chunk,
+                abort_check=self.abort_check,
+            )
+        except Exception as sdk_error:
+            if self.use_sdk:
                 self._emit_log(
                     "warn",
                     f"\n[WARN] SDK request failed, falling back to HTTP: {sdk_error}",
                 )
-                full_content = self._request_via_http(
-                    openai_msgs, anthropic_msgs, system_prompt=system_prompt
+                self.llm_client = HTTPFallbackProvider(
+                    self.api_key,
+                    self.base_url,
+                    self.model,
+                    self.timeout,
+                    is_anthropic=(self.provider == "anthropic"),
                 )
-        else:
-            full_content = self._request_via_http(
-                openai_msgs, anthropic_msgs, system_prompt=system_prompt
-            )
+                self.use_sdk = False
+                self.requests = self.llm_client.requests
+                full_content.clear()
+                self.llm_client.execute_request(
+                    openai_msgs=openai_msgs,
+                    anthropic_msgs=anthropic_msgs,
+                    system_prompt=system_prompt,
+                    on_chunk=on_chunk,
+                    abort_check=self.abort_check,
+                )
+            else:
+                raise
 
-        if full_content:
-            self._emit_stream_update(full_content, done=True)
+        final_text = "".join(full_content)
+        if final_text:
+            self._emit_stream_update(final_text, done=True)
         if self.emit_console:
             print()
-        return full_content
+        return final_text
 
     def request_json(
         self,
