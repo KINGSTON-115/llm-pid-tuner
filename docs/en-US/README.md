@@ -169,12 +169,18 @@ If you prefer starting from a template, check `config.example.json`.
 {
   "MATLAB_MODEL_PATH": "C:/models/my_pid_model.slx",
   "MATLAB_PID_BLOCK_PATH": "my_pid_model/PID Controller",
-  "MATLAB_ROOT": "C:/Program Files/MATLAB/R2022b",
+  "MATLAB_ROOT": "D:/Program Files/MATLAB/R2025b",
   "MATLAB_OUTPUT_SIGNAL": "y_out",
   "MATLAB_SIM_STEP_TIME": 15.0,
   "MATLAB_SETPOINT": 200.0
 }
 ```
+
+Those six fields are the **minimum usable Simulink setup** on the current stable `main` branch.
+
+- If your goal is just to get the first run working, start with only those six
+- The MATLAB version in `MATLAB_ROOT` is only an example; replace it with the version installed on your machine
+- If you already know the exact controller block path, prefer the explicit `MATLAB_PID_BLOCK_PATH`
 
 ### Config groups by use case
 
@@ -188,7 +194,7 @@ If you prefer starting from a template, check `config.example.json`.
 
 ### When should I fill `MATLAB_ROOT`?
 
-- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `C:/Program Files/MATLAB/R2022b`
+- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `D:/Program Files/MATLAB/R2025b`
 - For source runs, you can leave it empty if the current Python environment already imports `matlab.engine` successfully
 - If source mode still fails with `No module named matlab.engine` or cannot locate the runtime, fill `MATLAB_ROOT` and follow the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)
 

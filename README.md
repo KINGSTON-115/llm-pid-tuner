@@ -196,12 +196,18 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 {
   "MATLAB_MODEL_PATH": "C:/models/my_pid_model.slx",
   "MATLAB_PID_BLOCK_PATH": "my_pid_model/PID Controller",
-  "MATLAB_ROOT": "C:/Program Files/MATLAB/R2022b",
+  "MATLAB_ROOT": "D:/Program Files/MATLAB/R2025b",
   "MATLAB_OUTPUT_SIGNAL": "y_out",
   "MATLAB_SIM_STEP_TIME": 15.0,
   "MATLAB_SETPOINT": 200.0
 }
 ```
+
+上面这 6 项就是当前 `main` 分支下 **最小可用的 Simulink 配置**。
+
+- 如果只是第一次跑通，先填这 6 项即可
+- `MATLAB_ROOT` 里的版本号只是示例，请替换成你本机实际安装的 MATLAB 版本
+- 如果你已经知道准确块路径，优先使用显式的 `MATLAB_PID_BLOCK_PATH`
 
 ### 按场景看配置项
 
@@ -215,7 +221,7 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 ### `MATLAB_ROOT` 什么时候要填
 
-- 用打包版 `exe` 跑 Simulink 时，建议直接填 `MATLAB_ROOT`，例如 `C:/Program Files/MATLAB/R2022b`
+- 用打包版 `exe` 跑 Simulink 时，建议直接填 `MATLAB_ROOT`，例如 `D:/Program Files/MATLAB/R2025b`
 - 源码方式运行时，如果你当前这个 Python 环境已经能正常 `import matlab.engine`，`MATLAB_ROOT` 可以留空
 - 如果源码运行也报 `No module named matlab.engine`，或者 MATLAB Engine 路径找不到，就把 `MATLAB_ROOT` 填上，同时按 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md) 安装 Engine
 
@@ -466,7 +472,7 @@ python system_id.py --file sample_step.csv
 - 最新打包版请看 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest)
 - 打包方法见 [Issue #11](https://github.com/KINGSTON-115/llm-pid-tuner/issues/11)
 - 当前打包使用 Python `3.8`（见 `llm-pid-tuner.spec` 中 `matlabengineforpython3_8.pyd`）
-- MATLAB 测试环境：`R2022b`
+- 历史测试环境包含 `R2022b`；文档里的 `R2025b` 只是示例路径版本，请替换成你本机实际安装的 MATLAB 版本
 - 想看项目内部设计，请看 [PROJECT_DOC.md](docs/zh-CN/PROJECT_DOC.md)
 
 ## License
