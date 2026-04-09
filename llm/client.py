@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 llm/client.py - LLM client wrapper with streaming and prompt selection.
@@ -351,9 +351,6 @@ class LLMTuner:
             print()
         return full_content
 
-    def _parse_json(self, text: str) -> Optional[Dict[str, Any]]:
-        return parse_json_response(text)
-
     def request_json(
         self,
         *,
@@ -374,7 +371,7 @@ class LLMTuner:
                     "debug", f"\n[LLM raw response preview]\n{content[:500]}...\n"
                 )
 
-            parsed = self._parse_json(content)
+            parsed = parse_json_response(content)
             if parsed:
                 return parsed
 

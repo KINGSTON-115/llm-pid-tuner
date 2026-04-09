@@ -54,7 +54,6 @@ class AdvancedDataBuffer:
         # 基础指标
         avg_error     = sum(abs_errors) / len(abs_errors) if abs_errors else 0
         max_error     = max(abs_errors) if abs_errors else 0
-        current_error = abs_errors[-1]
 
         # 高级指标：超调量 (Overshoot)
         max_input = max(inputs)
@@ -86,7 +85,6 @@ class AdvancedDataBuffer:
         return {
             "avg_error"         : avg_error,
             "max_error"         : max_error,
-            "current_error"     : current_error,
             "overshoot"         : overshoot,
             "steady_state_error": steady_state_error,
             "zero_crossings"    : zero_crossings,

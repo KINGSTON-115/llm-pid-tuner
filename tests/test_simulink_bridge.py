@@ -86,8 +86,10 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         return root
 
     def _populate_matlab_root(self, matlab_root: Path, *, include_runtime_dirs: bool) -> None:
-        (matlab_root / "bin" / "win64").mkdir(parents=True)
-        (matlab_root / "extern" / "bin" / "win64").mkdir(parents=True)
+        from sim.matlab_runtime import _runtime_layout
+        arch = _runtime_layout()[0]
+        (matlab_root / "bin" / arch).mkdir(parents=True)
+        (matlab_root / "extern" / "bin" / arch).mkdir(parents=True)
         (
             matlab_root
             / "extern"
@@ -96,11 +98,11 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
             / "dist"
             / "matlab"
             / "engine"
-            / "win64"
+            / arch
         ).mkdir(parents=True)
         if include_runtime_dirs:
-            (matlab_root / "runtime" / "win64").mkdir(parents=True)
-            (matlab_root / "sys" / "os" / "win64").mkdir(parents=True)
+            (matlab_root / "runtime" / arch).mkdir(parents=True)
+            (matlab_root / "sys" / "os" / arch).mkdir(parents=True)
 
     def _make_bridge(self, sim_output):
         fake_engine_module = type(

@@ -170,9 +170,6 @@ def run_case(
                         " Timeout/failure, using fallback rules",
                     )
                 )
-            # 流式输出中已经打印了完整的分析结果和调参动作，无需再次打印
-            # else:
-            #     print(f" {result.get('tuning_action', '?')}")
 
         if result.get("fallback_used"):
             fallback_count += 1

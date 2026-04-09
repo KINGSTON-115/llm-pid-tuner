@@ -140,26 +140,26 @@ class LLMFallbackTests(unittest.TestCase):
         self.assertFalse(tuner.use_sdk)
 
     def test_parse_json_extracts_pid(self):
-        tuner = self._make_tuner_without_sdk()
+        from llm.response_parser import parse_json_response
         raw = '{"p": 1.5, "i": 0.2, "d": 0.01, "status": "TUNING", "analysis_summary": "ok"}'
-        result = tuner._parse_json(raw)
+        result = parse_json_response(raw)
         self.assertIsNotNone(result)
         self.assertAlmostEqual(result["p"], 1.5)  # type: ignore[index]
         self.assertAlmostEqual(result["i"], 0.2)  # type: ignore[index]
         self.assertAlmostEqual(result["d"], 0.01)  # type: ignore[index]
 
     def test_parse_json_rejects_negative_pid(self):
-        tuner = self._make_tuner_without_sdk()
+        from llm.response_parser import parse_json_response
         raw = '{"p": -1.0, "i": 0.1, "d": 0.05, "status": "TUNING"}'
-        result = tuner._parse_json(raw)
+        result = parse_json_response(raw)
         self.assertIsNotNone(result)
         self.assertNotIn("p", result)  # type: ignore[operator]
 
 
     def test_parse_json_accepts_dual_controller_shape(self):
-        tuner = self._make_tuner_without_sdk()
+        from llm.response_parser import parse_json_response
         raw = '{"controller_1":{"p":1.5,"i":0.2,"d":0.01},"controller_2":{"p":2.5,"i":0.3,"d":0.02},"status":"TUNING","analysis_summary":"ok"}'
-        result = tuner._parse_json(raw)
+        result = parse_json_response(raw)
         self.assertIsNotNone(result)
         self.assertEqual(result["controller_1"]["p"], 1.5)  # type: ignore[index]
         self.assertEqual(result["controller_2"]["i"], 0.3)  # type: ignore[index]
@@ -188,7 +188,7 @@ class LLMFallbackTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, exc_type, exc_val, exc_tb):
+            def __exit__(self, _exc_type, _exc_val, _exc_tb):
                 return None
 
             def raise_for_status(self):

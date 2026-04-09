@@ -498,40 +498,10 @@ class SimulinkBridge:
     def _resolve_setpoint_block(self) -> tuple[str | None, str | None]:
         discovery = self._block_discovery or self._create_block_discovery()
         return discovery.resolve_setpoint_block(self.setpoint_block)
-        if self.setpoint_block:
-            for block_type in ("Step", "Constant"):
-                if self._try_engine_method("get_param", self.setpoint_block, "BlockType") == block_type:
-                    return self.setpoint_block, block_type
-            return self.setpoint_block, None
-
-        keywords = ("setpoint", "reference", "ref", "step", "目标", "给定")
-        candidates: list[tuple[int, str, str]] = []
-        for block_type in ("Step", "Constant"):
-            for block_path in self._find_blocks_by_type(block_type):
-                score = 0
-                lowered = block_path.lower()
-                if any(keyword in lowered for keyword in keywords):
-                    score += 10
-                if block_path.rsplit("/", 1)[-1] in {"Step", "Setpoint", "Reference"}:
-                    score += 5
-                candidates.append((score, block_path, block_type))
-
-        if not candidates:
-            return None, None
-        candidates.sort(key=lambda item: (-item[0], item[1]))
-        best_score, best_path, best_type = candidates[0]
-        if len(candidates) > 1 and best_score == candidates[1][0] == 0:
-            return None, None
-        return best_path, best_type
 
     def _setpoint_parameter_name(self, block_type: str) -> str | None:
         discovery = self._block_discovery or self._create_block_discovery()
         return discovery.setpoint_parameter_name(block_type)
-        if block_type == "Step":
-            return "After"
-        if block_type == "Constant":
-            return "Value"
-        return None
 
     def _apply_model_setpoint(self) -> None:
         block_path, block_type = self._resolve_setpoint_block()

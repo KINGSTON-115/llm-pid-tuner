@@ -449,6 +449,24 @@ def demo():
     print_report(result)
 
 
+def parse_inline_data(data_str: str) -> None:
+    time_data = []
+    temp_data = []
+    pwm_data  = []
+    for item in data_str.strip().split():
+        if "," in item:
+            parts = item.split(",")
+            if len(parts) >= 3:
+                time_data.append(float(parts[0]) / 1000)  # ms -> s
+                temp_data.append(float(parts[1]))
+                pwm_data.append(float(parts[2]))
+
+    if len(time_data) >= 5:
+        result = system_identify(time_data, temp_data, pwm_data)
+        print_report(result)
+    else:
+        print("数据点太少，至少需要5个")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PID 系统辨识工具 - 硬件版")
     parser.add_argument(
@@ -466,23 +484,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.data:
-        # 内联数据模式
-        time_data = []
-        temp_data = []
-        pwm_data  = []
-        for item in args.data.strip().split():
-            if "," in item:
-                parts = item.split(",")
-                if len(parts) >= 3:
-                    time_data.append(float(parts[0]) / 1000)  # ms -> s
-                    temp_data.append(float(parts[1]))
-                    pwm_data.append(float(parts[2]))
-
-        if len(time_data) >= 5:
-            result = system_identify(time_data, temp_data, pwm_data)
-            print_report(result)
-        else:
-            print("数据点太少，至少需要5个")
+        parse_inline_data(args.data)
     elif args.mode == "demo":
         demo()
     elif args.mode == "live":
@@ -492,24 +494,7 @@ if __name__ == "__main__":
         result = read_from_file(args.file or args.data)
         print_report(result)
     elif args.mode == "stdin":
-        # 从 stdin 读取数据
         import sys
-
         data_str = sys.stdin.read().strip()
         if data_str:
-            time_data = []
-            temp_data = []
-            pwm_data  = []
-            for item in data_str.split():
-                if "," in item:
-                    parts = item.split(",")
-                    if len(parts) >= 3:
-                        time_data.append(float(parts[0]) / 1000)
-                        temp_data.append(float(parts[1]))
-                        pwm_data.append(float(parts[2]))
-
-            if len(time_data) >= 5:
-                result = system_identify(time_data, temp_data, pwm_data)
-                print_report(result)
-            else:
-                print("数据点太少，至少需要5个")
+            parse_inline_data(data_str)

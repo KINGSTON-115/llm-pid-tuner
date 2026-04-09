@@ -18,7 +18,7 @@ from core.doctoring import (
 )
 
 
-def _identity_tr(zh: str, en: str) -> str:
+def _identity_tr(_zh: str, en: str) -> str:
     return en
 
 
