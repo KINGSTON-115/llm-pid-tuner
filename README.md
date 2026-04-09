@@ -196,12 +196,47 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 {
   "MATLAB_MODEL_PATH": "C:/models/my_pid_model.slx",
   "MATLAB_PID_BLOCK_PATH": "my_pid_model/PID Controller",
-  "MATLAB_ROOT": "C:/Program Files/MATLAB/R2022b",
+  "MATLAB_ROOT": "D:/Program Files/MATLAB/R2025b",
   "MATLAB_OUTPUT_SIGNAL": "y_out",
   "MATLAB_SIM_STEP_TIME": 15.0,
   "MATLAB_SETPOINT": 200.0
 }
 ```
+
+上面这 6 项是 **最小必填**。
+
+- 第一轮只想跑通时，先填这 6 项就够了
+- `MATLAB_CONTROL_SIGNAL` 和 `MATLAB_SETPOINT_BLOCK` 属于**推荐增强项**，不是第一次配置的硬性必填
+- 如果你已经知道准确块路径，优先填显式路径，不必一开始就把所有高级字段都填上
+
+如果你的 Simulink 模型不是“一个标准 PID Controller 块 + 一个输出信号”这种最简单结构，现在还支持这些兼容字段：
+
+- `MATLAB_OUTPUT_SIGNAL_CANDIDATES`：输出变量名不统一时给一组候选名
+- `MATLAB_CONTROL_SIGNAL`：显式提供控制输出信号，例如 `u_out`
+- `MATLAB_SETPOINT_BLOCK`：显式指定设定值块
+- `MATLAB_PID_BLOCK_PATHS`：多个候选控制器块路径
+- `MATLAB_PID_BLOCK_PATH_2`：第二组控制器块（主副环 / 双控制器）
+- `MATLAB_P_BLOCK_PATH` `MATLAB_I_BLOCK_PATH` `MATLAB_D_BLOCK_PATH`：分离式 P/I/D 增益块
+- `MATLAB_P_BLOCK_PATH_2` `MATLAB_I_BLOCK_PATH_2` `MATLAB_D_BLOCK_PATH_2`：第二组分离式增益块
+
+命名规则可以这样理解：
+
+- 不带后缀的字段就是第一组 / 主控制器，例如 `MATLAB_PID_BLOCK_PATH`
+- 带 `_2` 的字段就是第二组控制器，例如 `MATLAB_PID_BLOCK_PATH_2`
+
+这些路径怎么找：
+
+- 在 Simulink 里选中你要填写的那个块
+- 在 MATLAB Command Window 输入 `gcb`
+- 返回字符串就是完整块路径，可以直接填到 `MATLAB_PID_BLOCK_PATH`、`MATLAB_PID_BLOCK_PATH_2`、`MATLAB_SETPOINT_BLOCK`、`MATLAB_P/I/D_BLOCK_PATH(_2)` 里
+
+这些字段怎么理解最不容易乱：
+
+- 已知准确块路径：优先填 `MATLAB_PID_BLOCK_PATH`、`MATLAB_PID_BLOCK_PATH_2`、`MATLAB_SETPOINT_BLOCK`、`MATLAB_P/I/D_BLOCK_PATH`
+- 有多个怀疑对象但还没确定：再用 `MATLAB_PID_BLOCK_PATHS`
+- 自动识别：只当兜底，不建议当主要配置方式
+
+更详细的多控制器 / 双控制器 / 分离增益块配置方法，见 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)。
 
 ### 按场景看配置项
 
@@ -210,12 +245,12 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 | 硬件串口 | 真实硬件调参 | `SERIAL_PORT` `BAUD_RATE` | `SERIAL_PORT` 不确定先填 `AUTO`，`BAUD_RATE` 要和固件一致 |
 | LLM 基础 | 所有模式都需要 | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | 这是最核心的一组配置，不填就无法调参 |
 | 调参行为 | 想微调策略时再改 | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` | 新手建议先保持默认，只有在采样不够、网络慢或需要排查日志时再动 |
-| Simulink | 只在 MATLAB/Simulink 模式下需要 | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT` | 指向模型、PID 模块、MATLAB 安装目录和仿真输出 |
+| Simulink | 只在 MATLAB/Simulink 模式下需要 | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`，以及按需填写 `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | 最小 6 项先跑通，复杂模型再逐步补充兼容字段 |
 | 代理 | 只有需要代理时才填 | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | 留空就是不启用 |
 
 ### `MATLAB_ROOT` 什么时候要填
 
-- 用打包版 `exe` 跑 Simulink 时，建议直接填 `MATLAB_ROOT`，例如 `C:/Program Files/MATLAB/R2022b`
+- 用打包版 `exe` 跑 Simulink 时，建议直接填 `MATLAB_ROOT`，例如 `D:/Program Files/MATLAB/R2025b`
 - 源码方式运行时，如果你当前这个 Python 环境已经能正常 `import matlab.engine`，`MATLAB_ROOT` 可以留空
 - 如果源码运行也报 `No module named matlab.engine`，或者 MATLAB Engine 路径找不到，就把 `MATLAB_ROOT` 填上，同时按 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md) 安装 Engine
 
@@ -466,7 +501,7 @@ python system_id.py --file sample_step.csv
 - 最新打包版请看 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest)
 - 打包方法见 [Issue #11](https://github.com/KINGSTON-115/llm-pid-tuner/issues/11)
 - 当前打包使用 Python `3.8`（见 `llm-pid-tuner.spec` 中 `matlabengineforpython3_8.pyd`）
-- MATLAB 测试环境：`R2022b`
+- 历史测试环境包含 `R2022b`；文档里的 `R2025b` 只是示例路径版本，请替换成你本机实际安装的 MATLAB 版本
 - 想看项目内部设计，请看 [PROJECT_DOC.md](docs/zh-CN/PROJECT_DOC.md)
 
 ## License

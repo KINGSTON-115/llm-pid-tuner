@@ -87,6 +87,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "MATLAB_PID_BLOCK_PATH"         : "",
     "MATLAB_ROOT"                   : "",
     "MATLAB_OUTPUT_SIGNAL"          : "y_out",
+    "MATLAB_OUTPUT_SIGNAL_CANDIDATES": [],
+    "MATLAB_CONTROL_SIGNAL"         : "",
+    "MATLAB_SETPOINT_BLOCK"         : "",
+    "MATLAB_PID_BLOCK_PATHS"        : [],
+    "MATLAB_PID_BLOCK_PATH_2"       : "",
     "MATLAB_SIM_STEP_TIME"          : 15.0,
     "MATLAB_SETPOINT"               : 200.0,
 }

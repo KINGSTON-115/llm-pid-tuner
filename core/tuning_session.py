@@ -42,6 +42,7 @@ class RoundEvaluation:
     best_result: dict[str, Any] | None = None
     best_result_updated: bool = False
     rollback_pid: dict[str, float] | None = None
+    rollback_secondary_pid: dict[str, float] | None = None
     completed_reason: str | None = None
 
 
@@ -98,15 +99,25 @@ def evaluate_completed_round(
     else:
         state.stable_rounds = 0
 
+    current_secondary = (
+        dict(state.buffer.secondary_pid)
+        if state.buffer.secondary_pid is not None
+        else None
+    )
     previous_best = state.best_result
     state.best_result = maybe_update_best_result(
-        state.best_result, current_pid, metrics, round_index
+        state.best_result,
+        current_pid,
+        metrics,
+        round_index,
+        secondary_pid=current_secondary,
     )
     best_result_updated = (
         state.best_result is not None and state.best_result is not previous_best
     )
 
     rollback_pid: dict[str, float] | None = None
+    rollback_secondary_pid: dict[str, float] | None = None
     completed_reason: str | None = None
     if (
         state.best_result
@@ -114,6 +125,9 @@ def evaluate_completed_round(
         and should_rollback_to_best(metrics, state.best_result["metrics"])
     ):
         rollback_pid = dict(state.best_result["pid"])
+        best_secondary = state.best_result.get("secondary_pid")
+        if best_secondary is not None:
+            rollback_secondary_pid = dict(best_secondary)
         if is_good_enough(state.best_result["metrics"], state.good_enough_rules):
             completed_reason = "rollback_to_best"
     elif (
@@ -132,14 +146,22 @@ def evaluate_completed_round(
         best_result=state.best_result,
         best_result_updated=best_result_updated,
         rollback_pid=rollback_pid,
+        rollback_secondary_pid=rollback_secondary_pid,
         completed_reason=completed_reason,
     )
 
 
-def apply_rollback(state: TuningSessionState, rollback_pid: dict[str, float]) -> None:
+def apply_rollback(
+    state: TuningSessionState,
+    rollback_pid: dict[str, float],
+    *,
+    rollback_secondary_pid: dict[str, float] | None = None,
+) -> None:
     state.rollback_count += 1
     state.round_num += 1
     state.buffer.current_pid = dict(rollback_pid)
+    if rollback_secondary_pid is not None:
+        state.buffer.secondary_pid = dict(rollback_secondary_pid)
     state.buffer.reset()
 
 

@@ -40,6 +40,18 @@ for binary_name in ("python3.dll",):
 for binary_name in ("libssl-3-x64.dll", "libcrypto-3-x64.dll"):
     add_optional_binary(binary_name, PYTHON_PREFIX / "Library" / "bin")
 
+for binary_name in (
+    "ffi.dll",
+    "liblzma.dll",
+    "LIBBZ2.dll",
+    "libexpat.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "msvcp140.dll",
+    "ucrtbase.dll",
+):
+    add_optional_binary(binary_name, PYTHON_PREFIX / "Library" / "bin")
+
 a = Analysis(
     ["launcher.py"],
     pathex=[str(ROOT_DIR)],

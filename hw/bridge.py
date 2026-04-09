@@ -34,6 +34,10 @@ class _DemoSerialDevice:
         r"SET\s+P:(?P<p>-?\d+(?:\.\d+)?)\s+I:(?P<i>-?\d+(?:\.\d+)?)\s+D:(?P<d>-?\d+(?:\.\d+)?)",
         re.IGNORECASE,
     )
+    _set_pid_2_re = re.compile(
+        r"SET2\s+P:(?P<p>-?\d+(?:\.\d+)?)\s+I:(?P<i>-?\d+(?:\.\d+)?)\s+D:(?P<d>-?\d+(?:\.\d+)?)",
+        re.IGNORECASE,
+    )
 
     def __init__(self) -> None:
         from sim.model import HeatingSimulator
@@ -41,6 +45,7 @@ class _DemoSerialDevice:
         self.is_open = True
         self._sim = HeatingSimulator(random_seed=7)
         self._last_command = ""
+        self._secondary_pid: dict[str, float] | None = None
 
     def close(self) -> None:
         self.is_open = False
@@ -54,11 +59,17 @@ class _DemoSerialDevice:
         data = self._sim.get_data()
         # Slow the preview down a bit so the TUI remains readable.
         time.sleep(0.05)
-        return (
+        line = (
             f"{data['timestamp']:.0f},{data['setpoint']:.3f},{data['input']:.3f},"
             f"{data['pwm']:.3f},{data['error']:.3f},{data['p']:.4f},"
             f"{data['i']:.4f},{data['d']:.4f}\n"
-        ).encode("utf-8")
+        )
+        if self._secondary_pid is not None:
+            line = line.rstrip("\n") + (
+                f",{self._secondary_pid['p']:.4f},{self._secondary_pid['i']:.4f},"
+                f"{self._secondary_pid['d']:.4f}\n"
+            )
+        return line.encode("utf-8")
 
     def write(self, payload: bytes) -> None:
         if not self.is_open:
@@ -72,14 +83,21 @@ class _DemoSerialDevice:
             return
 
         match = self._set_pid_re.fullmatch(command)
-        if not match:
+        if match:
+            self._sim.set_pid(
+                float(match.group("p")),
+                float(match.group("i")),
+                float(match.group("d")),
+            )
             return
 
-        self._sim.set_pid(
-            float(match.group("p")),
-            float(match.group("i")),
-            float(match.group("d")),
-        )
+        match2 = self._set_pid_2_re.fullmatch(command)
+        if match2:
+            self._secondary_pid = {
+                "p": float(match2.group("p")),
+                "i": float(match2.group("i")),
+                "d": float(match2.group("d")),
+            }
 
 
 class SerialBridge:
@@ -150,6 +168,15 @@ class SerialBridge:
                     "p": float(parts[5]) if len(parts) > 5 else 1.0,
                     "i": float(parts[6]) if len(parts) > 6 else 0.1,
                     "d": float(parts[7]) if len(parts) > 7 else 0.05,
+                    **(
+                        {
+                            "p2": float(parts[8]),
+                            "i2": float(parts[9]),
+                            "d2": float(parts[10]),
+                        }
+                        if len(parts) > 10
+                        else {}
+                    ),
                 }
             except Exception:
                 pass

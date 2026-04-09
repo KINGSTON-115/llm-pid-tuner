@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import deque
 from dataclasses import field
@@ -177,6 +177,7 @@ class PanelState:
     current_pid: dict[str, float] = field(
         default_factory=lambda: {"p": 1.0, "i": 0.1, "d": 0.05}
     )
+    secondary_pid: dict[str, float] | None = None
     metrics: dict[str, float | int] = field(
         default_factory=lambda: {
             "avg_error": 0.0,
@@ -215,6 +216,12 @@ class PanelState:
                 "i": float(event.get("i", self.current_pid["i"])),
                 "d": float(event.get("d", self.current_pid["d"])),
             }
+            if "p2" in event:
+                self.secondary_pid = {
+                    "p": float(event.get("p2", 0.0)),
+                    "i": float(event.get("i2", 0.0)),
+                    "d": float(event.get("d2", 0.0)),
+                }
             return
 
         if event_type == EVENT_ROUND_METRICS:
@@ -283,7 +290,7 @@ class PanelState:
     # Rendering — produces Rich markup strings (markup=True panels)
     # ------------------------------------------------------------------
     def render_status_text(self) -> str:
-        """Three-line status bar with Rich colour coding."""
+        """Render a compact status bar that fits both single and dual-controller runs."""
         indicator = "⏸" if self.paused else "▶"
         paused_text = self.tr("paused_yes") if self.paused else self.tr("paused_no")
 
@@ -316,13 +323,28 @@ class PanelState:
             f"[{err_color}]{self.current_error:+.2f}[/{err_color}]  "
             f"[dim]{self.tr('lbl_pwm')}[/dim] {self.current_pwm:.1f}"
         )
+        if self.secondary_pid is None:
+            line3 = (
+                f"[dim]{self.tr('lbl_pid')}[/dim]  "
+                f"P [bold]{self.current_pid['p']:.4f}[/bold]  "
+                f"I [bold]{self.current_pid['i']:.4f}[/bold]  "
+                f"D [bold]{self.current_pid['d']:.4f}[/bold]"
+            )
+            return f"{line1}\n[dim]{'─' * 60}[/dim]\n{line2}\n{line3}"
+
         line3 = (
-            f"[dim]{self.tr('lbl_pid')}[/dim]  "
+            f"[dim]{self.tr('lbl_pid')} C1[/dim]  "
             f"P [bold]{self.current_pid['p']:.4f}[/bold]  "
             f"I [bold]{self.current_pid['i']:.4f}[/bold]  "
             f"D [bold]{self.current_pid['d']:.4f}[/bold]"
         )
-        return f"{line1}\n[dim]{'─' * 60}[/dim]\n{line2}\n{line3}"
+        line4 = (
+            f"[dim]{self.tr('lbl_pid')} C2[/dim]  "
+            f"P [bold]{self.secondary_pid['p']:.4f}[/bold]  "
+            f"I [bold]{self.secondary_pid['i']:.4f}[/bold]  "
+            f"D [bold]{self.secondary_pid['d']:.4f}[/bold]"
+        )
+        return "\n".join((line1, line2, line3, line4))
 
     def render_summary_text(self) -> str:
         """Left-panel summary with Rich colour highlights.
@@ -366,6 +388,11 @@ class PanelState:
             metric(self.tr("lbl_zero_cross"), str(zero_x), "white"),
             metric(self.tr("lbl_stable_rounds"), str(self.stable_rounds), sr_color),
             "",
+            f"[bold cyan]◆ {self.tr('lbl_pid')}[/bold cyan]",
+            f"  [dim]C1:[/dim] P [bold]{self.current_pid['p']:.4f}[/bold]  "
+            f"I [bold]{self.current_pid['i']:.4f}[/bold]  "
+            f"D [bold]{self.current_pid['d']:.4f}[/bold]",
+            "",
             f"[bold cyan]◆ {self.tr('title_decision')}[/bold cyan]",
             metric(
                 self.tr("lbl_action"), markup_escape(self.latest_action), "bold white"
@@ -376,6 +403,13 @@ class PanelState:
             f"[bold cyan]◆ {self.tr('title_message')}[/bold cyan]",
             f"  [dim]{phase_msg}[/dim]",
         ]
+        if self.secondary_pid is not None:
+            lines.insert(
+                9,
+                f"  [dim]C2:[/dim] P [bold]{self.secondary_pid['p']:.4f}[/bold]  "
+                f"I [bold]{self.secondary_pid['i']:.4f}[/bold]  "
+                f"D [bold]{self.secondary_pid['d']:.4f}[/bold]",
+            )
         return "\n".join(lines)
 
     def render_help_text(self) -> str:

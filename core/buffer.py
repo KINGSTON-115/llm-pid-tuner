@@ -15,6 +15,7 @@ class AdvancedDataBuffer:
         self.max_size    = max_size
         self.buffer      = deque(maxlen=max_size)
         self.current_pid = {"p": 1.0, "i": 0.1, "d": 0.05}
+        self.secondary_pid: Dict[str, float] | None = None
         self.setpoint    = 100.0
 
     def add(self, data: Dict[str, float]) -> None:
@@ -24,6 +25,12 @@ class AdvancedDataBuffer:
                 "p": data.get("p", 1.0),
                 "i": data.get("i", 0.1),
                 "d": data.get("d", 0.05),
+            }
+        if "p2" in data:
+            self.secondary_pid = {
+                "p": data.get("p2", 1.0),
+                "i": data.get("i2", 0.1),
+                "d": data.get("d2", 0.05),
             }
         if "setpoint" in data:
             self.setpoint = data["setpoint"]
@@ -101,6 +108,13 @@ class AdvancedDataBuffer:
         lines.append(
             f"- 当前 PID: P={self.current_pid['p']}, I={self.current_pid['i']}, D={self.current_pid['d']}"
         )
+        if self.secondary_pid is not None:
+            lines.append(
+                f"- 当前 PID 2 (controller_2): "
+                f"P={self.secondary_pid['p']}, "
+                f"I={self.secondary_pid['i']}, "
+                f"D={self.secondary_pid['d']}"
+            )
         lines.append(f"- 平均误差: {metrics.get('avg_error', 0):.2f}")
         lines.append(f"- 最大误差: {metrics.get('max_error', 0):.2f}")
         lines.append(f"- 超调量: {metrics.get('overshoot', 0):.1f}%")
