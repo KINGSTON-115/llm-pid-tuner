@@ -18,6 +18,7 @@ import time
 from typing import Any, Dict, List
 
 from core.config import CONFIG, initialize_runtime_config
+from core.i18n import tr
 from core.buffer import AdvancedDataBuffer
 from core.history import TuningHistory
 from llm.client import LLMTuner
@@ -39,7 +40,12 @@ DEFAULT_CASES = ("baseline", "fallback", "llm")
 def create_llm_tuner() -> LLMTuner:
     api_key = CONFIG["LLM_API_KEY"]
     if not api_key or api_key == "your-api-key-here":
-        raise RuntimeError("未设置 LLM_API_KEY，无法运行 llm benchmark")
+        raise RuntimeError(
+            tr(
+                "未设置 LLM_API_KEY，无法运行 llm benchmark",
+                "LLM_API_KEY is not set, cannot run llm benchmark",
+            )
+        )
     return LLMTuner(
         CONFIG["LLM_API_KEY"],
         CONFIG["LLM_API_BASE_URL"],
@@ -53,21 +59,26 @@ def run_case(
 ) -> Dict[str, Any]:
     random.seed(seed)
 
-    sim            = HeatingSimulator()
+    sim = HeatingSimulator()
     sim.set_pid(1.0, 0.1, 0.05)  # 重置为初始 PID
-    history        = TuningHistory(max_history=5)
-    llm            = create_llm_tuner() if case_name == "llm" else None
+    history = TuningHistory(max_history=5)
+    llm = create_llm_tuner() if case_name == "llm" else None
     fallback_count = 0
-    best_result    = None
-    records        : List[Dict[str, Any]] = []
-    start_time     = time.time()
-    print(f"\n{case_name.upper()} 开始运行，最多 {rounds} 轮...")
-    rnd_w          = len(str(rounds))  # 轮次数字宽度，保证对齐
+    best_result = None
+    records: List[Dict[str, Any]] = []
+    start_time = time.time()
+    print(
+        tr(
+            f"\n{case_name.upper()} 开始运行，最多 {rounds} 轮...",
+            f"\n{case_name.upper()} starting, max {rounds} rounds...",
+        )
+    )
+    rnd_w = len(str(rounds))  # 轮次数字宽度，保证对齐
 
     for round_num in range(1, rounds + 1):
-        buffer             = AdvancedDataBuffer(max_size=CONFIG["BUFFER_SIZE"])
+        buffer = AdvancedDataBuffer(max_size=CONFIG["BUFFER_SIZE"])
         buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-        buffer.setpoint    = SETPOINT
+        buffer.setpoint = SETPOINT
 
         while not buffer.is_full():
             sim.compute_pid()
@@ -76,19 +87,26 @@ def run_case(
 
         metrics = buffer.calculate_advanced_metrics()
         print(
-            f"\n  [{case_name}] 第 {round_num:{rnd_w}}/{rounds} 轮: "
-            f"AvgErr={metrics['avg_error']:>7.3f}  "
-            f"Steady={metrics['steady_state_error']:>7.3f}  "
-            f"Overshoot={metrics['overshoot']:>6.2f}%  "
-            f"Status={metrics['status']:<13}"
+            tr(
+                f"\n  [{case_name}] 第 {round_num:{rnd_w}}/{rounds} 轮: "
+                f"AvgErr={metrics['avg_error']:>7.3f}  "
+                f"Steady={metrics['steady_state_error']:>7.3f}  "
+                f"Overshoot={metrics['overshoot']:>6.2f}%  "
+                f"Status={metrics['status']:<13}",
+                f"\n  [{case_name}] Round {round_num:{rnd_w}}/{rounds}: "
+                f"AvgErr={metrics['avg_error']:>7.3f}  "
+                f"Steady={metrics['steady_state_error']:>7.3f}  "
+                f"Overshoot={metrics['overshoot']:>6.2f}%  "
+                f"Status={metrics['status']:<13}",
+            )
         )
         record = {
-            "round"             : round_num,
-            "avg_error"         : metrics["avg_error"],
+            "round": round_num,
+            "avg_error": metrics["avg_error"],
             "steady_state_error": metrics["steady_state_error"],
-            "overshoot"         : metrics["overshoot"],
-            "status"            : metrics["status"],
-            "pid"               : {"p": sim.kp, "i": sim.ki, "d": sim.kd},
+            "overshoot": metrics["overshoot"],
+            "status": metrics["status"],
+            "pid": {"p": sim.kp, "i": sim.ki, "d": sim.kd},
         }
         records.append(record)
 
@@ -107,7 +125,13 @@ def run_case(
                 best_result["pid"]["i"],
                 best_result["pid"]["d"],
             )
-            print(f"  [{case_name}] 回滚到第 {best_result['round']} 轮最佳参数")
+            print(
+                f"  [{case_name}] "
+                + tr(
+                    f"回滚到第 {best_result['round']} 轮最佳参数",
+                    f"Rolling back to best params at round {best_result['round']}",
+                )
+            )
             if is_good_enough(best_result["metrics"], DEFAULT_CONVERGENCE_RULES):
                 break
             continue
@@ -120,14 +144,32 @@ def run_case(
         else:
             assert llm is not None, "llm case 下 LLMTuner 未初始化"
             print(
-                f"  [llm] 第 {round_num:{rnd_w}}/{rounds} 轮: 正在请求 LLM...",
+                tr(
+                    f"  [llm] 第 {round_num:{rnd_w}}/{rounds} 轮: 正在请求 LLM...",
+                    f"  [llm] Round {round_num:{rnd_w}}/{rounds}: Requesting LLM...",
+                ),
                 end="",
                 flush=True,
             )
-            result = llm.analyze(buffer.to_prompt_data(), history.to_prompt_text())
+            result = llm.analyze(
+                buffer.to_prompt_data(),
+                history.to_prompt_text(),
+                tuning_mode="python_sim",
+                prompt_context={
+                    "source": "built_in_python_heating_simulator",
+                    "controller_output_signal": "PWM",
+                    "pwm_signal_available": True,
+                    "per_round_guardrail_hint": "Keep P within about 3x the current value, and keep I/D within about 4x unless there is overwhelming evidence.",
+                },
+            )
             if not result:
                 result = build_fallback_suggestion(buffer.current_pid, metrics)
-                print(" 超时/失败，使用兜底策略")
+                print(
+                    tr(
+                        " 超时/失败，使用兜底策略",
+                        " Timeout/failure, using fallback rules",
+                    )
+                )
             # 流式输出中已经打印了完整的分析结果和调参动作，无需再次打印
             # else:
             #     print(f" {result.get('tuning_action', '?')}")
@@ -149,20 +191,25 @@ def run_case(
             break
 
     elapsed = time.time() - start_time
-    print(f"\n{case_name.upper()} 完成，共 {len(records)} 轮，耗时 {elapsed:.1f}s")
+    print(
+        tr(
+            f"\n{case_name.upper()} 完成，共 {len(records)} 轮，耗时 {elapsed:.1f}s",
+            f"\n{case_name.upper()} done, {len(records)} rounds, elapsed {elapsed:.1f}s",
+        )
+    )
     final_metrics = records[-1]
 
     return {
-        "case"           : case_name,
+        "case": case_name,
         "rounds_executed": len(records),
-        "fallback_count" : fallback_count,
-        "elapsed_sec"    : elapsed,
-        "final"          : {
-            "avg_error"         : final_metrics["avg_error"],
+        "fallback_count": fallback_count,
+        "elapsed_sec": elapsed,
+        "final": {
+            "avg_error": final_metrics["avg_error"],
             "steady_state_error": final_metrics["steady_state_error"],
-            "overshoot"         : final_metrics["overshoot"],
-            "status"            : final_metrics["status"],
-            "pid"               : {"p": sim.kp, "i": sim.ki, "d": sim.kd},
+            "overshoot": final_metrics["overshoot"],
+            "status": final_metrics["status"],
+            "pid": {"p": sim.kp, "i": sim.ki, "d": sim.kd},
         },
         "history": records,
     }
@@ -170,14 +217,14 @@ def run_case(
 
 def print_summary(results: List[Dict[str, Any]]):
     # 列宽定义
-    W_CASE    = 10
-    W_RND     = 3
-    W_AVGERR  = 7
-    W_STEADY  = 7
-    W_OVER    = 9
-    W_STATUS  = 13
-    W_PID     = 8
-    W_FDBK    = 4
+    W_CASE = 10
+    W_RND = 3
+    W_AVGERR = 7
+    W_STEADY = 7
+    W_OVER = 9
+    W_STATUS = 13
+    W_PID = 8
+    W_FDBK = 4
     W_ELAPSED = 7
 
     header = (
@@ -200,10 +247,10 @@ def print_summary(results: List[Dict[str, Any]]):
     print(header)
     print(sep)
     for result in results:
-        final         = result["final"]
-        pid           = final["pid"]
+        final = result["final"]
+        pid = final["pid"]
         overshoot_str = f"{final['overshoot']:.2f}%"
-        elapsed_str   = f"{result['elapsed_sec']:.1f}s"
+        elapsed_str = f"{result['elapsed_sec']:.1f}s"
         print(
             f"  {result['case']:<{W_CASE}}  {result['rounds_executed']:>{W_RND}}  "
             f"{final['avg_error']:>{W_AVGERR}.3f}  {final['steady_state_error']:>{W_STEADY}.3f}  "
@@ -220,10 +267,10 @@ def main():
     parser = argparse.ArgumentParser(description="LLM PID 调参 benchmark")
     parser.add_argument(
         "--cases",
-        nargs   = "+",
-        choices = DEFAULT_CASES,
-        default = list(DEFAULT_CASES),
-        help    = "要运行的 benchmark case",
+        nargs="+",
+        choices=DEFAULT_CASES,
+        default=list(DEFAULT_CASES),
+        help="要运行的 benchmark case",
     )
     parser.add_argument(
         "--rounds", type=int, default=8, help="每个 case 最多运行的轮数"
@@ -231,18 +278,26 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument(
         "--no-stop-on-done",
-        action = "store_true",
-        help   = "即使模型判定 DONE 也继续跑满轮数",
+        action="store_true",
+        help="即使模型判定 DONE 也继续跑满轮数",
     )
     parser.add_argument("--json-out", type=str, help="将结果写入 JSON 文件")
+    parser.add_argument(
+        "--lang", choices=["zh", "en"], help="Override display language (zh or en)."
+    )
     args = parser.parse_args()
+
+    if args.lang:
+        from core.i18n import set_language
+
+        set_language(args.lang)
 
     results = [
         run_case(
             case_name,
-            rounds       = args.rounds,
-            seed         = args.seed,
-            stop_on_done = not args.no_stop_on_done,
+            rounds=args.rounds,
+            seed=args.seed,
+            stop_on_done=not args.no_stop_on_done,
         )
         for case_name in args.cases
     ]
@@ -252,7 +307,12 @@ def main():
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as handle:
             json.dump(results, handle, indent=2, ensure_ascii=False)
-        print(f"\n[INFO] 结果已写入 {args.json_out}")
+        print(
+            tr(
+                f"\n[INFO] 结果已写入 {args.json_out}",
+                f"\n[INFO] Results written to {args.json_out}",
+            )
+        )
 
 
 if __name__ == "__main__":

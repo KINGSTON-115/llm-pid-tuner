@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import field
 from queue import Empty, Queue
 import threading
 import time
-from typing import Any
+from typing import Any, Dict
+
+from core.compat import slotted_dataclass
 
 
 EVENT_SAMPLE = "sample"
@@ -12,9 +14,10 @@ EVENT_ROUND_METRICS = "round_metrics"
 EVENT_DECISION = "decision"
 EVENT_ROLLBACK = "rollback"
 EVENT_LIFECYCLE = "lifecycle"
+EVENT_LOG = "log"
 
 
-RuntimeEvent = dict[str, Any]
+RuntimeEvent = Dict[str, Any]
 
 
 def build_event(event_type: str, **payload: Any) -> RuntimeEvent:
@@ -30,7 +33,7 @@ def drain_event_queue(event_queue: Queue[RuntimeEvent]) -> list[RuntimeEvent]:
             return events
 
 
-@dataclass(slots=True)
+@slotted_dataclass
 class QueueEventSink:
     event_queue: Queue[RuntimeEvent]
     _sequence: int = 0
@@ -47,7 +50,7 @@ class QueueEventSink:
             return self._sequence
 
 
-@dataclass(slots=True)
+@slotted_dataclass
 class SimulationController:
     stop_event: threading.Event = field(default_factory=threading.Event)
     run_event: threading.Event = field(default_factory=threading.Event)

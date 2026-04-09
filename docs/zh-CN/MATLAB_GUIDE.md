@@ -24,6 +24,24 @@
 
 ---
 
+## 快速开始（下载 exe，零代码运行）
+
+如果你不想配置 Python 环境，直接下载打包好的 exe 即可：
+
+1. 从 Releases 页面下载最新的 `llm-pid-tuner.exe`
+2. 将 `llm-pid-tuner.exe` 和同目录的 `config.json` 放在同一个文件夹里
+3. 编辑 `config.json`，填入你的 LLM API Key 和 Simulink 相关配置（详见第 3 步）
+4. 双击运行 `llm-pid-tuner.exe`，或在终端中执行：
+   ```
+   llm-pid-tuner.exe
+   ```
+5. 在菜单中选择「Simulink 仿真调参」，程序会自动启动 MATLAB 并开始调参
+6. 调参完成后按 Enter 退出，结果已自动保存回 `.slx` 文件
+
+> **前提**：你的电脑上需要已安装并激活 MATLAB（exe 内置了 MATLAB Engine，但仍需要本机有 MATLAB 许可证）。
+
+---
+
 ## 这个模式适合什么场景
 
 - 你已经在 Simulink 里搭好了被控对象模型，想快速找一组能用的 PID 初值

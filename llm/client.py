@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-llm/client.py - LLM 接口封装（支持 OpenAI / Anthropic SDK 及 HTTP 回退）
+llm/client.py - LLM client wrapper with streaming and prompt selection.
 """
+
+from __future__ import annotations
 
 import json
 import math
@@ -12,90 +14,106 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional
 
 from core.config import CONFIG
-from llm.prompts import SYSTEM_PROMPT
+from core.i18n import tr
+from llm.prompts import SYSTEM_PROMPT, build_user_prompt, get_system_prompt
 
 
 class JSONStreamFormatter:
-    """按行/增量解析 JSON 流，并格式化输出到控制台。"""
+    """Incrementally formats streamed JSON-like output for the console."""
 
-    def __init__(self):
+    def __init__(self, writer: Optional[Callable[[str], None]] = None):
         self.displayed_keys = set()
-        self.current_key    = None
-        self.printed_text   = ""
-        self.key_names      = {
-            "thought_process" : "\n  [思考]",
-            "analysis_summary": "\n  [分析]",
-            "tuning_action"   : "\n  [调参]",
-            "p"               : "\n  [建议] P",
-            "i"               : " I",
-            "d"               : " D",
-            "status"          : "\n  [状态]",
+        self.current_key = None
+        self.printed_text = ""
+        self.writer = writer or self._default_writer
+        self.key_names = {
+            "thought_process": tr("\n  [思考]", "\n  [Thought]"),
+            "analysis_summary": tr("\n  [分析]", "\n  [Analysis]"),
+            "tuning_action": tr("\n  [调参]", "\n  [Action]"),
+            "p": tr("\n  [建议] P", "\n  [PID] P"),
+            "i": " I",
+            "d": " D",
+            "status": tr("\n  [状态]", "\n  [Status]"),
         }
-        # 预编译正则以提升性能
         self.str_re = re.compile(r'"([a-zA-Z_]+)"\s*:\s*"((?:[^"\\]|\\.)*)')
         self.num_re = re.compile(
             r'"([a-zA-Z_]+)"\s*:\s*([0-9\.\-]+|true|false|null)\s*[,}\n]', re.IGNORECASE
         )
 
-    def process(self, full_text: str):
-        # 处理字符串类型字段
+    @staticmethod
+    def _default_writer(text: str) -> None:
+        print(text, end="", flush=True)
+
+    def process(self, full_text: str) -> None:
         str_matches = list(self.str_re.finditer(full_text))
-        for m in str_matches:
-            key     = m.group(1)
-            raw_val = m.group(2)
+        for match in str_matches:
+            key = match.group(1)
+            raw_value = match.group(2)
 
             if key not in self.displayed_keys:
                 self.displayed_keys.add(key)
-                self.current_key  = key
+                self.current_key = key
                 self.printed_text = ""
                 name = self.key_names.get(key, f"\n  [{key}]")
-                print(f"{name} ", end="", flush=True)
+                self.writer(f"{name} ")
 
-            if self.current_key == key:
-                decoded = (
-                    raw_val.replace("\\n", "\n")
-                    .replace('\\"', '"')
-                    .replace("\\\\", "\\")
-                )
-                if raw_val.endswith("\\"):
-                    decoded = decoded[:-1]
+            if self.current_key != key:
+                continue
 
-                new_text = decoded[len(self.printed_text) :]
-                if new_text:
-                    if key in ["thought_process", "analysis_summary"]:
-                        new_text = new_text.replace("\n", "\n    ")
-                    print(new_text, end="", flush=True)
-                    self.printed_text += new_text
+            decoded = (
+                raw_value.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
+            )
+            if raw_value.endswith("\\"):
+                decoded = decoded[:-1]
 
-        # 处理数字/布尔类型字段（必须有终结符保证完整性）
+            new_text = decoded[len(self.printed_text) :]
+            if not new_text:
+                continue
+            if key in {"thought_process", "analysis_summary"}:
+                new_text = new_text.replace("\n", "\n    ")
+            self.writer(new_text)
+            self.printed_text += new_text
+
         num_matches = list(self.num_re.finditer(full_text))
-        for m in num_matches:
-            key = m.group(1)
-            val = m.group(2)
-            if key not in self.displayed_keys:
-                self.displayed_keys.add(key)
-                name = self.key_names.get(key, f"\n  [{key}]")
-                if key in ["p", "i", "d"]:
-                    print(f",{name}={val}", end="", flush=True)
-                elif key == "status":
-                    print(f"{name}: {val}", end="", flush=True)
-                else:
-                    print(f"{name}: {val}", end="", flush=True)
+        for match in num_matches:
+            key = match.group(1)
+            value = match.group(2)
+            if key in self.displayed_keys:
+                continue
+
+            self.displayed_keys.add(key)
+            name = self.key_names.get(key, f"\n  [{key}]")
+            if key in {"p", "i", "d"}:
+                self.writer(f",{name}={value}")
+            else:
+                self.writer(f"{name}: {value}")
 
 
 class LLMTuner:
     def __init__(
-        self, api_key: str, base_url: str, model: str, provider: str = "openai"
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        provider: str = "openai",
+        stream_callback: Optional[Callable[[str, bool], None]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
+        emit_console: bool = True,
+        abort_check: Optional[Callable[[], bool]] = None,
     ):
-        self.api_key         = api_key
-        self.base_url        = (base_url or "").rstrip("/")
-        self.model           = model
+        self.api_key = api_key
+        self.base_url = (base_url or "").rstrip("/")
+        self.model = model
         self.provider_choice = self._normalize_provider_choice(provider)
-        self.provider        = self._resolve_transport()
-        self.timeout         = CONFIG.get("LLM_REQUEST_TIMEOUT", 60)
-        self.debug_output    = CONFIG.get("LLM_DEBUG_OUTPUT", False)
-        self.use_sdk         = False
-        self.client          = None
+        self.provider = self._resolve_transport()
+        self.timeout = CONFIG.get("LLM_REQUEST_TIMEOUT", 60)
+        self.debug_output = CONFIG.get("LLM_DEBUG_OUTPUT", False)
+        self.emit_console = emit_console
+        self.stream_callback = stream_callback
+        self.log_callback = log_callback
+        self.abort_check = abort_check
+        self.use_sdk = False
+        self.client = None
 
         try:
             if self.provider == "openai":
@@ -109,21 +127,19 @@ class LLMTuner:
                     api_key=api_key, base_url=self.base_url
                 )
         except ImportError:
-            # SDK 未安装：回退到 requests
             self.requests = self._import_requests()
         except Exception:
-            # 其他初始化错误：调试模式下打印堆栈，然后回退
             if self.debug_output:
                 traceback.print_exc()
             self.requests = self._import_requests()
         else:
-            self.use_sdk  = True
+            self.use_sdk = True
 
     @staticmethod
     def _normalize_provider_choice(provider: Optional[str]) -> str:
-        provider_choice = str(provider or "").strip().lower()
-        provider_choice = provider_choice.replace("-", "_").replace(" ", "_")
-        return provider_choice or "openai"
+        normalized = str(provider or "").strip().lower()
+        normalized = normalized.replace("-", "_").replace(" ", "_")
+        return normalized or "openai"
 
     def _resolve_transport(self) -> str:
         if self.provider_choice in (
@@ -141,7 +157,6 @@ class LLMTuner:
         base_url_lower = self.base_url.lower()
         if self.provider_choice == "auto" and "api.anthropic.com" in base_url_lower:
             return "anthropic"
-
         return "openai"
 
     def _import_requests(self):
@@ -153,39 +168,108 @@ class LLMTuner:
         if not hasattr(self, "requests") or self.requests is None:
             self.requests = self._import_requests()
 
+    def _interruptible_sleep(self, seconds: float) -> bool:
+        """每 0.1s 轮询 abort_check，若中止返回 False，否则睡完返回 True。"""
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            if self.abort_check and self.abort_check():
+                return False
+            time.sleep(min(0.1, deadline - time.time()))
+        return True
+
+    def _emit_log(self, label: str, message: str) -> None:
+        if self.log_callback is not None:
+            self.log_callback(label, message)
+        if self.emit_console:
+            print(message)
+
+    def _emit_stream_update(
+        self,
+        full_content: str,
+        *,
+        done: bool = False,
+        formatter: Optional[JSONStreamFormatter] = None,
+    ) -> None:
+        if formatter is not None:
+            formatter.process(full_content)
+        if self.stream_callback is not None:
+            self.stream_callback(full_content, done)
+
+    def _extract_openai_sdk_chunk_content(
+        self,
+        chunk: Any,
+        accumulated_content: str,
+    ) -> str:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            return ""
+
+        choice = choices[0]
+        delta = getattr(choice, "delta", None)
+        if delta is not None:
+            delta_content = getattr(delta, "content", None)
+            if isinstance(delta_content, str) and delta_content:
+                return delta_content
+
+        message = getattr(choice, "message", None)
+        if message is None:
+            return ""
+
+        message_content = getattr(message, "content", None)
+        if not isinstance(message_content, str) or not message_content:
+            return ""
+
+        if not accumulated_content:
+            return message_content
+
+        if message_content.startswith(accumulated_content):
+            return message_content[len(accumulated_content) :]
+
+        return ""
+
     def _call_with_retry(
         self, func: Callable[..., str], *args: Any, **kwargs: Any
     ) -> str:
-        max_retries    = 5
-        delays         = [2, 4, 8, 16, 32]
-        last_exception = None
+        max_retries = 5
+        delays = [2, 4, 8, 16, 32]
+        last_exception: Optional[Exception] = None
 
         for attempt in range(max_retries):
+            if self.abort_check and self.abort_check():
+                return ""
             try:
                 return func(*args, **kwargs)
             except (KeyboardInterrupt, SystemExit):
                 raise
-            except Exception as e:
-                last_exception = e
+            except Exception as exc:
+                last_exception = exc
                 if attempt < max_retries - 1:
-                    print(
-                        f"\n[WARN] LLM 调用失败: {e}，将在 {delays[attempt]} 秒后重试..."
+                    self._emit_log(
+                        "warn",
+                        f"\n[WARN] LLM call failed: {exc}. Retrying in {delays[attempt]}s...",
                     )
-                    time.sleep(delays[attempt])
+                    if not self._interruptible_sleep(delays[attempt]):
+                        return ""
                 else:
-                    print(f"\n[ERROR] LLM 调用失败已达 {max_retries} 次: {e}")
+                    self._emit_log(
+                        "error",
+                        f"\n[ERROR] LLM call failed after {max_retries} attempts: {exc}",
+                    )
                     raise
 
-        if last_exception:
+        if last_exception is not None:
             raise last_exception
         return ""
 
     def _request_via_http(
-        self, openai_msgs: List[Dict[str, Any]], anthropic_msgs: List[Dict[str, Any]]
+        self,
+        openai_msgs: List[Dict[str, Any]],
+        anthropic_msgs: List[Dict[str, Any]],
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> str:
         self._ensure_requests()
         full_content = ""
-        formatter    = JSONStreamFormatter()
+        formatter = JSONStreamFormatter() if self.emit_console else None
 
         if self.provider == "anthropic":
             headers = {
@@ -194,125 +278,149 @@ class LLMTuner:
                 "Content-Type": "application/json",
             }
             payload = {
-                "model"      : self.model,
-                "system"     : SYSTEM_PROMPT,
-                "messages"   : anthropic_msgs,
+                "model": self.model,
+                "system": system_prompt,
+                "messages": anthropic_msgs,
                 "temperature": 0.3,
-                "max_tokens" : 1000,
-                "stream"     : True,
+                "max_tokens": 1000,
+                "stream": True,
             }
             base_url = self.base_url.rstrip("/")
             if not base_url.endswith("/v1"):
                 base_url = f"{base_url}/v1"
             with self.requests.post(
                 f"{base_url}/messages",
-                headers = headers,
-                json    = payload,
-                timeout = self.timeout,
-                stream  = True,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+                stream=True,
             ) as resp:
                 resp.raise_for_status()
-
                 for line in resp.iter_lines():
-                    if line:
-                        line_str = line.decode("utf-8")
-                        if line_str.startswith("data: "):
-                            data_str = line_str[6:]
-                            if data_str == "[DONE]":
+                    if not line:
+                        continue
+                    line_str = line.decode("utf-8")
+                    if not line_str.startswith("data: "):
+                        continue
+                    data_str = line_str[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("type") == "content_block_delta" and "delta" in data:
+                        chunk = data["delta"].get("text", "")
+                        if chunk:
+                            full_content += chunk
+                            self._emit_stream_update(full_content, formatter=formatter)
+                            if self.abort_check and self.abort_check():
                                 break
-                            try:
-                                data = json.loads(data_str)
-                                if (
-                                    data.get("type") == "content_block_delta"
-                                    and "delta" in data
-                                ):
-                                    chunk = data["delta"].get("text", "")
-                                    if chunk:
-                                        full_content += chunk
-                                        formatter.process(full_content)
-                            except json.JSONDecodeError:
-                                pass
-
         else:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
-                "Content-Type" : "application/json",
+                "Content-Type": "application/json",
             }
             payload = {
-                "model"      : self.model,
-                "messages"   : openai_msgs,
+                "model": self.model,
+                "messages": openai_msgs,
                 "temperature": 0.3,
-                "stream"     : True,
+                "stream": True,
             }
             with self.requests.post(
                 f"{self.base_url}/chat/completions",
-                headers = headers,
-                json    = payload,
-                timeout = self.timeout,
-                stream  = True,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+                stream=True,
             ) as resp:
                 resp.raise_for_status()
-
                 for line in resp.iter_lines():
-                    if line:
-                        line_str = line.decode("utf-8")
-                        if line_str.startswith("data: "):
-                            data_str = line_str[6:]
-                            if data_str == "[DONE]":
+                    if not line:
+                        continue
+                    line_str = line.decode("utf-8")
+                    if not line_str.startswith("data: "):
+                        continue
+                    data_str = line_str[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = data.get("choices", [])
+                    if choices and "delta" in choices[0]:
+                        chunk = choices[0]["delta"].get("content", "")
+                        if chunk:
+                            full_content += chunk
+                            self._emit_stream_update(full_content, formatter=formatter)
+                            if self.abort_check and self.abort_check():
                                 break
-                            try:
-                                data = json.loads(data_str)
-                                choices = data.get("choices", [])
-                                if choices and "delta" in choices[0]:
-                                    chunk = choices[0]["delta"].get("content", "")
-                                    if chunk:
-                                        full_content += chunk
-                                        formatter.process(full_content)
-                            except json.JSONDecodeError:
-                                pass
 
         return full_content
 
     def _execute_request(
-        self, openai_msgs: List[Dict[str, Any]], anthropic_msgs: List[Dict[str, Any]]
+        self,
+        openai_msgs: List[Dict[str, Any]],
+        anthropic_msgs: List[Dict[str, Any]],
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> str:
-        print("  LLM 正在思考...")
+        self._emit_log("llm", "  LLM is thinking...")
         full_content = ""
-        formatter = JSONStreamFormatter()
+        formatter = JSONStreamFormatter() if self.emit_console else None
 
         if self.use_sdk:
             try:
                 if self.provider == "openai":
                     resp = self.client.chat.completions.create(  # type: ignore
-                        model       = self.model,
-                        messages    = openai_msgs,
-                        temperature = 0.3,
-                        stream      = True,
+                        model=self.model,
+                        messages=openai_msgs,
+                        temperature=0.3,
+                        stream=True,
                     )
                     for chunk in resp:
-                        content_chunk = chunk.choices[0].delta.content or ""
+                        content_chunk = self._extract_openai_sdk_chunk_content(
+                            chunk,
+                            full_content,
+                        )
                         if content_chunk:
                             full_content += content_chunk
-                            formatter.process(full_content)
+                            self._emit_stream_update(full_content, formatter=formatter)
+                            if self.abort_check and self.abort_check():
+                                break
                 elif self.provider == "anthropic":
                     with self.client.messages.stream(  # type: ignore
-                        model       = self.model,
-                        system      = SYSTEM_PROMPT,
-                        messages    = anthropic_msgs,
-                        temperature = 0.3,
-                        max_tokens  = 1000,
+                        model=self.model,
+                        system=system_prompt,
+                        messages=anthropic_msgs,
+                        temperature=0.3,
+                        max_tokens=1000,
                     ) as stream:
                         for text in stream.text_stream:
                             if text:
                                 full_content += text
-                                formatter.process(full_content)
+                                self._emit_stream_update(
+                                    full_content, formatter=formatter
+                                )
+                                if self.abort_check and self.abort_check():
+                                    break
             except Exception as sdk_error:
-                print(f"\n[WARN] SDK 调用失败，尝试 HTTP 回退: {sdk_error}")
-                full_content = self._request_via_http(openai_msgs, anthropic_msgs)
+                self._emit_log(
+                    "warn",
+                    f"\n[WARN] SDK request failed, falling back to HTTP: {sdk_error}",
+                )
+                full_content = self._request_via_http(
+                    openai_msgs, anthropic_msgs, system_prompt=system_prompt
+                )
         else:
-            full_content = self._request_via_http(openai_msgs, anthropic_msgs)
+            full_content = self._request_via_http(
+                openai_msgs, anthropic_msgs, system_prompt=system_prompt
+            )
 
-        print()  # 打印换行
+        if full_content:
+            self._emit_stream_update(full_content, done=True)
+        if self.emit_console:
+            print()
         return full_content
 
     def _extract_json_candidates(self, text: str) -> List[str]:
@@ -365,12 +473,12 @@ class LLMTuner:
 
         if not sanitized.get("analysis_summary"):
             sanitized["analysis_summary"] = str(
-                sanitized.get("analysis") or "未提供分析摘要"
+                sanitized.get("analysis") or "No analysis summary provided."
             )
 
         if not sanitized.get("thought_process"):
             sanitized["thought_process"] = str(
-                sanitized.get("analysis_summary") or "模型未提供详细推理"
+                sanitized.get("analysis_summary") or "No detailed reasoning provided."
             )
 
         if not sanitized.get("tuning_action"):
@@ -386,39 +494,45 @@ class LLMTuner:
                 pass
         return None
 
-    def analyze(self, prompt_data: str, history_text: str) -> Optional[Dict[str, Any]]:
-        user_prompt = f"""
-{history_text}
+    def analyze(
+        self,
+        prompt_data: str,
+        history_text: str,
+        tuning_mode: str = "generic",
+        prompt_context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        system_prompt = get_system_prompt(tuning_mode)
+        user_prompt = build_user_prompt(
+            prompt_data,
+            history_text,
+            tuning_mode=tuning_mode,
+            prompt_context=prompt_context,
+        )
 
-{prompt_data}
-
-请基于以上历史和当前数据，分析 PID 参数表现并给出优化建议。
-务必使用 JSON 格式返回，包含 thought_process 字段。
-"""
-        # 构建消息记录
-        openai_msgs   : List[Any] = [
-            {"role": "system", "content": SYSTEM_PROMPT}
-        ]
+        openai_msgs: List[Any] = [{"role": "system", "content": system_prompt}]
         anthropic_msgs: List[Any] = []
-
         openai_msgs.append({"role": "user", "content": user_prompt})
         anthropic_msgs.append({"role": "user", "content": user_prompt})
 
         try:
             content = self._call_with_retry(
-                self._execute_request, openai_msgs, anthropic_msgs
+                self._execute_request, openai_msgs, anthropic_msgs, system_prompt
             )
 
             if self.debug_output:
-                print(f"\n[LLM 原始响应预览]\n{content[:500]}...\n")
+                self._emit_log(
+                    "debug", f"\n[LLM raw response preview]\n{content[:500]}...\n"
+                )
 
             parsed = self._parse_json(content)
             if parsed:
                 return parsed
 
-            print("[WARN] LLM 响应未能解析为 JSON，已忽略本轮建议。")
+            self._emit_log(
+                "warn",
+                "[WARN] LLM response could not be parsed as JSON; ignoring this round.",
+            )
             return None
-
-        except Exception as e:
-            print(f"[ERROR] LLM 调用或重试最终失败: {e}")
+        except Exception as exc:
+            self._emit_log("error", f"[ERROR] LLM request failed after retries: {exc}")
             return None

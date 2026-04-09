@@ -1,4 +1,6 @@
+from contextlib import ExitStack
 import importlib.util
+import io
 import sys
 import threading
 import time
@@ -21,6 +23,7 @@ from sim.model import HeatingSimulator, SETPOINT
 from sim.runtime import (
     EVENT_DECISION,
     EVENT_LIFECYCLE,
+    EVENT_LOG,
     EVENT_ROLLBACK,
     EVENT_ROUND_METRICS,
     EVENT_SAMPLE,
@@ -28,6 +31,8 @@ from sim.runtime import (
     SimulationController,
     drain_event_queue,
 )
+
+DEFAULT_DOCTOR_CHECKS = [DoctorCheck("api", "PASS", "ok")]
 
 
 class QueueEventSinkTests(unittest.TestCase):
@@ -114,12 +119,21 @@ class SimulatorLoopTests(unittest.TestCase):
         event_queue = Queue()
         event_sink = QueueEventSink(event_queue)
         controller = SimulationController()
+        captured = {}
 
         class FakeTuner:
             def __init__(self, *_args, **_kwargs):
                 pass
 
-            def analyze(self, _prompt_data, _history_text):
+            def analyze(
+                self,
+                _prompt_data,
+                _history_text,
+                tuning_mode="generic",
+                prompt_context=None,
+            ):
+                captured["tuning_mode"] = tuning_mode
+                captured["prompt_context"] = prompt_context
                 return {
                     "analysis_summary": "Stop after one round.",
                     "tuning_action": "HOLD",
@@ -151,37 +165,191 @@ class SimulatorLoopTests(unittest.TestCase):
         self.assertIn(EVENT_DECISION, event_types)
         self.assertIn(EVENT_LIFECYCLE, event_types)
         self.assertGreaterEqual(result["rounds_completed"], 1)
+        self.assertEqual(captured["tuning_mode"], "python_sim")
+        self.assertEqual(
+            captured["prompt_context"]["source"],
+            "built_in_python_heating_simulator",
+        )
+
+    def test_run_simulink_simulation_passes_special_prompt_context(self):
+        captured = {}
+
+        class FakeBridge:
+            def __init__(
+                self,
+                model_path,
+                setpoint,
+                pid_block_path,
+                output_signal,
+                sim_step_time,
+                matlab_root="",
+            ):
+                self.model_path = model_path
+                self.setpoint = setpoint
+                self.pid_block_path = pid_block_path
+                self.output_signal = output_signal
+                self.matlab_root = matlab_root
+                self.sim_step_time = sim_step_time
+                self.kp = 1.0
+                self.ki = 0.1
+                self.kd = 0.05
+
+            def connect(self):
+                return None
+
+            def disconnect(self):
+                return None
+
+        def fake_run_tuning_loop(
+            sim,
+            setpoint,
+            mode_label,
+            llm_mode="generic",
+            prompt_context=None,
+            **_kwargs,
+        ):
+            captured["sim"] = sim
+            captured["setpoint"] = setpoint
+            captured["mode_label"] = mode_label
+            captured["llm_mode"] = llm_mode
+            captured["prompt_context"] = prompt_context
+            return {"mode": "simulink"}
+
+        with patch("sim.simulink_bridge.SimulinkBridge", FakeBridge):
+            with patch.object(simulator, "_run_tuning_loop", side_effect=fake_run_tuning_loop):
+                with patch.dict(
+                    simulator.CONFIG,
+                    {
+                        "MATLAB_MODEL_PATH": "C:/models/demo.slx",
+                        "MATLAB_PID_BLOCK_PATH": "demo/PID Controller",
+                        "MATLAB_OUTPUT_SIGNAL": "y_out",
+                        "MATLAB_SIM_STEP_TIME": 12.5,
+                        "MATLAB_SETPOINT": 180.0,
+                    },
+                    clear=False,
+                ):
+                    result = simulator._run_simulink_simulation()
+
+        self.assertEqual(result, {"mode": "simulink"})
+        self.assertEqual(captured["mode_label"], "Simulink")
+        self.assertEqual(captured["llm_mode"], "simulink")
+        self.assertEqual(captured["prompt_context"]["model_path"], "C:/models/demo.slx")
+        self.assertFalse(captured["prompt_context"]["pwm_signal_available"])
+        self.assertIn("placeholder 0.0", captured["prompt_context"]["pwm_field_note"])
+
+    def test_run_simulink_simulation_emits_terminal_error_on_connect_failure(self):
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+
+        class FakeBridge:
+            def __init__(
+                self,
+                model_path,
+                setpoint,
+                pid_block_path,
+                output_signal,
+                sim_step_time,
+                matlab_root="",
+            ):
+                pass
+
+            def connect(self):
+                raise RuntimeError("connect boom")
+
+            def disconnect(self):
+                return None
+
+        with patch("sim.simulink_bridge.SimulinkBridge", FakeBridge):
+            with patch.dict(
+                simulator.CONFIG,
+                {
+                    "MATLAB_MODEL_PATH": "C:/models/demo.slx",
+                    "MATLAB_PID_BLOCK_PATH": "demo/PID Controller",
+                    "MATLAB_OUTPUT_SIGNAL": "y_out",
+                    "MATLAB_SIM_STEP_TIME": 12.5,
+                    "MATLAB_SETPOINT": 180.0,
+                },
+                clear=False,
+            ):
+                result = simulator._run_simulink_simulation(
+                    event_sink=event_sink,
+                    emit_console=False,
+                )
+
+        self.assertIsNone(result)
+        events = drain_event_queue(event_queue)
+        self.assertTrue(events)
+        self.assertEqual(events[-1]["type"], EVENT_LIFECYCLE)
+        self.assertEqual(events[-1]["phase"], "error")
+        self.assertIn("connect boom", events[-1]["message"])
+
+    def test_run_simulink_simulation_suppresses_plain_output_in_tui_mode(self):
+        captured = {}
+
+        class FakeBridge:
+            def __init__(
+                self,
+                model_path,
+                setpoint,
+                pid_block_path,
+                output_signal,
+                sim_step_time,
+                matlab_root="",
+            ):
+                self.kp = 1.0
+                self.ki = 0.1
+                self.kd = 0.05
+
+            def connect(self):
+                print("bridge-connect")
+
+            def disconnect(self):
+                print("bridge-disconnect")
+
+        def fake_run_tuning_loop(*_args, **kwargs):
+            captured["emit_console"] = kwargs.get("emit_console")
+            return {"mode": "simulink"}
+
+        stdout = io.StringIO()
+        with patch("sim.simulink_bridge.SimulinkBridge", FakeBridge):
+            with patch.object(simulator, "_run_tuning_loop", side_effect=fake_run_tuning_loop):
+                with patch.dict(
+                    simulator.CONFIG,
+                    {
+                        "MATLAB_MODEL_PATH": "C:/models/demo.slx",
+                        "MATLAB_PID_BLOCK_PATH": "demo/PID Controller",
+                        "MATLAB_OUTPUT_SIGNAL": "y_out",
+                        "MATLAB_SIM_STEP_TIME": 12.5,
+                        "MATLAB_SETPOINT": 180.0,
+                    },
+                    clear=False,
+                ):
+                    with patch("sys.stdout", stdout):
+                        result = simulator._run_simulink_simulation(emit_console=False)
+
+        self.assertEqual(result, {"mode": "simulink"})
+        self.assertFalse(captured["emit_console"])
+        self.assertEqual(stdout.getvalue(), "")
 
 
 class TuiModeTests(unittest.TestCase):
-    def test_non_tty_terminal_falls_back_to_plain_mode(self):
-        with patch.object(sys.stdin, "isatty", return_value=False):
-            with patch.object(sys.stdout, "isatty", return_value=False):
-                use_tui, message = simulator.determine_tui_mode(False, "")
+    def test_simulink_prompt_defaults_to_tui(self):
+        with patch("builtins.input", return_value=""):
+            use_tui = simulator.choose_simulink_ui_mode(False)
+
+        self.assertTrue(use_tui)
+
+    def test_simulink_prompt_can_choose_plain_mode(self):
+        with patch("builtins.input", return_value="2"):
+            use_tui = simulator.choose_simulink_ui_mode(False)
 
         self.assertFalse(use_tui)
-        self.assertIn("interactive terminal", message)
 
-    def test_simulink_mode_falls_back_to_plain_mode(self):
-        use_tui, message = simulator.determine_tui_mode(False, "model.slx")
-        self.assertFalse(use_tui)
-        self.assertIn("Simulink mode", message)
+    def test_simulink_prompt_uses_tui_on_eof(self):
+        with patch("builtins.input", side_effect=EOFError):
+            use_tui = simulator.choose_simulink_ui_mode(False)
 
-    def test_missing_textual_falls_back_to_plain_mode(self):
-        original_find_spec = importlib.util.find_spec
-
-        def fake_find_spec(name, package=None):
-            if name == "textual":
-                return None
-            return original_find_spec(name, package)
-
-        with patch.object(sys.stdin, "isatty", return_value=True):
-            with patch.object(sys.stdout, "isatty", return_value=True):
-                with patch("simulator.importlib.util.find_spec", side_effect=fake_find_spec):
-                    use_tui, message = simulator.determine_tui_mode(False, "")
-
-        self.assertFalse(use_tui)
-        self.assertIn("dependencies are missing", message)
+        self.assertTrue(use_tui)
 
     def test_plain_mode_uses_plain_runner(self):
         doctor_checks = [DoctorCheck("api", "PASS", "ok")]
@@ -196,19 +364,190 @@ class TuiModeTests(unittest.TestCase):
         self.assertEqual(result, {"mode": "plain"})
         doctor_report.assert_called_once_with(doctor_checks)
         plain.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
-        tui.assert_not_called()
+
+    def test_python_plain_runner_uses_configured_setpoint_and_initial_pid(self):
+        captured = {}
+
+        def fake_run_tuning_loop(
+            sim,
+            setpoint,
+            mode_label,
+            **_kwargs,
+        ):
+            captured["sim"] = sim
+            captured["setpoint"] = setpoint
+            captured["mode_label"] = mode_label
+            return {"mode": "plain"}
+
+        with patch.object(simulator, "_run_tuning_loop", side_effect=fake_run_tuning_loop):
+            with patch.dict(
+                simulator.CONFIG,
+                {"MATLAB_SETPOINT": 180.0, "LLM_MODEL_NAME": "demo-model"},
+                clear=False,
+            ):
+                result = simulator._run_python_simulation_plain(
+                    warm_start=True,
+                    doctor_checks=[],
+                    initial_pid={"p": 2.0, "i": 0.3, "d": 0.1},
+                )
+
+        self.assertEqual(result, {"mode": "plain"})
+        self.assertEqual(captured["setpoint"], 180.0)
+        self.assertEqual(captured["mode_label"], "Python")
+        self.assertEqual(captured["sim"].setpoint, 180.0)
+        self.assertEqual(captured["sim"].kp, 2.0)
+        self.assertEqual(captured["sim"].ki, 0.3)
+        self.assertEqual(captured["sim"].kd, 0.1)
+
+
+class RunSimulationDispatchTests(unittest.TestCase):
+    def _run_with_runtime_patches(
+        self,
+        *,
+        config_updates: dict[str, object],
+        patches: dict[str, dict[str, object]],
+        force_plain: bool = False,
+    ) -> tuple[dict[str, object] | None, object, dict[str, object]]:
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(simulator, "ensure_runtime_config"))
+            stack.enter_context(
+                patch.object(
+                    simulator,
+                    "collect_doctor_checks",
+                    return_value=DEFAULT_DOCTOR_CHECKS,
+                )
+            )
+            doctor_report = stack.enter_context(
+                patch.object(simulator, "print_doctor_report")
+            )
+            stack.enter_context(patch.dict(simulator.CONFIG, config_updates, clear=False))
+
+            patched: dict[str, object] = {}
+            for name, patch_kwargs in patches.items():
+                patched[name] = stack.enter_context(
+                    patch.object(simulator, name, **patch_kwargs)
+                )
+
+            result = simulator.run_simulation(force_plain=force_plain)
+
+        return result, doctor_report, patched
 
     def test_default_mode_uses_doctor_and_warm_start(self):
-        doctor_checks = [DoctorCheck("api", "PASS", "ok")]
-        with patch.object(simulator, "ensure_runtime_config"):
-            with patch.object(simulator, "collect_doctor_checks", return_value=doctor_checks):
-                with patch.dict(simulator.CONFIG, {"MATLAB_MODEL_PATH": ""}, clear=False):
-                    with patch.object(simulator, "determine_tui_mode", return_value=(True, None)):
-                        with patch.object(simulator, "_run_python_simulation_with_tui", return_value={"mode": "tui"}) as tui:
-                            result = simulator.run_simulation(force_plain=False)
+        result, _doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={"MATLAB_MODEL_PATH": ""},
+            patches={
+                "_run_python_simulation_with_tui": {"return_value": {"mode": "tui"}},
+            },
+        )
 
         self.assertEqual(result, {"mode": "tui"})
-        tui.assert_called_once_with(warm_start=True, doctor_checks=doctor_checks)
+        patched["_run_python_simulation_with_tui"].assert_called_once_with(
+            warm_start=True,
+            doctor_checks=DEFAULT_DOCTOR_CHECKS,
+        )
+
+    def test_simulink_mode_prefers_tui_when_available(self):
+        result, doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={"MATLAB_MODEL_PATH": "C:/models/demo.slx"},
+            patches={
+                "choose_simulink_ui_mode": {"return_value": True},
+                "_run_simulink_simulation_with_tui": {
+                    "return_value": {"mode": "simulink_tui"}
+                },
+            },
+        )
+
+        self.assertEqual(result, {"mode": "simulink_tui"})
+        patched["_run_simulink_simulation_with_tui"].assert_called_once_with(
+            doctor_checks=DEFAULT_DOCTOR_CHECKS
+        )
+        doctor_report.assert_not_called()
+
+    def test_simulink_mode_can_choose_plain_runner(self):
+        result, doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={"MATLAB_MODEL_PATH": "C:/models/demo.slx"},
+            patches={
+                "choose_simulink_ui_mode": {"return_value": False},
+                "_run_simulink_simulation": {
+                    "return_value": {"mode": "simulink_plain"}
+                },
+            },
+        )
+
+        self.assertEqual(result, {"mode": "simulink_plain"})
+        doctor_report.assert_called_once_with(DEFAULT_DOCTOR_CHECKS)
+        patched["_run_simulink_simulation"].assert_called_once_with(
+            doctor_checks=DEFAULT_DOCTOR_CHECKS
+        )
+
+    def test_tui_failure_falls_back_to_plain_runner(self):
+        result, doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={"MATLAB_MODEL_PATH": "", "LLM_DEBUG_OUTPUT": False},
+            patches={
+                "_run_python_simulation_with_tui": {
+                    "side_effect": RuntimeError("tui boom")
+                },
+                "_run_python_simulation_plain": {"return_value": {"mode": "plain"}},
+            },
+        )
+
+        self.assertEqual(result, {"mode": "plain"})
+        doctor_report.assert_called_once_with(DEFAULT_DOCTOR_CHECKS)
+        patched["_run_python_simulation_plain"].assert_called_once_with(
+            warm_start=True,
+            doctor_checks=DEFAULT_DOCTOR_CHECKS,
+        )
+
+    def test_simulink_tui_failure_falls_back_to_plain_runner(self):
+        result, doctor_report, patched = self._run_with_runtime_patches(
+            config_updates={
+                "MATLAB_MODEL_PATH": "C:/models/demo.slx",
+                "LLM_DEBUG_OUTPUT": False,
+            },
+            patches={
+                "choose_simulink_ui_mode": {"return_value": True},
+                "_run_simulink_simulation_with_tui": {
+                    "side_effect": RuntimeError("tui boom")
+                },
+                "_run_simulink_simulation": {
+                    "return_value": {"mode": "simulink_plain"}
+                },
+            },
+        )
+
+        self.assertEqual(result, {"mode": "simulink_plain"})
+        doctor_report.assert_called_once_with(DEFAULT_DOCTOR_CHECKS)
+        patched["_run_simulink_simulation"].assert_called_once_with(
+            doctor_checks=DEFAULT_DOCTOR_CHECKS
+        )
+
+
+class PanelStateTests(unittest.TestCase):
+    def test_replace_last_log_event_updates_existing_stream_line(self):
+        from sim.tui import PanelState
+
+        state = PanelState()
+        state.apply_event(
+            {
+                "type": EVENT_LOG,
+                "label": "llm_stream",
+                "message": '{"thought_process":"hel',
+                "replace_last": True,
+                "stream_id": 1,
+            }
+        )
+        state.apply_event(
+            {
+                "type": EVENT_LOG,
+                "label": "llm_stream",
+                "message": '{"thought_process":"hello"}',
+                "replace_last": True,
+                "stream_id": 1,
+            }
+        )
+
+        self.assertEqual(len(state.event_history), 1)
+        self.assertIn("hello", state.render_event_lines()[0])
 
 
 @unittest.skipUnless(TEXTUAL_AVAILABLE, "textual is required")
@@ -385,6 +724,59 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
 
             log = app.query_one("#events", RichLog)
             self.assertFalse(log.auto_scroll)
+
+    async def test_next_round_restarts_worker_from_last_result(self):
+        from sim.tui import SimulationTUIApp
+
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+        controller = SimulationController()
+        next_round_calls = []
+        worker_started = threading.Event()
+
+        def next_round_factory(last_result):
+            next_round_calls.append(last_result)
+
+            def worker() -> None:
+                worker_started.set()
+
+            return worker
+
+        app = SimulationTUIApp(
+            event_queue=event_queue,
+            controller=controller,
+            worker_target=None,
+            event_sink=event_sink,
+            mode_label="Python",
+            next_round_factory=next_round_factory,
+        )
+        app._last_result = {"final_pid": {"p": 2.0, "i": 0.3, "d": 0.1}}
+
+        async with app.run_test() as pilot:
+            event_sink.publish(
+                EVENT_LIFECYCLE,
+                phase="completed",
+                message="Finished.",
+                elapsed_sec=10.0,
+            )
+            app._poll_events()
+            self.assertTrue(app.state.tuning_done)
+
+            await pilot.press("n")
+            for _ in range(10):
+                if worker_started.wait(timeout=0.05):
+                    break
+                await pilot.pause()
+
+            help_text = str(app.query_one("#help", Static).content)
+            self.assertTrue(worker_started.is_set())
+            self.assertEqual(
+                next_round_calls,
+                [{"final_pid": {"p": 2.0, "i": 0.3, "d": 0.1}}],
+            )
+            self.assertFalse(app.state.tuning_done)
+            self.assertFalse(app._history_browsing_enabled)
+            self.assertIn("q", help_text)
 
 
 if __name__ == "__main__":

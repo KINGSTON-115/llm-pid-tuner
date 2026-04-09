@@ -1,33 +1,119 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-hw/bridge.py - 串口通信桥接
-
-提供 SerialBridge 类及串口选择工具函数。
+hw/bridge.py - serial bridge helpers for real hardware and demo mode.
 """
+
+from __future__ import annotations
+
+import re
+import time
 
 import serial
 import serial.tools.list_ports
 
 
+DEMO_SERIAL_PORT = "COM_FAKE"
+DEMO_SERIAL_PORT_ALIASES = {
+    DEMO_SERIAL_PORT,
+    "FAKE",
+    "DEMO",
+    "DEMO_HW",
+    "VIRTUAL",
+}
+
+
+def _is_demo_port(port: str | None) -> bool:
+    return str(port or "").strip().upper() in DEMO_SERIAL_PORT_ALIASES
+
+
+class _DemoSerialDevice:
+    """In-process fake serial device so the hardware TUI can be previewed."""
+
+    _set_pid_re = re.compile(
+        r"SET\s+P:(?P<p>-?\d+(?:\.\d+)?)\s+I:(?P<i>-?\d+(?:\.\d+)?)\s+D:(?P<d>-?\d+(?:\.\d+)?)",
+        re.IGNORECASE,
+    )
+
+    def __init__(self) -> None:
+        from sim.model import HeatingSimulator
+
+        self.is_open = True
+        self._sim = HeatingSimulator(random_seed=7)
+        self._last_command = ""
+
+    def close(self) -> None:
+        self.is_open = False
+
+    def readline(self) -> bytes:
+        if not self.is_open:
+            return b""
+
+        self._sim.compute_pid()
+        self._sim.update()
+        data = self._sim.get_data()
+        # Slow the preview down a bit so the TUI remains readable.
+        time.sleep(0.05)
+        return (
+            f"{data['timestamp']:.0f},{data['setpoint']:.3f},{data['input']:.3f},"
+            f"{data['pwm']:.3f},{data['error']:.3f},{data['p']:.4f},"
+            f"{data['i']:.4f},{data['d']:.4f}\n"
+        ).encode("utf-8")
+
+    def write(self, payload: bytes) -> None:
+        if not self.is_open:
+            return
+
+        command = payload.decode("utf-8", errors="ignore").strip()
+        self._last_command = command
+        if not command:
+            return
+        if command.upper() == "STATUS":
+            return
+
+        match = self._set_pid_re.fullmatch(command)
+        if not match:
+            return
+
+        self._sim.set_pid(
+            float(match.group("p")),
+            float(match.group("i")),
+            float(match.group("d")),
+        )
+
+
 class SerialBridge:
-    def __init__(self, port: str, baudrate: int):
-        self.port     = port
+    def __init__(self, port: str, baudrate: int, emit_console: bool = True):
+        self.port = port
         self.baudrate = baudrate
-        self.serial   = None
+        self.serial = None
+        self.emit_console = emit_console
+        self.last_error = ""
 
     def connect(self) -> bool:
         try:
+            if _is_demo_port(self.port):
+                self.serial = _DemoSerialDevice()
+                self.last_error = ""
+                if self.emit_console:
+                    print(f"[INFO] Connected to virtual hardware feed: {DEMO_SERIAL_PORT}")
+                return True
+
             self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
-            print(f"[INFO] Connected to {self.port}")
+            self.last_error = ""
+            if self.emit_console:
+                print(f"[INFO] Connected to {self.port}")
             return True
         except Exception as e:
-            print(f"[ERROR] Connection failed: {e}")
+            self.last_error = str(e)
+            if self.emit_console:
+                print(f"[ERROR] Connection failed: {e}")
             return False
 
     def disconnect(self) -> None:
         if self.serial:
             self.serial.close()
+            self.serial = None
 
     def read_line(self):
         if self.serial and self.serial.is_open:
@@ -41,9 +127,13 @@ class SerialBridge:
         if self.serial and self.serial.is_open:
             try:
                 self.serial.write(f"{cmd}\n".encode("utf-8"))
-                print(f"[CMD] Sent: {cmd}")
+                self.last_error = ""
+                if self.emit_console:
+                    print(f"[CMD] Sent: {cmd}")
             except Exception as e:
-                print(f"[ERROR] Failed to send command '{cmd}': {e}")
+                self.last_error = str(e)
+                if self.emit_console:
+                    print(f"[ERROR] Failed to send command '{cmd}': {e}")
 
     def parse_data(self, line: str):
         if not line or line.startswith("#"):
@@ -53,13 +143,13 @@ class SerialBridge:
             try:
                 return {
                     "timestamp": float(parts[0]),
-                    "setpoint" : float(parts[1]),
-                    "input"    : float(parts[2]),
-                    "pwm"      : float(parts[3]),
-                    "error"    : float(parts[4]),
-                    "p"        : float(parts[5]) if len(parts) > 5 else 1.0,
-                    "i"        : float(parts[6]) if len(parts) > 6 else 0.1,
-                    "d"        : float(parts[7]) if len(parts) > 7 else 0.05,
+                    "setpoint": float(parts[1]),
+                    "input": float(parts[2]),
+                    "pwm": float(parts[3]),
+                    "error": float(parts[4]),
+                    "p": float(parts[5]) if len(parts) > 5 else 1.0,
+                    "i": float(parts[6]) if len(parts) > 6 else 0.1,
+                    "d": float(parts[7]) if len(parts) > 7 else 0.05,
                 }
             except Exception:
                 pass
@@ -74,24 +164,34 @@ def safe_pause(message: str = "按回车键退出...") -> None:
 
 
 def select_serial_port() -> str:
-    """交互式选择串口"""
+    """Interactively choose a serial port, or start the virtual demo feed."""
     print("\n[INFO] 正在扫描可用串口...")
     ports = list(serial.tools.list_ports.comports())
 
     if not ports:
-        print("[WARN] 未发现任何串口设备！")
-        return input("请输入串口号 (例如 COM3 或 /dev/ttyUSB0): ").strip()
+        print("[WARN] 未发现任何串口设备。")
+        choice = input(
+            f"输入串口号（例如 COM3），或输入 'd' 进入虚拟硬件演示模式 [{DEMO_SERIAL_PORT}]: "
+        ).strip()
+        if choice.lower() == "d":
+            return DEMO_SERIAL_PORT
+        return choice
 
     print(f"发现 {len(ports)} 个设备:")
     for i, p in enumerate(ports):
         print(f"  [{i + 1}] {p.device} - {p.description}")
+    print(f"  [D] 虚拟硬件演示模式 - {DEMO_SERIAL_PORT}")
 
     while True:
         choice = (
-            input(f"\n请选择序号 (1-{len(ports)}) 或输入 'm' 手动指定: ")
+            input(
+                f"\n请选择序号 (1-{len(ports)})、输入 'd' 演示，或输入 'm' 手动指定: "
+            )
             .strip()
             .lower()
         )
+        if choice == "d":
+            return DEMO_SERIAL_PORT
         if choice == "m":
             return input("请输入串口号: ").strip()
 

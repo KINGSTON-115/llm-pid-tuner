@@ -24,6 +24,24 @@ If you don't want to set up a Python environment, just download the pre-built ex
 
 ---
 
+## Quick Start (download the exe, no Python required)
+
+If you don't want to set up a Python environment, just download the pre-built exe:
+
+1. Download the latest `llm-pid-tuner.exe` from the Releases page
+2. Place `llm-pid-tuner.exe` and `config.json` in the same folder
+3. Edit `config.json` — fill in your LLM API key and Simulink settings (see Step 3 below)
+4. Double-click `llm-pid-tuner.exe`, or run it from a terminal:
+   ```
+   llm-pid-tuner.exe
+   ```
+5. Select "Simulink simulation tuning" from the menu — the tool starts MATLAB automatically and begins tuning
+6. Press Enter to exit when tuning completes; results are saved back to the `.slx` file automatically
+
+> **Prerequisite:** MATLAB must be installed and licensed on your machine. The exe bundles the MATLAB Engine connector but still requires a local MATLAB installation.
+
+---
+
 ## When to use this mode
 
 - You have a Simulink plant model and want a reasonable PID starting point quickly

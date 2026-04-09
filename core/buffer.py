@@ -110,7 +110,7 @@ class AdvancedDataBuffer:
         )
         lines.append("")
         lines.append(f"## 时间序列数据摘要 (采样 {len(sampled_data)} 点):")
-        lines.append("Timestamp, Input, PWM, Error")
+        lines.append("SimTime(ms), Input, PWM, Error")
 
         for d in sampled_data:
             lines.append(
