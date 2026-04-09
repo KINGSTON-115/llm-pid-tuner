@@ -176,42 +176,16 @@ If you prefer starting from a template, check `config.example.json`.
 }
 ```
 
-Those six fields are the **minimum setup**.
+Those six fields are the **minimum setup** for a single-controller model.
 
-- If your goal is simply to get the first run working, start with only those six
-- If your model already tags the main PID block as `llm_pid_tuner_primary`, the second one as `llm_pid_tuner_secondary`, or uses standard `PID Controller` blocks, `MATLAB_PID_BLOCK_PATH` can usually be left empty
-- `MATLAB_CONTROL_SIGNAL` and `MATLAB_SETPOINT_BLOCK` are **recommended upgrades**, not first-run requirements
-- If you already know the exact block paths, prefer explicit fields instead of filling every advanced field up front
+If your Simulink model is not the simplest "single standard PID Controller block + one output signal" layout (e.g., dual-loop, split P/I/D gain blocks), the tool also supports advanced compatibility fields.
 
-If your Simulink model is not the simplest "one standard PID Controller block + one output signal" layout, these compatibility fields are also available:
-
-- `MATLAB_OUTPUT_SIGNAL_CANDIDATES`: try several possible output variable names
-- `MATLAB_CONTROL_SIGNAL`: explicitly capture the controller output, for example `u_out`; if omitted, the bridge also tries common names like `u_out`, `u`, `pwm`, `control`
-- `MATLAB_SETPOINT_BLOCK`: explicitly point to the setpoint source block
-- `MATLAB_PID_BLOCK_PATHS`: provide several candidate controller block paths
-- `MATLAB_PID_BLOCK_PATH_2`: second controller block for dual-loop / cascade setups
-- `MATLAB_P_BLOCK_PATH` `MATLAB_I_BLOCK_PATH` `MATLAB_D_BLOCK_PATH`: advanced compatibility mode for split P/I/D gain blocks
-- `MATLAB_P_BLOCK_PATH_2` `MATLAB_I_BLOCK_PATH_2` `MATLAB_D_BLOCK_PATH_2`: advanced compatibility mode for a second split-gain controller
-
-The naming rule is:
-
-- fields without a suffix are the first / primary controller, for example `MATLAB_PID_BLOCK_PATH`
-- fields with `_2` are the second controller, for example `MATLAB_PID_BLOCK_PATH_2`
-- auto-discovery now prefers controller block Tags first, then standard `PID Controller` block types, and only then falls back to the older scoring heuristic
-
-How to find those paths:
-
-- Click the block you want in Simulink
-- Run `gcb` in the MATLAB Command Window
-- The returned string is the full block path, and can be copied directly into `MATLAB_PID_BLOCK_PATH`, `MATLAB_PID_BLOCK_PATH_2`, `MATLAB_SETPOINT_BLOCK`, or `MATLAB_P/I/D_BLOCK_PATH(_2)`
-
-The least confusing way to think about these fields is:
-
-- Exact known path: use `MATLAB_PID_BLOCK_PATH`, `MATLAB_PID_BLOCK_PATH_2`, `MATLAB_SETPOINT_BLOCK`, or `MATLAB_P/I/D_BLOCK_PATH`
-- Several likely paths but not sure which one is correct yet: use `MATLAB_PID_BLOCK_PATHS`
-- Auto-discovery: treat it as a fallback, not the main configuration strategy
-
-For worked examples, path-finding tips, and troubleshooting, see the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
+> **Please refer directly to the full [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)**.
+> The guide covers:
+> - How to find exact Simulink block paths easily
+> - How to configure dual controllers and split gain blocks
+> - When `MATLAB_ROOT` is actually required
+> - How to troubleshoot environment errors (e.g., `No module named matlab.engine`)
 
 ### Config groups by use case
 
@@ -225,9 +199,7 @@ For worked examples, path-finding tips, and troubleshooting, see the [MATLAB/Sim
 
 ### When should I fill `MATLAB_ROOT`?
 
-- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `D:/Program Files/MATLAB/R2025b`
-- For source runs, you can leave it empty if the current Python environment already imports `matlab.engine` successfully
-- If source mode still fails with `No module named matlab.engine` or cannot locate the runtime, fill `MATLAB_ROOT` and follow the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)
+See the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
 
 Environment variables are also supported and override `config.json`, but beginners usually find `config.json` easier.
 
