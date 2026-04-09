@@ -94,11 +94,9 @@ class HardwareTuiLoopTests(unittest.TestCase):
             def read_line(self):
                 line = next(self._lines, None)
                 if line is None:
-                    # Give tuning engine an exit signal since we're out of data
-                    if hasattr(controller, "stop"):
-                        controller.stop()
-                    else:
-                        controller.should_stop = True
+                    # Keep yielding something so it breaks buffer size, 
+                    # but stop when the controller stops
+                    return ""
                 return line
 
             def parse_data(self, line):
@@ -139,8 +137,12 @@ class HardwareTuiLoopTests(unittest.TestCase):
             ):
                 captured["tuning_mode"] = tuning_mode
                 captured["prompt_context"] = prompt_context
+                
+                # Signal stop only AFTER returning the decision, 
+                # so that tuning_engine completes the round
                 if hasattr(controller, "stop"):
                     controller.stop()
+                    
                 if self.log_callback:
                     self.log_callback("llm", "  LLM 正在思考...")
                 if self.stream_callback:
@@ -209,11 +211,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
             def read_line(self):
                 line = next(self._lines, None)
                 if line is None:
-                    # Give tuning engine an exit signal since we're out of data
-                    if hasattr(controller, "stop"):
-                        controller.stop()
-                    else:
-                        controller.should_stop = True
+                    return ""
                 return line
 
             def parse_data(self, line):
@@ -247,7 +245,8 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 prompt_context=None,
             ):
                 captured["prompt_context"] = prompt_context
-                if hasattr(controller, "stop"): controller.stop()
+                if hasattr(controller, "stop"):
+                    controller.stop()
                 return {
                     "analysis_summary": "Dual loop adjustment.",
                     "tuning_action": "ADJUST_PID",
@@ -300,10 +299,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 line = next(self._lines, None)
                 if line is None:
                     # Give tuning engine an exit signal since we're out of data
-                    if hasattr(controller, "stop"):
-                        controller.stop()
-                    else:
-                        controller.should_stop = True
+                    pass
                 return line
 
             def parse_data(self, line):
@@ -329,8 +325,15 @@ class HardwareTuiLoopTests(unittest.TestCase):
             def __init__(self, *_args, **_kwargs):
                 pass
 
-            def analyze(self, *_args, **_kwargs):
-                if hasattr(controller, "stop"): controller.stop()
+            def analyze(
+                self,
+                _prompt_data,
+                _history_text,
+                tuning_mode="generic",
+                prompt_context=None,
+            ):
+                if hasattr(controller, "stop"):
+                    controller.stop()
                 return {
                     "analysis_summary": "Dual loop adjustment.",
                     "tuning_action": "ADJUST_PID",

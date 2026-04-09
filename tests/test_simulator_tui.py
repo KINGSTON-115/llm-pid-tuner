@@ -253,8 +253,6 @@ class SimulatorLoopTests(unittest.TestCase):
 
             def get_data(self):
                 self._round_num += 1
-                if self._round_num >= 6:
-                    pass # We do not stop controller here so loops finish based on limits
                 return list(self._last_data)
 
             def set_pid_pair(self, p, s):
@@ -271,7 +269,7 @@ class SimulatorLoopTests(unittest.TestCase):
         with patch.object(simulator, "LLMTuner", FakeTuner):
             with patch.dict(
                 simulator.CONFIG,
-                {"BUFFER_SIZE": 5, "MAX_TUNING_ROUNDS": 2},
+                {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
                 clear=False,
             ):
                 result = simulator._run_tuning_loop(

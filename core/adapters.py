@@ -82,7 +82,7 @@ class SimulinkEnv(BaseTuningEnvironment):
                     return samples
                 samples.append(data)
                 
-            if len(samples) >= getattr(self.bridge, "target_buffer_size", CONFIG["BUFFER_SIZE"]):
+            if len(samples) >= getattr(self.bridge, "target_steps", getattr(self.bridge, "target_buffer_size", CONFIG["BUFFER_SIZE"])):
                 break
                 
         return samples

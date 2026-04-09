@@ -209,7 +209,7 @@ def run_tuning_engine(
             publish_decision(event_sink, evaluation.round_index, decision)
 
             _console(emit_console, f"\n[Action] {decision.action} -> P={decision.safe_pid['p']}, I={decision.safe_pid['i']}, D={decision.safe_pid['d']}")
-            if decision.completed_reason == "llm_marked_done":
+            if decision.completed_reason == "llm_marked_done" and not disable_early_exit:
                 session.completed_reason = "llm_marked_done"
                 _console(emit_console, "\n[SUCCESS] LLM marked the tuning run as done.")
                 _emit_lifecycle(
