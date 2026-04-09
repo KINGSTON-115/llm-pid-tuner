@@ -171,6 +171,156 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertEqual(captured["tuning_mode"], "hardware")
         self.assertEqual(captured["prompt_context"]["serial_port"], "COM9")
 
+    def test_hardware_loop_sends_set2_when_llm_returns_dual_controller_result(self):
+        sent_commands: list[str] = []
+        captured = {}
+
+        class FakeBridge:
+            def __init__(self, _port, _baudrate, emit_console=True):
+                self.emit_console = emit_console
+                self.last_error = ""
+                self._lines = iter(
+                    [
+                        "0,200,100,200,100,1.0,0.1,0.05,2.0,0.2,0.02",
+                        "1,200,120,200,80,1.0,0.1,0.05,2.0,0.2,0.02",
+                        "2,200,150,200,50,1.0,0.1,0.05,2.0,0.2,0.02",
+                    ]
+                )
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+            def read_line(self):
+                return next(self._lines, None)
+
+            def parse_data(self, line):
+                parts = line.split(",")
+                return {
+                    "timestamp": float(parts[0]),
+                    "setpoint": float(parts[1]),
+                    "input": float(parts[2]),
+                    "pwm": float(parts[3]),
+                    "error": float(parts[4]),
+                    "p": float(parts[5]),
+                    "i": float(parts[6]),
+                    "d": float(parts[7]),
+                    "p2": float(parts[8]),
+                    "i2": float(parts[9]),
+                    "d2": float(parts[10]),
+                }
+
+            def send_command(self, cmd):
+                sent_commands.append(cmd)
+
+        class FakeTuner:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def analyze(
+                self,
+                _prompt_data,
+                _history_text,
+                tuning_mode="generic",
+                prompt_context=None,
+            ):
+                captured["prompt_context"] = prompt_context
+                return {
+                    "analysis_summary": "Dual loop adjustment.",
+                    "tuning_action": "ADJUST_PID",
+                    "controller_1": {"p": 1.3, "i": 0.15, "d": 0.06},
+                    "controller_2": {"p": 2.4, "i": 0.25, "d": 0.03},
+                    "status": "DONE",
+                }
+
+        with patch.object(tuner, "SerialBridge", FakeBridge):
+            with patch.object(tuner, "LLMTuner", FakeTuner):
+                with patch.dict(
+                    tuner.CONFIG,
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
+                    clear=False,
+                ):
+                    tuner._run_hardware_tuning_loop(
+                        "COM9",
+                        emit_console=False,
+                    )
+
+        self.assertIn("SET P:1.3 I:0.15 D:0.06", sent_commands)
+        self.assertIn("SET2 P:2.4 I:0.25 D:0.03", sent_commands)
+        self.assertEqual(captured["prompt_context"]["controller_count"], 2)
+
+    def test_hardware_loop_guardrails_secondary_controller_before_set2(self):
+        sent_commands: list[str] = []
+
+        class FakeBridge:
+            def __init__(self, _port, _baudrate, emit_console=True):
+                self.emit_console = emit_console
+                self.last_error = ""
+                self._lines = iter(
+                    [
+                        "0,200,100,200,100,1.0,0.1,0.05,2.0,0.2,0.02",
+                        "1,200,120,200,80,1.0,0.1,0.05,2.0,0.2,0.02",
+                        "2,200,150,200,50,1.0,0.1,0.05,2.0,0.2,0.02",
+                    ]
+                )
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+            def read_line(self):
+                return next(self._lines, None)
+
+            def parse_data(self, line):
+                parts = line.split(",")
+                return {
+                    "timestamp": float(parts[0]),
+                    "setpoint": float(parts[1]),
+                    "input": float(parts[2]),
+                    "pwm": float(parts[3]),
+                    "error": float(parts[4]),
+                    "p": float(parts[5]),
+                    "i": float(parts[6]),
+                    "d": float(parts[7]),
+                    "p2": float(parts[8]),
+                    "i2": float(parts[9]),
+                    "d2": float(parts[10]),
+                }
+
+            def send_command(self, cmd):
+                sent_commands.append(cmd)
+
+        class FakeTuner:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def analyze(self, *_args, **_kwargs):
+                return {
+                    "analysis_summary": "Dual loop adjustment.",
+                    "tuning_action": "ADJUST_PID",
+                    "controller_1": {"p": 1.3, "i": 0.15, "d": 0.06},
+                    "controller_2": {"p": 99.0, "i": 5.0, "d": 3.0},
+                    "status": "DONE",
+                }
+
+        with patch.object(tuner, "SerialBridge", FakeBridge):
+            with patch.object(tuner, "LLMTuner", FakeTuner):
+                with patch.dict(
+                    tuner.CONFIG,
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
+                    clear=False,
+                ):
+                    tuner._run_hardware_tuning_loop(
+                        "COM9",
+                        emit_console=False,
+                    )
+
+        self.assertIn("SET2 P:6.0 I:0.8 D:0.08", sent_commands)
+
     def test_hardware_connection_failure_reports_error_result(self):
         event_queue = Queue()
         event_sink = QueueEventSink(event_queue)

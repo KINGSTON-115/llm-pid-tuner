@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 llm/client.py - LLM client wrapper with streaming and prompt selection.
@@ -7,86 +7,14 @@ llm/client.py - LLM client wrapper with streaming and prompt selection.
 from __future__ import annotations
 
 import json
-import math
-import re
 import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional
 
 from core.config import CONFIG
-from core.i18n import tr
 from llm.prompts import SYSTEM_PROMPT, build_user_prompt, get_system_prompt
-
-
-class JSONStreamFormatter:
-    """Incrementally formats streamed JSON-like output for the console."""
-
-    def __init__(self, writer: Optional[Callable[[str], None]] = None):
-        self.displayed_keys = set()
-        self.current_key = None
-        self.printed_text = ""
-        self.writer = writer or self._default_writer
-        self.key_names = {
-            "thought_process": tr("\n  [思考]", "\n  [Thought]"),
-            "analysis_summary": tr("\n  [分析]", "\n  [Analysis]"),
-            "tuning_action": tr("\n  [调参]", "\n  [Action]"),
-            "p": tr("\n  [建议] P", "\n  [PID] P"),
-            "i": " I",
-            "d": " D",
-            "status": tr("\n  [状态]", "\n  [Status]"),
-        }
-        self.str_re = re.compile(r'"([a-zA-Z_]+)"\s*:\s*"((?:[^"\\]|\\.)*)')
-        self.num_re = re.compile(
-            r'"([a-zA-Z_]+)"\s*:\s*([0-9\.\-]+|true|false|null)\s*[,}\n]', re.IGNORECASE
-        )
-
-    @staticmethod
-    def _default_writer(text: str) -> None:
-        print(text, end="", flush=True)
-
-    def process(self, full_text: str) -> None:
-        str_matches = list(self.str_re.finditer(full_text))
-        for match in str_matches:
-            key = match.group(1)
-            raw_value = match.group(2)
-
-            if key not in self.displayed_keys:
-                self.displayed_keys.add(key)
-                self.current_key = key
-                self.printed_text = ""
-                name = self.key_names.get(key, f"\n  [{key}]")
-                self.writer(f"{name} ")
-
-            if self.current_key != key:
-                continue
-
-            decoded = (
-                raw_value.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
-            )
-            if raw_value.endswith("\\"):
-                decoded = decoded[:-1]
-
-            new_text = decoded[len(self.printed_text) :]
-            if not new_text:
-                continue
-            if key in {"thought_process", "analysis_summary"}:
-                new_text = new_text.replace("\n", "\n    ")
-            self.writer(new_text)
-            self.printed_text += new_text
-
-        num_matches = list(self.num_re.finditer(full_text))
-        for match in num_matches:
-            key = match.group(1)
-            value = match.group(2)
-            if key in self.displayed_keys:
-                continue
-
-            self.displayed_keys.add(key)
-            name = self.key_names.get(key, f"\n  [{key}]")
-            if key in {"p", "i", "d"}:
-                self.writer(f",{name}={value}")
-            else:
-                self.writer(f"{name}: {value}")
+from llm.response_parser import parse_json_response
+from llm.stream_formatter import JSONStreamFormatter
 
 
 class LLMTuner:
@@ -169,7 +97,7 @@ class LLMTuner:
             self.requests = self._import_requests()
 
     def _interruptible_sleep(self, seconds: float) -> bool:
-        """每 0.1s 轮询 abort_check，若中止返回 False，否则睡完返回 True。"""
+        """Poll `abort_check` every 0.1s while sleeping."""
         deadline = time.time() + seconds
         while time.time() < deadline:
             if self.abort_check and self.abort_check():
@@ -423,96 +351,18 @@ class LLMTuner:
             print()
         return full_content
 
-    def _extract_json_candidates(self, text: str) -> List[str]:
-        candidates: List[str] = []
-        stripped = text.strip()
-
-        if stripped:
-            candidates.append(stripped)
-
-        fenced_matches = re.findall(
-            r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE
-        )
-        candidates.extend(fenced_matches)
-
-        for start in range(len(text)):
-            if text[start] != "{":
-                continue
-            depth = 0
-            for end in range(start, len(text)):
-                char = text[end]
-                if char == "{":
-                    depth += 1
-                elif char == "}":
-                    depth -= 1
-                    if depth == 0:
-                        candidates.append(text[start : end + 1])
-                        break
-
-        return candidates
-
-    def _sanitize_result(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        sanitized = dict(data)
-
-        for key in ("p", "i", "d"):
-            value = sanitized.get(key)
-            try:
-                numeric = float(value)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                sanitized.pop(key, None)
-                continue
-
-            if not math.isfinite(numeric) or numeric < 0:
-                sanitized.pop(key, None)
-            else:
-                sanitized[key] = numeric
-
-        if "status" in sanitized:
-            status = str(sanitized["status"]).strip().upper()
-            sanitized["status"] = "DONE" if status == "DONE" else "TUNING"
-
-        if not sanitized.get("analysis_summary"):
-            sanitized["analysis_summary"] = str(
-                sanitized.get("analysis") or "No analysis summary provided."
-            )
-
-        if not sanitized.get("thought_process"):
-            sanitized["thought_process"] = str(
-                sanitized.get("analysis_summary") or "No detailed reasoning provided."
-            )
-
-        if not sanitized.get("tuning_action"):
-            sanitized["tuning_action"] = "ADJUST_PID"
-
-        return sanitized
-
     def _parse_json(self, text: str) -> Optional[Dict[str, Any]]:
-        for candidate in self._extract_json_candidates(text):
-            try:
-                return self._sanitize_result(json.loads(candidate))
-            except Exception:
-                pass
-        return None
+        return parse_json_response(text)
 
-    def analyze(
+    def request_json(
         self,
-        prompt_data: str,
-        history_text: str,
-        tuning_mode: str = "generic",
-        prompt_context: Optional[Dict[str, Any]] = None,
+        *,
+        system_prompt: str,
+        user_prompt: str,
     ) -> Optional[Dict[str, Any]]:
-        system_prompt = get_system_prompt(tuning_mode)
-        user_prompt = build_user_prompt(
-            prompt_data,
-            history_text,
-            tuning_mode=tuning_mode,
-            prompt_context=prompt_context,
-        )
-
         openai_msgs: List[Any] = [{"role": "system", "content": system_prompt}]
-        anthropic_msgs: List[Any] = []
+        anthropic_msgs: List[Any] = [{"role": "user", "content": user_prompt}]
         openai_msgs.append({"role": "user", "content": user_prompt})
-        anthropic_msgs.append({"role": "user", "content": user_prompt})
 
         try:
             content = self._call_with_retry(
@@ -536,3 +386,20 @@ class LLMTuner:
         except Exception as exc:
             self._emit_log("error", f"[ERROR] LLM request failed after retries: {exc}")
             return None
+
+    def analyze(
+        self,
+        prompt_data: str,
+        history_text: str,
+        tuning_mode: str = "generic",
+        prompt_context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        system_prompt = get_system_prompt(tuning_mode)
+        user_prompt = build_user_prompt(
+            prompt_data,
+            history_text,
+            tuning_mode=tuning_mode,
+            prompt_context=prompt_context,
+        )
+        return self.request_json(system_prompt=system_prompt, user_prompt=user_prompt)
+

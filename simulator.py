@@ -9,7 +9,7 @@ import io
 from queue import Queue
 import time
 import traceback
-from typing import Any
+from typing import Any, Callable
 
 from core.buffer import AdvancedDataBuffer
 from core.config import CONFIG, initialize_runtime_config
@@ -27,23 +27,42 @@ from core.tuning_session import (
 from doctor import collect_doctor_checks, print_doctor_report, summarize_doctor_checks
 from llm.client import LLMTuner
 from pid_safety import (
+    adapt_simulink_pid_limits,
     apply_pid_guardrails,
     build_fallback_suggestion,
     get_pid_limits,
 )
 from sim.model import HeatingSimulator, SETPOINT
+from sim.pre_tuning_dialog import collect_pre_tuning_preferences
+from sim.prompt_context import (
+    build_python_sim_prompt_context,
+    default_prompt_context_for_mode,
+    _merge_prompt_context,
+    refresh_prompt_context_for_mode,
+)
+from core.tuning_loop import (
+    flatten_controller_result,
+    publish_decision,
+    publish_rollback,
+    publish_round_metrics,
+)
 from sim.runtime import (
-    EVENT_DECISION,
     EVENT_LIFECYCLE,
-    EVENT_LOG,
-    EVENT_ROLLBACK,
-    EVENT_ROUND_METRICS,
     EVENT_SAMPLE,
     QueueEventSink,
     SimulationController,
+    emit_console_message as _console,
+    emit_lifecycle as _emit_lifecycle,
+    make_llm_tuner_callbacks,
     now_elapsed,
     publish_event,
     wait_while_paused,
+)
+from sim.simulink_setup import (
+    build_simulink_initial_prompt_context,
+    create_simulink_bridge,
+    load_simulink_runtime_config,
+    validate_simulink_runtime_config,
 )
 from system_id import extract_initial_pid, system_identify
 
@@ -59,48 +78,10 @@ def _get_configured_setpoint(default: float = SETPOINT) -> float:
     except (TypeError, ValueError):
         return float(default)
 
-
-def _console(enabled: bool, message: str) -> None:
-    if enabled:
-        print(message)
-
-
 def _maybe_silence_stdout(enabled: bool):
     if enabled:
         return contextlib.nullcontext()
     return contextlib.redirect_stdout(io.StringIO())
-
-
-def _emit_lifecycle(
-    event_sink: QueueEventSink | None, start_time: float, phase: str, message: str
-) -> None:
-    publish_event(
-        event_sink,
-        EVENT_LIFECYCLE,
-        phase=phase,
-        message=message,
-        elapsed_sec=now_elapsed(start_time),
-    )
-
-
-def _emit_log(
-    event_sink: QueueEventSink | None,
-    start_time: float,
-    label: str,
-    message: str,
-    *,
-    replace_last: bool = False,
-    stream_id: int | None = None,
-) -> None:
-    publish_event(
-        event_sink,
-        EVENT_LOG,
-        label=label,
-        message=message,
-        replace_last=replace_last,
-        stream_id=stream_id,
-        elapsed_sec=now_elapsed(start_time),
-    )
 
 
 def _publish_doctor_checks(
@@ -189,6 +170,28 @@ def _run_simulator_warm_start(
     return safe_pid
 
 
+def _emit_sample_event(
+    event_sink: QueueEventSink | None, sim: Any, data: dict[str, Any]
+) -> None:
+    """Publish EVENT_SAMPLE, including secondary PID fields when the sim
+    exposes them (dual-controller Simulink setups)."""
+    payload: dict[str, Any] = {
+        "timestamp": float(data.get("timestamp", 0.0)),
+        "setpoint": float(data.get("setpoint", 0.0)),
+        "input": float(data.get("input", 0.0)),
+        "pwm": float(data.get("pwm", 0.0)),
+        "error": float(data.get("error", 0.0)),
+        "p": float(data.get("p", 0.0)),
+        "i": float(data.get("i", 0.0)),
+        "d": float(data.get("d", 0.0)),
+    }
+    if getattr(sim, "has_secondary_pid", False):
+        payload["p2"] = float(getattr(sim, "secondary_kp", 0.0))
+        payload["i2"] = float(getattr(sim, "secondary_ki", 0.0))
+        payload["d2"] = float(getattr(sim, "secondary_kd", 0.0))
+    publish_event(event_sink, EVENT_SAMPLE, **payload)
+
+
 def _collect_data(
     sim: Any,
     buffer: AdvancedDataBuffer,
@@ -210,18 +213,7 @@ def _collect_data(
             sim.update()
             data = sim.get_data()
             buffer.add(data)
-            publish_event(
-                event_sink,
-                EVENT_SAMPLE,
-                timestamp=float(data.get("timestamp", 0.0)),
-                setpoint=float(data.get("setpoint", 0.0)),
-                input=float(data.get("input", 0.0)),
-                pwm=float(data.get("pwm", 0.0)),
-                error=float(data.get("error", 0.0)),
-                p=float(data.get("p", 0.0)),
-                i=float(data.get("i", 0.0)),
-                d=float(data.get("d", 0.0)),
-            )
+            _emit_sample_event(event_sink, sim, data)
             steps += 1
             continue
 
@@ -236,34 +228,12 @@ def _collect_data(
             if controller is not None and controller.should_stop:
                 return steps, False
             buffer.add(data)
-            publish_event(
-                event_sink,
-                EVENT_SAMPLE,
-                timestamp=float(data.get("timestamp", 0.0)),
-                setpoint=float(data.get("setpoint", 0.0)),
-                input=float(data.get("input", 0.0)),
-                pwm=float(data.get("pwm", 0.0)),
-                error=float(data.get("error", 0.0)),
-                p=float(data.get("p", 0.0)),
-                i=float(data.get("i", 0.0)),
-                d=float(data.get("d", 0.0)),
-            )
+            _emit_sample_event(event_sink, sim, data)
             steps += 1
             if buffer.is_full():
                 break
 
     return steps, True
-
-
-def _build_python_sim_prompt_context() -> dict[str, Any]:
-    return {
-        "source": "built_in_python_heating_simulator",
-        "plant_family": "single_loop_thermal",
-        "controller_output_signal": "PWM",
-        "pwm_signal_available": True,
-        "tuning_style": "simulation_can_move_faster_than_hardware",
-        "per_round_guardrail_hint": "仿真环境，可适度加大调整幅度，每轮 P 值可调整至当前值的3倍以内，I/D 可调整至当前值的4倍以内。",
-    }
 
 
 def _create_python_simulator(
@@ -277,24 +247,6 @@ def _create_python_simulator(
         sim.set_pid(initial_pid["p"], initial_pid["i"], initial_pid["d"])
         effective_warm_start = False
     return sim, effective_warm_start
-
-
-def _build_simulink_prompt_context(
-    model_path: str, pid_block_path: str, output_signal: str, sim_step_time: float
-) -> dict[str, Any]:
-    return {
-        "source": "matlab_simulink",
-        "model_path": model_path,
-        "pid_block_path": pid_block_path,
-        "output_signal": output_signal,
-        "sim_step_time_sec": sim_step_time,
-        "pwm_signal_available": False,
-        "per_round_guardrail_hint": "仿真环境安全，可以大胆调整参数，每轮 P 值可调整至当前值的5倍以内，I/D 可调整至当前值的6倍以内。",
-        "pwm_field_note": (
-            "The current Simulink bridge fills PWM with a placeholder 0.0. "
-            "Do not treat zero PWM samples as real actuator saturation evidence."
-        ),
-    }
 
 
 def _resolve_llm_mode(mode_label: str, llm_mode: str) -> str:
@@ -311,30 +263,6 @@ def _resolve_llm_mode(mode_label: str, llm_mode: str) -> str:
     return llm_mode
 
 
-def _default_prompt_context_for_mode(sim: Any, llm_mode: str) -> dict[str, Any] | None:
-    if llm_mode == "python_sim":
-        return _build_python_sim_prompt_context()
-
-    if llm_mode != "simulink":
-        return None
-
-    model_path = str(getattr(sim, "model_path", "") or "")
-    pid_block_path = str(getattr(sim, "pid_block_path", "") or "")
-    output_signal = str(getattr(sim, "output_signal", "") or "")
-    sim_step_time = getattr(sim, "sim_step_time", 0.0)
-    try:
-        sim_step_time_value = float(sim_step_time)
-    except (TypeError, ValueError):
-        sim_step_time_value = 0.0
-
-    if not model_path and not pid_block_path and not output_signal:
-        return None
-
-    return _build_simulink_prompt_context(
-        model_path, pid_block_path, output_signal, sim_step_time_value
-    )
-
-
 def _run_tuning_loop(
     sim: Any,
     setpoint: float,
@@ -349,32 +277,31 @@ def _run_tuning_loop(
     disable_early_exit: bool = False,
 ) -> dict[str, Any]:
     llm_mode = _resolve_llm_mode(mode_label, llm_mode)
-    pid_limits = get_pid_limits(llm_mode)
+    base_pid_limits = get_pid_limits(llm_mode)
     if prompt_context is None:
-        prompt_context = _default_prompt_context_for_mode(sim, llm_mode)
+        prompt_context = default_prompt_context_for_mode(sim, llm_mode)
+
+    def _resolve_round_pid_limits(
+        context: dict[str, Any] | None,
+    ) -> dict[str, dict[str, float]]:
+        if llm_mode != "simulink":
+            return get_pid_limits(llm_mode)
+        context_map = context or {}
+        return adapt_simulink_pid_limits(
+            base_pid_limits,
+            control_domain=str(context_map.get("control_domain", "") or ""),
+            controller_1_sample_time=context_map.get("controller_1_sample_time", ""),
+            controller_2_sample_time=context_map.get("controller_2_sample_time", ""),
+            model_fixed_step=context_map.get("model_fixed_step", ""),
+        )
+
+    pid_limits = _resolve_round_pid_limits(prompt_context)
 
     current_stream_round = [0]
-
-    def llm_log_callback(label: str, message: str) -> None:
-        _emit_log(
-            event_sink,
-            start_time,
-            label,
-            message,
-            stream_id=current_stream_round[0] or None,
-        )
-
-    def llm_stream_callback(text: str, done: bool) -> None:
-        _emit_log(
-            event_sink,
-            start_time,
-            "llm_stream",
-            text,
-            replace_last=True,
-            stream_id=current_stream_round[0] or None,
-        )
-
     start_time = time.time()
+    llm_log_callback, llm_stream_callback = make_llm_tuner_callbacks(
+        event_sink, start_time, current_stream_round
+    )
 
     tuner = LLMTuner(
         CONFIG["LLM_API_KEY"],
@@ -419,7 +346,6 @@ def _run_tuning_loop(
 
             round_index = session.round_num + 1
             _console(emit_console, f"\n[Round {round_index}] Collecting data...")
-            # Simulink 每轮独立仿真，需在采集前清空上轮缓冲数据
             if hasattr(sim, "run_step"):
                 session.buffer.reset()
             _emit_lifecycle(
@@ -445,18 +371,7 @@ def _run_tuning_loop(
             evaluation = evaluate_completed_round(
                 session, {"p": sim.kp, "i": sim.ki, "d": sim.kd}
             )
-            publish_event(
-                event_sink,
-                EVENT_ROUND_METRICS,
-                round=round_index,
-                avg_error=float(evaluation.metrics["avg_error"]),
-                max_error=float(evaluation.metrics["max_error"]),
-                steady_state_error=float(evaluation.metrics["steady_state_error"]),
-                overshoot=float(evaluation.metrics["overshoot"]),
-                zero_crossings=int(evaluation.metrics["zero_crossings"]),
-                status=str(evaluation.metrics["status"]),
-                stable_rounds=evaluation.stable_rounds,
-            )
+            publish_round_metrics(event_sink, evaluation, round_index)
 
             if evaluation.best_result_updated:
                 _emit_lifecycle(
@@ -476,21 +391,31 @@ def _run_tuning_loop(
                     else None,
                 )
                 _console(emit_console, f"[Rollback] {rollback_message}")
-                sim.set_pid(
-                    evaluation.rollback_pid["p"],
-                    evaluation.rollback_pid["i"],
-                    evaluation.rollback_pid["d"],
+                if (
+                    evaluation.rollback_secondary_pid is not None
+                    and hasattr(sim, "set_pid_pair")
+                ):
+                    sim.set_pid_pair(
+                        dict(evaluation.rollback_pid),
+                        dict(evaluation.rollback_secondary_pid),
+                    )
+                else:
+                    sim.set_pid(
+                        evaluation.rollback_pid["p"],
+                        evaluation.rollback_pid["i"],
+                        evaluation.rollback_pid["d"],
+                    )
+                apply_rollback(
+                    session,
+                    evaluation.rollback_pid,
+                    rollback_secondary_pid=evaluation.rollback_secondary_pid,
                 )
-                apply_rollback(session, evaluation.rollback_pid)
-                publish_event(
+                publish_rollback(
                     event_sink,
-                    EVENT_ROLLBACK,
-                    round=round_index,
-                    target_round=int(evaluation.best_result["round"])
-                    if evaluation.best_result
-                    else round_index,
-                    pid=dict(evaluation.rollback_pid),
-                    reason=rollback_message,
+                    round_index,
+                    evaluation,
+                    evaluation.rollback_pid,
+                    rollback_message,
                 )
                 if (
                     evaluation.completed_reason == "rollback_to_best"
@@ -539,6 +464,19 @@ def _run_tuning_loop(
                 "llm_request",
                 f"Requesting PID suggestion for round {round_index}.",
             )
+            prompt_context = refresh_prompt_context_for_mode(
+                sim,
+                llm_mode,
+                prompt_context,
+            )
+            pid_limits = _resolve_round_pid_limits(prompt_context)
+            # Make the dual-controller state visible to the LLM prompt.
+            if getattr(sim, "has_secondary_pid", False):
+                session.buffer.secondary_pid = {
+                    "p": float(getattr(sim, "secondary_kp", 0.0)),
+                    "i": float(getattr(sim, "secondary_ki", 0.0)),
+                    "d": float(getattr(sim, "secondary_kd", 0.0)),
+                }
             result = tuner.analyze(
                 session.buffer.to_prompt_data(),
                 session.history.to_prompt_text(),
@@ -546,7 +484,6 @@ def _run_tuning_loop(
                 prompt_context=prompt_context,
             )
 
-            # LLM 被 stop 中断
             if controller is not None and controller.should_stop:
                 session.completed_reason = "stopped_by_user"
                 _console(emit_console, "\n[INFO] Simulation stopped by user.")
@@ -555,12 +492,11 @@ def _run_tuning_loop(
                 )
                 break
 
-            # LLM 被 pause 中断 → 等待恢复后重做本轮
             if controller is not None and controller.is_paused:
                 if not wait_while_paused(controller):
                     session.completed_reason = "stopped_by_user"
                     break
-                continue  # buffer 仍满 → _collect_data 立即返回 → 重新请求 LLM
+                continue
 
             if not result:
                 _emit_lifecycle(
@@ -575,31 +511,34 @@ def _run_tuning_loop(
                     limits=pid_limits,
                 )
 
+            result, primary_result, secondary_result = flatten_controller_result(
+                result, evaluation.current_pid
+            )
+
             decision = finalize_decision(
-                session,
-                evaluation,
-                result,
-                limits=pid_limits,
+                session, evaluation, result, limits=pid_limits,
             )
-            sim.set_pid(
-                decision.safe_pid["p"], decision.safe_pid["i"], decision.safe_pid["d"]
-            )
-            publish_event(
-                event_sink,
-                EVENT_DECISION,
-                round=round_index,
-                action=decision.action,
-                analysis_summary=decision.analysis,
-                fallback_used=decision.fallback_used,
-                guardrail_notes=list(decision.guardrail_notes),
-            )
+            safe_pid = decision.safe_pid
+            if primary_result and hasattr(sim, "set_pid_pair"):
+                secondary_notes = sim.set_pid_pair(
+                    dict(safe_pid),
+                    dict(secondary_result) if secondary_result else None,
+                ) or []
+                if secondary_notes:
+                    decision.guardrail_notes.extend(
+                        f"Controller 2: {note}" for note in secondary_notes
+                    )
+                    session.guardrail_count += 1
+            else:
+                sim.set_pid(safe_pid["p"], safe_pid["i"], safe_pid["d"])
+            publish_decision(event_sink, round_index, decision)
             if decision.guardrail_notes:
                 _console(
                     emit_console,
                     f"[Guardrail] {'; '.join(decision.guardrail_notes)}",
                 )
 
-            if decision.completed_reason == "llm_marked_done":
+            if decision.completed_reason == "llm_marked_done" and not disable_early_exit:
                 session.completed_reason = "llm_marked_done"
                 _emit_lifecycle(
                     event_sink,
@@ -628,13 +567,17 @@ def _run_tuning_loop(
             "finished",
             f"Simulation finished in {elapsed_sec:.1f}s.",
         )
-        _console(
-            emit_console,
-            (
-                f"\n[Summary] elapsed={elapsed_sec:.1f}s "
-                f"final_pid=P={sim.kp:.4f} I={sim.ki:.4f} D={sim.kd:.4f}"
-            ),
+        summary_line = (
+            f"\n[Summary] elapsed={elapsed_sec:.1f}s "
+            f"final_pid=P={sim.kp:.4f} I={sim.ki:.4f} D={sim.kd:.4f}"
         )
+        if getattr(sim, "has_secondary_pid", False):
+            summary_line += (
+                f" | C2 P={getattr(sim, 'secondary_kp', 0.0):.4f}"
+                f" I={getattr(sim, 'secondary_ki', 0.0):.4f}"
+                f" D={getattr(sim, 'secondary_kd', 0.0):.4f}"
+            )
+        _console(emit_console, summary_line)
 
     return {
         "elapsed_sec": now_elapsed(start_time),
@@ -651,21 +594,21 @@ def choose_simulink_ui_mode(force_plain: bool) -> bool:
         return False
 
     print("Simulink 显示模式")
-    print("[1] TUI 模式")
-    print("    若出现乱码或刷屏情况，请重启 exe 并选择 [2] 命令行模式")
-    print("[2] 命令行模式 (--plain 模式)")
+    print("[1] TUI 模式（可能在部分终端出现乱码/刷屏）")
+    print("[2] 命令行模式 (--plain 模式，默认更稳定)")
 
     try:
-        choice = input("Choose a mode [1]: ").strip().lower()
+        choice = input("Choose a mode [2]: ").strip().lower()
     except EOFError:
-        return True
-    return choice not in {"2", "plain", "cmd", "command", "command-line"}
+        return False
+    return choice in {"1", "tui"}
 
 
 def _run_python_simulation_with_tui(
     warm_start: bool = True,
     doctor_checks: list[Any] | None = None,
     initial_pid: dict[str, float] | None = None,
+    prompt_context_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
@@ -688,7 +631,10 @@ def _run_python_simulation_with_tui(
                 setpoint,
                 "Python",
                 llm_mode="python_sim",
-                prompt_context=_build_python_sim_prompt_context(),
+                prompt_context=_merge_prompt_context(
+                    build_python_sim_prompt_context(),
+                    prompt_context_overrides,
+                ),
                 event_sink=event_sink,
                 controller=app.controller,
                 emit_console=False,
@@ -721,6 +667,7 @@ def _run_python_simulation_plain(
     warm_start: bool = True,
     doctor_checks: list[Any] | None = None,
     initial_pid: dict[str, float] | None = None,
+    prompt_context_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     setpoint = _get_configured_setpoint()
     print("=" * 60)
@@ -737,7 +684,10 @@ def _run_python_simulation_plain(
         setpoint,
         "Python",
         llm_mode="python_sim",
-        prompt_context=_build_python_sim_prompt_context(),
+        prompt_context=_merge_prompt_context(
+            build_python_sim_prompt_context(),
+            prompt_context_overrides,
+        ),
         emit_console=True,
         warm_start=effective_warm_start,
         doctor_checks=doctor_checks,
@@ -747,6 +697,7 @@ def _run_python_simulation_plain(
 def _run_simulink_simulation_with_tui(
     doctor_checks: list[Any] | None = None,
     initial_pid: dict[str, float] | None = None,
+    prompt_context_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
@@ -761,6 +712,7 @@ def _run_simulink_simulation_with_tui(
             result = _run_simulink_simulation(
                 initial_pid=pid,
                 doctor_checks=doctor_checks,
+                prompt_context_overrides=prompt_context_overrides,
                 event_sink=event_sink,
                 controller=app.controller,
                 emit_console=False,
@@ -790,6 +742,7 @@ def _run_simulink_simulation_with_tui(
 def _run_simulink_simulation(
     initial_pid: dict[str, float] | None = None,
     doctor_checks: list[Any] | None = None,
+    prompt_context_overrides: dict[str, Any] | None = None,
     event_sink: QueueEventSink | None = None,
     controller: SimulationController | None = None,
     emit_console: bool = True,
@@ -805,44 +758,30 @@ def _run_simulink_simulation(
         )
 
     try:
-        from sim.simulink_bridge import SimulinkBridge
-    except ImportError as exc:
+        settings = load_simulink_runtime_config(CONFIG)
+    except ValueError as exc:
         _emit_terminal_error(str(exc))
         return None
 
-    matlab_model_path = CONFIG.get("MATLAB_MODEL_PATH", "").strip()
-    pid_block_path = CONFIG.get("MATLAB_PID_BLOCK_PATH", "").strip()
-    matlab_root = CONFIG.get("MATLAB_ROOT", "").strip()
-    output_signal = CONFIG.get("MATLAB_OUTPUT_SIGNAL", "").strip()
+    validation_error = validate_simulink_runtime_config(settings)
+    if validation_error:
+        _emit_terminal_error(validation_error)
+        return None
 
     try:
-        sim_step_time = float(CONFIG.get("MATLAB_SIM_STEP_TIME", 10.0))
-        setpoint = float(CONFIG.get("MATLAB_SETPOINT", 200.0))
-    except (TypeError, ValueError) as exc:
-        _emit_terminal_error(f"Invalid Simulink numeric configuration: {exc}")
-        return None
-
-    if not pid_block_path:
-        _emit_terminal_error("MATLAB_PID_BLOCK_PATH is required for Simulink mode.")
-        return None
-    if not output_signal:
-        _emit_terminal_error("MATLAB_OUTPUT_SIGNAL is required for Simulink mode.")
+        sim = create_simulink_bridge(settings)
+    except ImportError as exc:
+        _emit_terminal_error(str(exc))
         return None
 
     _console(emit_console, "=" * 60)
     _console(emit_console, "  LLM PID Tuner PRO - Simulink")
     _console(emit_console, "=" * 60)
-    _console(emit_console, f"Setpoint: {setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}")
-    _console(emit_console, f"Simulink model: {matlab_model_path}")
-
-    sim = SimulinkBridge(
-        model_path=matlab_model_path,
-        setpoint=setpoint,
-        pid_block_path=pid_block_path,
-        output_signal=output_signal,
-        matlab_root=matlab_root,
-        sim_step_time=sim_step_time,
+    _console(
+        emit_console,
+        f"Setpoint: {settings.setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}",
     )
+    _console(emit_console, f"Simulink model: {settings.model_path}")
 
     try:
         with _maybe_silence_stdout(emit_console):
@@ -857,11 +796,12 @@ def _run_simulink_simulation(
     try:
         return _run_tuning_loop(
             sim,
-            setpoint,
+            settings.setpoint,
             "Simulink",
             llm_mode="simulink",
-            prompt_context=_build_simulink_prompt_context(
-                matlab_model_path, pid_block_path, output_signal, sim_step_time
+            prompt_context=_merge_prompt_context(
+                build_simulink_initial_prompt_context(sim, settings),
+                prompt_context_overrides,
             ),
             event_sink=event_sink,
             controller=controller,
@@ -881,9 +821,13 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
 
     if matlab_model_path:
         use_tui = choose_simulink_ui_mode(force_plain)
+        prompt_context_overrides = collect_pre_tuning_preferences("Simulink")
         if use_tui:
             try:
-                return _run_simulink_simulation_with_tui(doctor_checks=doctor_checks)
+                tui_kwargs: dict[str, Any] = {"doctor_checks": doctor_checks}
+                if prompt_context_overrides is not None:
+                    tui_kwargs["prompt_context_overrides"] = prompt_context_overrides
+                return _run_simulink_simulation_with_tui(**tui_kwargs)
             except Exception as exc:
                 print(
                     f"[WARN] Failed to start the TUI ({exc}); falling back to plain output."
@@ -893,13 +837,18 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
                     traceback.print_exc()
 
         print_doctor_report(doctor_checks)
-        return _run_simulink_simulation(doctor_checks=doctor_checks)
+        plain_kwargs: dict[str, Any] = {"doctor_checks": doctor_checks}
+        if prompt_context_overrides is not None:
+            plain_kwargs["prompt_context_overrides"] = prompt_context_overrides
+        return _run_simulink_simulation(**plain_kwargs)
 
+    prompt_context_overrides = collect_pre_tuning_preferences("Python Simulation")
     if not force_plain:
         try:
-            return _run_python_simulation_with_tui(
-                warm_start=True, doctor_checks=doctor_checks
-            )
+            tui_kwargs = {"warm_start": True, "doctor_checks": doctor_checks}
+            if prompt_context_overrides is not None:
+                tui_kwargs["prompt_context_overrides"] = prompt_context_overrides
+            return _run_python_simulation_with_tui(**tui_kwargs)
         except Exception as exc:
             print(
                 f"[WARN] Failed to start the TUI ({exc}); falling back to plain output."
@@ -909,7 +858,10 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
                 traceback.print_exc()
 
     print_doctor_report(doctor_checks)
-    return _run_python_simulation_plain(warm_start=True, doctor_checks=doctor_checks)
+    plain_kwargs = {"warm_start": True, "doctor_checks": doctor_checks}
+    if prompt_context_overrides is not None:
+        plain_kwargs["prompt_context_overrides"] = prompt_context_overrides
+    return _run_python_simulation_plain(**plain_kwargs)
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -30,24 +30,32 @@ from core.tuning_session import (
 )
 from hw.bridge import SerialBridge, safe_pause, select_serial_port
 from llm.client import LLMTuner
-from pid_safety import build_fallback_suggestion
+from pid_safety import apply_pid_guardrails, build_fallback_suggestion, get_pid_limits
+from core.tuning_loop import (
+    flatten_controller_result,
+    publish_decision,
+    publish_rollback,
+    publish_round_metrics,
+)
 from sim.runtime import (
-    EVENT_DECISION,
-    EVENT_LIFECYCLE,
-    EVENT_LOG,
-    EVENT_ROLLBACK,
-    EVENT_ROUND_METRICS,
     EVENT_SAMPLE,
     QueueEventSink,
     SimulationController,
+    emit_console_message as _console,
+    emit_lifecycle as _emit_lifecycle,
+    emit_log as _emit_log,
+    make_llm_tuner_callbacks,
     now_elapsed,
     publish_event,
     wait_while_paused,
 )
 
 
-def _build_hardware_prompt_context(serial_port: str) -> dict[str, Any]:
-    return {
+def _build_hardware_prompt_context(
+    serial_port: str,
+    secondary_pid: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    context = {
         "source": "serial_hardware",
         "serial_port": serial_port,
         "controller_output_signal": "PWM",
@@ -55,6 +63,19 @@ def _build_hardware_prompt_context(serial_port: str) -> dict[str, Any]:
         "tuning_style": "conservative_hardware_safe",
         "per_round_guardrail_hint": "Keep P within about 3x the current value, and keep I/D within about 4x. Prefer smaller moves near stability.",
     }
+    if secondary_pid is not None:
+        context["controller_count"] = 2
+        context["controller_structure"] = "dual_controller"
+        context["controller_2_label"] = "controller_2"
+        context["controller_2_pid"] = dict(secondary_pid)
+    return context
+
+
+def _build_set_command(prefix: str, pid: dict[str, float]) -> str:
+    return (
+        f"{prefix} P:{pid['p']} "
+        f"I:{pid['i']} D:{pid['d']}"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,46 +122,6 @@ def choose_tui_language(default: str = "zh") -> str:
     return default
 
 
-def _console(enabled: bool, message: str, *, end: str = "\n") -> None:
-    if enabled:
-        print(message, end=end, flush=True)
-
-
-def _emit_lifecycle(
-    event_sink: QueueEventSink | None,
-    start_time: float,
-    phase: str,
-    message: str,
-) -> None:
-    publish_event(
-        event_sink,
-        EVENT_LIFECYCLE,
-        phase=phase,
-        message=message,
-        elapsed_sec=now_elapsed(start_time),
-    )
-
-
-def _emit_log(
-    event_sink: QueueEventSink | None,
-    start_time: float,
-    label: str,
-    message: str,
-    *,
-    replace_last: bool = False,
-    stream_id: int | None = None,
-) -> None:
-    publish_event(
-        event_sink,
-        EVENT_LOG,
-        label=label,
-        message=message,
-        replace_last=replace_last,
-        stream_id=stream_id,
-        elapsed_sec=now_elapsed(start_time),
-    )
-
-
 def _run_hardware_tuning_loop(
     serial_port: str,
     event_sink: QueueEventSink | None = None,
@@ -152,25 +133,9 @@ def _run_hardware_tuning_loop(
     session = create_tuning_session(initial_pid=initial_pid)
     start_time = time.time()
     current_stream_round = [0]
-
-    def llm_log_callback(label: str, message: str) -> None:
-        _emit_log(
-            event_sink,
-            start_time,
-            label,
-            message,
-            stream_id=current_stream_round[0] or None,
-        )
-
-    def llm_stream_callback(text: str, done: bool) -> None:
-        _emit_log(
-            event_sink,
-            start_time,
-            "llm_stream",
-            text,
-            replace_last=True,
-            stream_id=current_stream_round[0] or None,
-        )
+    llm_log_callback, llm_stream_callback = make_llm_tuner_callbacks(
+        event_sink, start_time, current_stream_round
+    )
 
     tuner = LLMTuner(
         CONFIG["LLM_API_KEY"],
@@ -259,6 +224,15 @@ def _run_hardware_tuning_loop(
                         p=float(data.get("p", session.buffer.current_pid["p"])),
                         i=float(data.get("i", session.buffer.current_pid["i"])),
                         d=float(data.get("d", session.buffer.current_pid["d"])),
+                        **(
+                            {
+                                "p2": float(data.get("p2", 0.0)),
+                                "i2": float(data.get("i2", 0.0)),
+                                "d2": float(data.get("d2", 0.0)),
+                            }
+                            if "p2" in data
+                            else {}
+                        ),
                     )
                     _console(
                         emit_console,
@@ -276,18 +250,7 @@ def _run_hardware_tuning_loop(
                 session,
                 dict(session.buffer.current_pid),
             )
-            publish_event(
-                event_sink,
-                EVENT_ROUND_METRICS,
-                round=evaluation.round_index,
-                avg_error=float(evaluation.metrics["avg_error"]),
-                max_error=float(evaluation.metrics["max_error"]),
-                steady_state_error=float(evaluation.metrics["steady_state_error"]),
-                overshoot=float(evaluation.metrics["overshoot"]),
-                zero_crossings=int(evaluation.metrics["zero_crossings"]),
-                status=str(evaluation.metrics["status"]),
-                stable_rounds=evaluation.stable_rounds,
-            )
+            publish_round_metrics(event_sink, evaluation, evaluation.round_index)
             _console(
                 emit_console,
                 f"[第 {evaluation.round_index} 轮] 分析中... AvgErr={evaluation.metrics['avg_error']:.2f}, Status={evaluation.metrics['status']}",
@@ -306,10 +269,6 @@ def _run_hardware_tuning_loop(
                 _emit_log(event_sink, start_time, "best", best_message)
 
             if evaluation.rollback_pid:
-                rollback_message = (
-                    f"当前表现劣于第 {evaluation.best_result['round']} 轮最佳结果，恢复到 "
-                    f"P={evaluation.rollback_pid['p']}, I={evaluation.rollback_pid['i']}, D={evaluation.rollback_pid['d']}"
-                )
                 rollback_message = record_rollback_round(
                     session,
                     evaluation,
@@ -317,23 +276,28 @@ def _run_hardware_tuning_loop(
                     target_round=int(evaluation.best_result["round"]) if evaluation.best_result else None,
                 )
                 _console(emit_console, f"[Rollback] {rollback_message}")
-                publish_event(
+                publish_rollback(
                     event_sink,
-                    EVENT_ROLLBACK,
-                    round=evaluation.round_index,
-                    target_round=int(evaluation.best_result["round"]) if evaluation.best_result else evaluation.round_index,
-                    pid=dict(evaluation.rollback_pid),
-                    reason=rollback_message,
+                    evaluation.round_index,
+                    evaluation,
+                    evaluation.rollback_pid,
+                    rollback_message,
                 )
 
-                cmd = (
-                    f"SET P:{evaluation.rollback_pid['p']} "
-                    f"I:{evaluation.rollback_pid['i']} D:{evaluation.rollback_pid['d']}"
-                )
+                cmd = _build_set_command("SET", evaluation.rollback_pid)
                 bridge.send_command(cmd)
                 _emit_log(event_sink, start_time, "cmd", cmd)
                 _console(emit_console, f"[CMD] Sent: {cmd}")
-                apply_rollback(session, evaluation.rollback_pid)
+                if evaluation.rollback_secondary_pid is not None:
+                    cmd2 = _build_set_command("SET2", evaluation.rollback_secondary_pid)
+                    bridge.send_command(cmd2)
+                    _emit_log(event_sink, start_time, "cmd", cmd2)
+                    _console(emit_console, f"[CMD] Sent: {cmd2}")
+                apply_rollback(
+                    session,
+                    evaluation.rollback_pid,
+                    rollback_secondary_pid=evaluation.rollback_secondary_pid,
+                )
 
                 if evaluation.completed_reason == "rollback_to_best":
                     session.completed_reason = "rollback_to_best"
@@ -390,7 +354,10 @@ def _run_hardware_tuning_loop(
                 prompt_data,
                 history_text,
                 tuning_mode="hardware",
-                prompt_context=_build_hardware_prompt_context(serial_port),
+                prompt_context=_build_hardware_prompt_context(
+                    serial_port,
+                    secondary_pid=session.buffer.secondary_pid,
+                ),
             )
 
             if not result:
@@ -405,16 +372,12 @@ def _run_hardware_tuning_loop(
                     evaluation.current_pid, evaluation.metrics
                 )
 
-            decision = finalize_decision(session, evaluation, result)
-            publish_event(
-                event_sink,
-                EVENT_DECISION,
-                round=evaluation.round_index,
-                action=decision.action,
-                analysis_summary=decision.analysis,
-                fallback_used=decision.fallback_used,
-                guardrail_notes=list(decision.guardrail_notes),
+            result, _primary_result, secondary_result = flatten_controller_result(
+                result,
+                evaluation.current_pid,
             )
+            decision = finalize_decision(session, evaluation, result)
+            publish_decision(event_sink, evaluation.round_index, decision)
 
             _console(
                 emit_console,
@@ -425,13 +388,36 @@ def _run_hardware_tuning_loop(
             if decision.fallback_used:
                 _console(emit_console, "[Fallback] 本轮使用规则策略替代 LLM 建议。")
 
-            cmd = (
-                f"SET P:{decision.safe_pid['p']} "
-                f"I:{decision.safe_pid['i']} D:{decision.safe_pid['d']}"
-            )
+            cmd = _build_set_command("SET", decision.safe_pid)
             bridge.send_command(cmd)
             _emit_log(event_sink, start_time, "cmd", cmd)
             _console(emit_console, f"[CMD] Sent: {cmd}")
+            if isinstance(secondary_result, dict):
+                secondary_current_pid = (
+                    dict(session.buffer.secondary_pid)
+                    if session.buffer.secondary_pid is not None
+                    else {"p": 0.0, "i": 0.0, "d": 0.0}
+                )
+                safe_secondary_pid, secondary_guardrail_notes = apply_pid_guardrails(
+                    secondary_current_pid,
+                    secondary_result,
+                    limits=get_pid_limits("hardware"),
+                )
+                safe_secondary_pid = {
+                    "p": float(safe_secondary_pid["p"]),
+                    "i": float(safe_secondary_pid["i"]),
+                    "d": float(safe_secondary_pid["d"]),
+                }
+                if secondary_guardrail_notes:
+                    _console(
+                        emit_console,
+                        f"[Guardrail] Controller 2: {'; '.join(secondary_guardrail_notes)}",
+                    )
+                cmd2 = _build_set_command("SET2", safe_secondary_pid)
+                bridge.send_command(cmd2)
+                _emit_log(event_sink, start_time, "cmd", cmd2)
+                _console(emit_console, f"[CMD] Sent: {cmd2}")
+                session.buffer.secondary_pid = dict(safe_secondary_pid)
 
             if decision.completed_reason == "llm_marked_done":
                 session.completed_reason = "llm_marked_done"

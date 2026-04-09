@@ -169,12 +169,49 @@ If you prefer starting from a template, check `config.example.json`.
 {
   "MATLAB_MODEL_PATH": "C:/models/my_pid_model.slx",
   "MATLAB_PID_BLOCK_PATH": "my_pid_model/PID Controller",
-  "MATLAB_ROOT": "C:/Program Files/MATLAB/R2022b",
+  "MATLAB_ROOT": "D:/Program Files/MATLAB/R2025b",
   "MATLAB_OUTPUT_SIGNAL": "y_out",
   "MATLAB_SIM_STEP_TIME": 15.0,
   "MATLAB_SETPOINT": 200.0
 }
 ```
+
+Those six fields are the **minimum setup**.
+
+- If your goal is simply to get the first run working, start with only those six
+- If your model already tags the main PID block as `llm_pid_tuner_primary`, the second one as `llm_pid_tuner_secondary`, or uses standard `PID Controller` blocks, `MATLAB_PID_BLOCK_PATH` can usually be left empty
+- `MATLAB_CONTROL_SIGNAL` and `MATLAB_SETPOINT_BLOCK` are **recommended upgrades**, not first-run requirements
+- If you already know the exact block paths, prefer explicit fields instead of filling every advanced field up front
+
+If your Simulink model is not the simplest "one standard PID Controller block + one output signal" layout, these compatibility fields are also available:
+
+- `MATLAB_OUTPUT_SIGNAL_CANDIDATES`: try several possible output variable names
+- `MATLAB_CONTROL_SIGNAL`: explicitly capture the controller output, for example `u_out`; if omitted, the bridge also tries common names like `u_out`, `u`, `pwm`, `control`
+- `MATLAB_SETPOINT_BLOCK`: explicitly point to the setpoint source block
+- `MATLAB_PID_BLOCK_PATHS`: provide several candidate controller block paths
+- `MATLAB_PID_BLOCK_PATH_2`: second controller block for dual-loop / cascade setups
+- `MATLAB_P_BLOCK_PATH` `MATLAB_I_BLOCK_PATH` `MATLAB_D_BLOCK_PATH`: advanced compatibility mode for split P/I/D gain blocks
+- `MATLAB_P_BLOCK_PATH_2` `MATLAB_I_BLOCK_PATH_2` `MATLAB_D_BLOCK_PATH_2`: advanced compatibility mode for a second split-gain controller
+
+The naming rule is:
+
+- fields without a suffix are the first / primary controller, for example `MATLAB_PID_BLOCK_PATH`
+- fields with `_2` are the second controller, for example `MATLAB_PID_BLOCK_PATH_2`
+- auto-discovery now prefers controller block Tags first, then standard `PID Controller` block types, and only then falls back to the older scoring heuristic
+
+How to find those paths:
+
+- Click the block you want in Simulink
+- Run `gcb` in the MATLAB Command Window
+- The returned string is the full block path, and can be copied directly into `MATLAB_PID_BLOCK_PATH`, `MATLAB_PID_BLOCK_PATH_2`, `MATLAB_SETPOINT_BLOCK`, or `MATLAB_P/I/D_BLOCK_PATH(_2)`
+
+The least confusing way to think about these fields is:
+
+- Exact known path: use `MATLAB_PID_BLOCK_PATH`, `MATLAB_PID_BLOCK_PATH_2`, `MATLAB_SETPOINT_BLOCK`, or `MATLAB_P/I/D_BLOCK_PATH`
+- Several likely paths but not sure which one is correct yet: use `MATLAB_PID_BLOCK_PATHS`
+- Auto-discovery: treat it as a fallback, not the main configuration strategy
+
+For worked examples, path-finding tips, and troubleshooting, see the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
 
 ### Config groups by use case
 
@@ -183,12 +220,12 @@ If you prefer starting from a template, check `config.example.json`.
 | Serial hardware | Real hardware tuning | `SERIAL_PORT` `BAUD_RATE` | Start with `SERIAL_PORT: "AUTO"` and match the firmware baud rate |
 | LLM basics | Required in every mode | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | This is the core set needed for any tuning run |
 | Tuning behavior | Optional | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` | Leave defaults unless you are tuning strategy or debugging |
-| Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT` | Points to the model, PID block, MATLAB install, and output signal |
+| Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`, plus optional `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | Start with the minimum six fields, then add compatibility fields only when needed |
 | Proxy | Only if you need one | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | Leave empty to disable |
 
 ### When should I fill `MATLAB_ROOT`?
 
-- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `C:/Program Files/MATLAB/R2022b`
+- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `D:/Program Files/MATLAB/R2025b`
 - For source runs, you can leave it empty if the current Python environment already imports `matlab.engine` successfully
 - If source mode still fails with `No module named matlab.engine` or cannot locate the runtime, fill `MATLAB_ROOT` and follow the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)
 

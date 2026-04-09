@@ -30,6 +30,20 @@ class DemoSerialBridgeTests(unittest.TestCase):
         self.assertAlmostEqual(second_data["d"], 0.1, places=3)
         self.assertGreaterEqual(second_data["timestamp"], first_data["timestamp"])
 
+    def test_demo_port_supports_set2_and_emits_secondary_pid_fields(self):
+        bridge = SerialBridge(DEMO_SERIAL_PORT, 115200, emit_console=False)
+
+        self.assertTrue(bridge.connect())
+        bridge.send_command("SET2 P:3.5 I:0.7 D:0.2")
+        line = bridge.read_line()
+        data = bridge.parse_data(line)
+        bridge.disconnect()
+
+        self.assertIsNotNone(data)
+        self.assertAlmostEqual(data["p2"], 3.5, places=3)
+        self.assertAlmostEqual(data["i2"], 0.7, places=3)
+        self.assertAlmostEqual(data["d2"], 0.2, places=3)
+
 
 class SelectSerialPortTests(unittest.TestCase):
     def test_returns_demo_port_when_no_devices_and_user_requests_demo(self):

@@ -12,7 +12,7 @@ PID 参数安全护栏。
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Mapping, Tuple
 
 
 PID_KEYS = ("p", "i", "d")
@@ -60,6 +60,80 @@ def get_pid_limits(mode: str | None = None) -> Dict[str, Dict[str, float]]:
         source = DEFAULT_PID_LIMITS
 
     return {key: dict(value) for key, value in source.items()}
+
+
+def _parse_positive_sample_time(value: Any) -> float | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+
+    try:
+        numeric = float(text)
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(numeric) or numeric <= 0.0:
+        return None
+    return numeric
+
+
+def _discrete_step_factor(sample_time_sec: float) -> float:
+    if sample_time_sec <= 0.001:
+        return 0.35
+    if sample_time_sec <= 0.01:
+        return 0.45
+    if sample_time_sec <= 0.05:
+        return 0.60
+    if sample_time_sec <= 0.10:
+        return 0.75
+    if sample_time_sec <= 0.20:
+        return 0.90
+    return 1.0
+
+
+def adapt_simulink_pid_limits(
+    base_limits: Mapping[str, Mapping[str, float]] | None,
+    *,
+    control_domain: str = "",
+    controller_1_sample_time: Any = "",
+    controller_2_sample_time: Any = "",
+    model_fixed_step: Any = "",
+) -> Dict[str, Dict[str, float]]:
+    if not base_limits:
+        return get_pid_limits("simulink")
+
+    limits: Dict[str, Dict[str, float]] = {
+        key: {inner_key: float(inner_value) for inner_key, inner_value in value.items()}
+        for key, value in base_limits.items()
+    }
+
+    sample_times: list[float] = []
+    for raw_value in (
+        controller_1_sample_time,
+        controller_2_sample_time,
+        model_fixed_step,
+    ):
+        parsed = _parse_positive_sample_time(raw_value)
+        if parsed is not None:
+            sample_times.append(parsed)
+
+    domain = str(control_domain or "").strip().lower()
+    if not sample_times and domain not in {"discrete", "discrete_like"}:
+        return limits
+
+    if sample_times:
+        base_sample_time = min(sample_times)
+        factor = _discrete_step_factor(base_sample_time)
+        for gain_key in ("i", "d"):
+            gain_limits = limits.get(gain_key)
+            if not gain_limits:
+                continue
+            original_ratio = float(gain_limits.get("max_increase_ratio", 1.0) or 1.0)
+            gain_limits["max_increase_ratio"] = max(
+                1.25,
+                original_ratio * factor,
+            )
+    return limits
 
 
 def _to_float(value: Any, fallback: float) -> float:
@@ -197,20 +271,30 @@ def is_better_metrics(candidate: Dict[str, float], baseline: Dict[str, float], e
 
 
 def maybe_update_best_result(
-    best_result: Dict[str, Any] | None,
-    pid        : Dict[str, float],
-    metrics    : Dict[str, float],
-    round_num  : int,
+    best_result  : Dict[str, Any] | None,
+    pid          : Dict[str, float],
+    metrics      : Dict[str, float],
+    round_num    : int,
+    *,
+    secondary_pid: Dict[str, float] | None = None,
 ) -> Dict[str, Any] | None:
-    """只记录稳定状态下的最佳 PID，避免回滚到坏参数。"""
+    """只记录稳定状态下的最佳 PID，避免回滚到坏参数。
+
+    ``secondary_pid`` is captured alongside the primary so that dual-loop
+    rollback can restore both controllers together.
+    """
     if str(metrics.get("status", "UNKNOWN")).upper() != "STABLE":
         return best_result
 
-    candidate = {
+    candidate: Dict[str, Any] = {
         "round"  : round_num,
         "pid"    : {key: float(pid.get(key, 0.0)) for key in PID_KEYS},
         "metrics": dict(metrics),
     }
+    if secondary_pid is not None:
+        candidate["secondary_pid"] = {
+            key: float(secondary_pid.get(key, 0.0)) for key in PID_KEYS
+        }
 
     if best_result is None or is_better_metrics(candidate["metrics"], best_result["metrics"]):
         return candidate

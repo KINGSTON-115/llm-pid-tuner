@@ -103,3 +103,54 @@ def wait_while_paused(controller: SimulationController | None, poll_interval: fl
 
 def now_elapsed(start_time: float) -> float:
     return round(time.time() - start_time, 3)
+
+
+def emit_console_message(enabled: bool, message: str, *, end: str = "\n") -> None:
+    if enabled:
+        print(message, end=end, flush=True)
+
+
+def emit_lifecycle(
+    event_sink: QueueEventSink | None, start_time: float, phase: str, message: str
+) -> None:
+    publish_event(
+        event_sink, EVENT_LIFECYCLE,
+        phase=phase, message=message, elapsed_sec=now_elapsed(start_time),
+    )
+
+
+def emit_log(
+    event_sink: QueueEventSink | None,
+    start_time: float,
+    label: str,
+    message: str,
+    *,
+    replace_last: bool = False,
+    stream_id: int | None = None,
+) -> None:
+    publish_event(
+        event_sink, EVENT_LOG,
+        label=label, message=message, replace_last=replace_last,
+        stream_id=stream_id, elapsed_sec=now_elapsed(start_time),
+    )
+
+
+def make_llm_tuner_callbacks(
+    event_sink: QueueEventSink | None,
+    start_time: float,
+    current_stream_round: list[int],
+):
+    """Build (log_cb, stream_cb) for LLMTuner that forward to emit_log."""
+    def log_cb(label: str, message: str) -> None:
+        emit_log(
+            event_sink, start_time, label, message,
+            stream_id=current_stream_round[0] or None,
+        )
+
+    def stream_cb(text: str, done: bool) -> None:
+        emit_log(
+            event_sink, start_time, "llm_stream", text,
+            replace_last=True, stream_id=current_stream_round[0] or None,
+        )
+
+    return log_cb, stream_cb
