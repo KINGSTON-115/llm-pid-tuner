@@ -330,6 +330,18 @@ python simulator.py
 `simulator.py` 会在本地模拟一个热系统，然后让 LLM 自动调参。
 这条路线最适合先理解项目，而不是直接上真实硬件。
 
+在调参循环开始前，程序现在会自动进行两个对新手非常友好的操作：
+- 运行环境诊断（`doctor.py`），检查配置、API 连接性、串口及代理设置。
+- 进行简短的系统辨识（热启动），给出比默认值更合理的初始 PID 建议。
+
+此外，交互模式下支持**预调参对话**（Pre-Tuning Dialog）。你可以用自然语言直接输入调参偏好或限制（例如：“超调不能超过 5%” 或 “响应可以慢点但绝不能震荡”），LLM 会自动提取为调参的硬性约束。
+
+如果你只想手动运行环境检查而不启动仿真，可以使用：
+
+```bash
+python doctor.py
+```
+
 ---
 
 ## 进阶：源码方式运行
@@ -379,10 +391,11 @@ pip install -r requirements.txt
 python simulator.py
 ```
 
-如果你想用旧式纯日志输出，而不是 TUI：
+如果你想用旧式纯日志输出，而不是 TUI，或者需要强制切换显示语言：
 
 ```bash
 python simulator.py --plain
+python simulator.py --lang en  # 强制使用英文界面，默认支持根据系统自动检测语言
 ```
 
 ### 连接真实硬件
@@ -407,11 +420,13 @@ python system_id.py --file sample_step.csv
 
 | 文件                        | 用途                                       |
 | :-------------------------- | :----------------------------------------- |
+| `launcher.py`               | 启动器，可选择硬件或仿真模式并支持语言切换 |
 | `tuner.py`                  | 真实硬件调参主程序，也是 exe 的核心入口    |
 | `simulator.py`              | 本地热系统仿真，适合演示和验证策略         |
 | `pid_safety.py`             | 参数保护、保底策略、最佳结果记录、回退逻辑 |
 | `firmware.cpp`              | 单片机侧示例固件，负责串口上报与执行 PID   |
 | `system_id.py`              | 利用阶跃响应做系统辨识，给出初始 PID 建议  |
+| `doctor.py`                 | 环境诊断检查工具，快速排查配置与连接问题   |
 | `benchmark.py`              | 固定随机种子的对比工具，更偏开发验证用途   |
 | `config.json`               | 运行配置文件                               |
 | `docs/zh-CN/PROJECT_DOC.md` | 面向开发者的内部说明文档                   |

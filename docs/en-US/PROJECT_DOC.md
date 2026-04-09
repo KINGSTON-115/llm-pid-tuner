@@ -72,6 +72,38 @@ Responsibilities:
 - Estimate first-order plus dead-time (FOPDT) model parameters
 - Produce Ziegler-Nichols style initial PID suggestions
 
+### `doctor.py`
+
+An environment diagnostic and checking utility.
+
+Responsibilities:
+
+- Quickly validate `config.json` format and required fields
+- Check serial port permissions and availability
+- Test LLM API connectivity
+- Detect MATLAB/Simulink environment and proxy configurations
+- Output a detailed health report to help users avoid startup failures due to environment issues
+
+### `core/i18n.py`
+
+System language detection and internationalization support.
+
+Responsibilities:
+
+- Auto-detect system language (`zh` / `en`)
+- Maintain global language state and support the `--lang` override argument
+- Provide runtime text translation switching
+
+### `sim/pre_tuning_dialog.py`
+
+Interactive pre-tuning dialog module.
+
+Responsibilities:
+
+- Collect natural language control preferences and constraints from the user before the main tuning loop starts (e.g., "no overshoot allowed")
+- Call the LLM API to extract and structure the user's preferences
+- Integrate the extracted hard and soft constraints into the subsequent prompts, guiding the LLM to tune according to specific scenario requirements
+
 ### `benchmark.py`
 
 A fixed-seed development verification tool.
@@ -87,15 +119,17 @@ This is a development utility, not the core value of the project.
 
 The overall flow is:
 
-1. MCU outputs process data using the `firmware.cpp` style protocol
-2. `tuner.py` reads and buffers the data over serial
-3. After accumulating a sampling window, compute error, overshoot, stability, and other metrics
-4. Send the current summary and history to the LLM
-5. LLM returns new PID suggestions
-6. Suggestions pass through the guardrails and validation in `pid_safety.py`
-7. The program sends the new PID back to the device and enters the next round
-8. If results deteriorate, roll back to the best historical result
-9. If results are already good enough, stop early
+1. (Optional) Run `doctor.py` to diagnose environment setup before tuning
+2. (Optional) In interactive mode, enter the pre-tuning dialog to set natural language constraints and preferences
+3. MCU outputs process data using the `firmware.cpp` style protocol
+4. `tuner.py` reads and buffers the data over serial
+5. After accumulating a sampling window, compute error, overshoot, stability, and other metrics
+6. Send the current summary, history, and **user-defined constraints** to the LLM
+7. LLM returns new PID suggestions
+8. Suggestions pass through the guardrails and validation in `pid_safety.py`
+9. The program sends the new PID back to the device and enters the next round
+10. If results deteriorate, roll back to the best historical result
+11. If results are already good enough, stop early
 
 ## 4. Configuration Sources and Priority
 

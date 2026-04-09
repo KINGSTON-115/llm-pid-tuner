@@ -289,20 +289,22 @@ python simulator.py
 
 `simulator.py` models a simple local heating system and opens a lightweight Textual terminal dashboard by default when run in an interactive terminal.
 
-Before the tuning loop starts, it now does two beginner-friendly things automatically:
+Before the tuning loop starts, it now does three beginner-friendly things automatically:
 
 - runs a quick doctor check for config, API reachability, serial ports, expected protocol fields, and proxy settings
 - runs a short system-identification warm start so the initial PID is better than the fixed default values
+- supports a **Pre-Tuning Conversation** (Interactive mode only), where you can describe tuning preferences and hard constraints in natural language (e.g., "overshoot must be less than 5%"), which the LLM will automatically enforce.
 
 - Press `q` to quit the dashboard
 - Press `p` to pause or resume the simulation loop
 - Press `l` to toggle concise vs detailed event logs
 - Press `r` to clear the event log and temporary summary
 
-If you prefer the old plain log output, run:
+If you prefer the old plain log output, or want to explicitly set the language:
 
 ```bash
 python simulator.py --plain
+python simulator.py --lang zh  # Override language to Chinese. The system auto-detects English/Chinese by default.
 ```
 
 If the current terminal is non-interactive, or if `textual` is not installed yet, the simulator falls back to plain console logs automatically.
@@ -372,6 +374,7 @@ If `config.json` does not exist yet, the program will create a default one on fi
 | `pid_safety.py`             | Guardrails, fallback logic, best-result tracking, rollback |
 | `firmware.cpp`              | Example MCU firmware                                       |
 | `system_id.py`              | Step-response based system identification                  |
+| `doctor.py`                 | Environment check utility to debug config/API issues       |
 | `benchmark.py`              | Fixed-seed comparison utility                              |
 | `docs/en-US/PROJECT_DOC.md` | Developer-oriented project notes                           |
 
