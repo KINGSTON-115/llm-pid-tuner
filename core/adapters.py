@@ -1,6 +1,7 @@
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from core.env import BaseTuningEnvironment
+from core.config import CONFIG
 
 class PythonSimEnv(BaseTuningEnvironment):
     def __init__(self, sim: Any, setpoint: float, controller: Any = None):
@@ -11,7 +12,7 @@ class PythonSimEnv(BaseTuningEnvironment):
 
     def collect_samples(self) -> List[Dict[str, float]]:
         samples = []
-        target_steps = getattr(self.sim, "target_steps", 200) # typical buffer size assumption
+        target_steps = getattr(self.sim, "target_steps", CONFIG["BUFFER_SIZE"])
         
         while len(samples) < target_steps: # Use explicit step count instead of buffer full check
             if self.controller and hasattr(self.controller, "wait_while_paused") and not self.controller.wait_while_paused():
@@ -81,7 +82,7 @@ class SimulinkEnv(BaseTuningEnvironment):
                     return samples
                 samples.append(data)
                 
-            if len(samples) >= getattr(self.bridge, "target_buffer_size", 200): # break logic handled by engine checking list size
+            if len(samples) >= getattr(self.bridge, "target_buffer_size", CONFIG["BUFFER_SIZE"]):
                 break
                 
         return samples
@@ -117,7 +118,7 @@ class HardwareEnv(BaseTuningEnvironment):
 
     def collect_samples(self) -> List[Dict[str, float]]:
         samples = []
-        target_size = 200 # assumption, tuning engine buffer size
+        target_size = CONFIG["BUFFER_SIZE"]
         
         while len(samples) < target_size:
             if self.controller and hasattr(self.controller, "wait_while_paused") and not self.controller.wait_while_paused():
