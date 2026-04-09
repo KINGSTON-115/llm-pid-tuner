@@ -176,42 +176,16 @@ If you prefer starting from a template, check `config.example.json`.
 }
 ```
 
-Those six fields are the **minimum setup**.
+Those six fields are the **minimum setup** for a single-controller model.
 
-- If your goal is simply to get the first run working, start with only those six
-- If your model already tags the main PID block as `llm_pid_tuner_primary`, the second one as `llm_pid_tuner_secondary`, or uses standard `PID Controller` blocks, `MATLAB_PID_BLOCK_PATH` can usually be left empty
-- `MATLAB_CONTROL_SIGNAL` and `MATLAB_SETPOINT_BLOCK` are **recommended upgrades**, not first-run requirements
-- If you already know the exact block paths, prefer explicit fields instead of filling every advanced field up front
+If your Simulink model is not the simplest "single standard PID Controller block + one output signal" layout (e.g., dual-loop, split P/I/D gain blocks), the tool also supports advanced compatibility fields.
 
-If your Simulink model is not the simplest "one standard PID Controller block + one output signal" layout, these compatibility fields are also available:
-
-- `MATLAB_OUTPUT_SIGNAL_CANDIDATES`: try several possible output variable names
-- `MATLAB_CONTROL_SIGNAL`: explicitly capture the controller output, for example `u_out`; if omitted, the bridge also tries common names like `u_out`, `u`, `pwm`, `control`
-- `MATLAB_SETPOINT_BLOCK`: explicitly point to the setpoint source block
-- `MATLAB_PID_BLOCK_PATHS`: provide several candidate controller block paths
-- `MATLAB_PID_BLOCK_PATH_2`: second controller block for dual-loop / cascade setups
-- `MATLAB_P_BLOCK_PATH` `MATLAB_I_BLOCK_PATH` `MATLAB_D_BLOCK_PATH`: advanced compatibility mode for split P/I/D gain blocks
-- `MATLAB_P_BLOCK_PATH_2` `MATLAB_I_BLOCK_PATH_2` `MATLAB_D_BLOCK_PATH_2`: advanced compatibility mode for a second split-gain controller
-
-The naming rule is:
-
-- fields without a suffix are the first / primary controller, for example `MATLAB_PID_BLOCK_PATH`
-- fields with `_2` are the second controller, for example `MATLAB_PID_BLOCK_PATH_2`
-- auto-discovery now prefers controller block Tags first, then standard `PID Controller` block types, and only then falls back to the older scoring heuristic
-
-How to find those paths:
-
-- Click the block you want in Simulink
-- Run `gcb` in the MATLAB Command Window
-- The returned string is the full block path, and can be copied directly into `MATLAB_PID_BLOCK_PATH`, `MATLAB_PID_BLOCK_PATH_2`, `MATLAB_SETPOINT_BLOCK`, or `MATLAB_P/I/D_BLOCK_PATH(_2)`
-
-The least confusing way to think about these fields is:
-
-- Exact known path: use `MATLAB_PID_BLOCK_PATH`, `MATLAB_PID_BLOCK_PATH_2`, `MATLAB_SETPOINT_BLOCK`, or `MATLAB_P/I/D_BLOCK_PATH`
-- Several likely paths but not sure which one is correct yet: use `MATLAB_PID_BLOCK_PATHS`
-- Auto-discovery: treat it as a fallback, not the main configuration strategy
-
-For worked examples, path-finding tips, and troubleshooting, see the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
+> **Please refer directly to the full [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)**.
+> The guide covers:
+> - How to find exact Simulink block paths easily
+> - How to configure dual controllers and split gain blocks
+> - When `MATLAB_ROOT` is actually required
+> - How to troubleshoot environment errors (e.g., `No module named matlab.engine`)
 
 ### Config groups by use case
 
@@ -225,9 +199,7 @@ For worked examples, path-finding tips, and troubleshooting, see the [MATLAB/Sim
 
 ### When should I fill `MATLAB_ROOT`?
 
-- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `D:/Program Files/MATLAB/R2025b`
-- For source runs, you can leave it empty if the current Python environment already imports `matlab.engine` successfully
-- If source mode still fails with `No module named matlab.engine` or cannot locate the runtime, fill `MATLAB_ROOT` and follow the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)
+See the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
 
 Environment variables are also supported and override `config.json`, but beginners usually find `config.json` easier.
 
@@ -289,20 +261,22 @@ python simulator.py
 
 `simulator.py` models a simple local heating system and opens a lightweight Textual terminal dashboard by default when run in an interactive terminal.
 
-Before the tuning loop starts, it now does two beginner-friendly things automatically:
+Before the tuning loop starts, it now does three beginner-friendly things automatically:
 
 - runs a quick doctor check for config, API reachability, serial ports, expected protocol fields, and proxy settings
 - runs a short system-identification warm start so the initial PID is better than the fixed default values
+- supports a **Pre-Tuning Conversation** (Interactive mode only), where you can describe tuning preferences and hard constraints in natural language (e.g., "overshoot must be less than 5%"), which the LLM will automatically enforce.
 
 - Press `q` to quit the dashboard
 - Press `p` to pause or resume the simulation loop
 - Press `l` to toggle concise vs detailed event logs
 - Press `r` to clear the event log and temporary summary
 
-If you prefer the old plain log output, run:
+If you prefer the old plain log output, or want to explicitly set the language:
 
 ```bash
 python simulator.py --plain
+python simulator.py --lang zh  # Override language to Chinese. The system auto-detects English/Chinese by default.
 ```
 
 If the current terminal is non-interactive, or if `textual` is not installed yet, the simulator falls back to plain console logs automatically.
@@ -372,6 +346,7 @@ If `config.json` does not exist yet, the program will create a default one on fi
 | `pid_safety.py`             | Guardrails, fallback logic, best-result tracking, rollback |
 | `firmware.cpp`              | Example MCU firmware                                       |
 | `system_id.py`              | Step-response based system identification                  |
+| `doctor.py`                 | Environment check utility to debug config/API issues       |
 | `benchmark.py`              | Fixed-seed comparison utility                              |
 | `docs/en-US/PROJECT_DOC.md` | Developer-oriented project notes                           |
 

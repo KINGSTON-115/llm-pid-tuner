@@ -203,40 +203,16 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 }
 ```
 
-上面这 6 项是 **最小必填**。
+这 6 项是跑通单控制器模型的**最小必填**。
 
-- 第一轮只想跑通时，先填这 6 项就够了
-- `MATLAB_CONTROL_SIGNAL` 和 `MATLAB_SETPOINT_BLOCK` 属于**推荐增强项**，不是第一次配置的硬性必填
-- 如果你已经知道准确块路径，优先填显式路径，不必一开始就把所有高级字段都填上
+如果你的 Simulink 模型不是“单个标准 PID Controller 块 + 一个输出信号”这种最简单结构（例如主副环、分离式 P/I/D 增益块），程序也支持更复杂的兼容字段。
 
-如果你的 Simulink 模型不是“一个标准 PID Controller 块 + 一个输出信号”这种最简单结构，现在还支持这些兼容字段：
-
-- `MATLAB_OUTPUT_SIGNAL_CANDIDATES`：输出变量名不统一时给一组候选名
-- `MATLAB_CONTROL_SIGNAL`：显式提供控制输出信号，例如 `u_out`
-- `MATLAB_SETPOINT_BLOCK`：显式指定设定值块
-- `MATLAB_PID_BLOCK_PATHS`：多个候选控制器块路径
-- `MATLAB_PID_BLOCK_PATH_2`：第二组控制器块（主副环 / 双控制器）
-- `MATLAB_P_BLOCK_PATH` `MATLAB_I_BLOCK_PATH` `MATLAB_D_BLOCK_PATH`：分离式 P/I/D 增益块
-- `MATLAB_P_BLOCK_PATH_2` `MATLAB_I_BLOCK_PATH_2` `MATLAB_D_BLOCK_PATH_2`：第二组分离式增益块
-
-命名规则可以这样理解：
-
-- 不带后缀的字段就是第一组 / 主控制器，例如 `MATLAB_PID_BLOCK_PATH`
-- 带 `_2` 的字段就是第二组控制器，例如 `MATLAB_PID_BLOCK_PATH_2`
-
-这些路径怎么找：
-
-- 在 Simulink 里选中你要填写的那个块
-- 在 MATLAB Command Window 输入 `gcb`
-- 返回字符串就是完整块路径，可以直接填到 `MATLAB_PID_BLOCK_PATH`、`MATLAB_PID_BLOCK_PATH_2`、`MATLAB_SETPOINT_BLOCK`、`MATLAB_P/I/D_BLOCK_PATH(_2)` 里
-
-这些字段怎么理解最不容易乱：
-
-- 已知准确块路径：优先填 `MATLAB_PID_BLOCK_PATH`、`MATLAB_PID_BLOCK_PATH_2`、`MATLAB_SETPOINT_BLOCK`、`MATLAB_P/I/D_BLOCK_PATH`
-- 有多个怀疑对象但还没确定：再用 `MATLAB_PID_BLOCK_PATHS`
-- 自动识别：只当兜底，不建议当主要配置方式
-
-更详细的多控制器 / 双控制器 / 分离增益块配置方法，见 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)。
+> **请直接查看完整的 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)**。
+> 指南里详细说明了：
+> - 如何快速获取正确的 Simulink 块路径
+> - 如何配置双控制器与分离式增益块
+> - `MATLAB_ROOT` 什么时候可以不填
+> - 常见环境报错（如 `No module named matlab.engine`）的解决方法
 
 ### 按场景看配置项
 
@@ -250,9 +226,7 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 ### `MATLAB_ROOT` 什么时候要填
 
-- 用打包版 `exe` 跑 Simulink 时，建议直接填 `MATLAB_ROOT`，例如 `D:/Program Files/MATLAB/R2025b`
-- 源码方式运行时，如果你当前这个 Python 环境已经能正常 `import matlab.engine`，`MATLAB_ROOT` 可以留空
-- 如果源码运行也报 `No module named matlab.engine`，或者 MATLAB Engine 路径找不到，就把 `MATLAB_ROOT` 填上，同时按 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md) 安装 Engine
+见 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)。
 
 ### 关于环境变量
 
@@ -330,6 +304,18 @@ python simulator.py
 `simulator.py` 会在本地模拟一个热系统，然后让 LLM 自动调参。
 这条路线最适合先理解项目，而不是直接上真实硬件。
 
+在调参循环开始前，程序现在会自动进行两个对新手非常友好的操作：
+- 运行环境诊断（`doctor.py`），检查配置、API 连接性、串口及代理设置。
+- 进行简短的系统辨识（热启动），给出比默认值更合理的初始 PID 建议。
+
+此外，交互模式下支持**预调参对话**（Pre-Tuning Dialog）。你可以用自然语言直接输入调参偏好或限制（例如：“超调不能超过 5%” 或 “响应可以慢点但绝不能震荡”），LLM 会自动提取为调参的硬性约束。
+
+如果你只想手动运行环境检查而不启动仿真，可以使用：
+
+```bash
+python doctor.py
+```
+
 ---
 
 ## 进阶：源码方式运行
@@ -379,10 +365,11 @@ pip install -r requirements.txt
 python simulator.py
 ```
 
-如果你想用旧式纯日志输出，而不是 TUI：
+如果你想用旧式纯日志输出，而不是 TUI，或者需要强制切换显示语言：
 
 ```bash
 python simulator.py --plain
+python simulator.py --lang en  # 强制使用英文界面，默认支持根据系统自动检测语言
 ```
 
 ### 连接真实硬件
@@ -407,11 +394,13 @@ python system_id.py --file sample_step.csv
 
 | 文件                        | 用途                                       |
 | :-------------------------- | :----------------------------------------- |
+| `launcher.py`               | 启动器，可选择硬件或仿真模式并支持语言切换 |
 | `tuner.py`                  | 真实硬件调参主程序，也是 exe 的核心入口    |
 | `simulator.py`              | 本地热系统仿真，适合演示和验证策略         |
 | `pid_safety.py`             | 参数保护、保底策略、最佳结果记录、回退逻辑 |
 | `firmware.cpp`              | 单片机侧示例固件，负责串口上报与执行 PID   |
 | `system_id.py`              | 利用阶跃响应做系统辨识，给出初始 PID 建议  |
+| `doctor.py`                 | 环境诊断检查工具，快速排查配置与连接问题   |
 | `benchmark.py`              | 固定随机种子的对比工具，更偏开发验证用途   |
 | `config.json`               | 运行配置文件                               |
 | `docs/zh-CN/PROJECT_DOC.md` | 面向开发者的内部说明文档                   |

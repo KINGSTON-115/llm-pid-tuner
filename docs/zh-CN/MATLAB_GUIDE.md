@@ -348,7 +348,10 @@ whos y_out
 llm-pid-tuner.exe
 ```
 
-在菜单中选择「Simulink 仿真调参」，程序会自动启动 MATLAB Engine、加载模型并开始调参。调参完成后按 Enter 退出，最终 PID 参数会自动保存回 `.slx` 文件。
+在菜单中选择「Simulink 仿真调参」，程序会：
+1. **执行环境诊断**：自动调用内部的 `doctor.py` 逻辑，检查 MATLAB Engine 是否可用、配置字段是否完整。
+2. **预调参对话**（交互模式下）：你可以用自然语言输入调参偏好（如“超调不能超过 5%”）。
+3. **启动仿真调参**：自动启动 MATLAB Engine、加载模型并开始调参。调参完成后按 Enter 退出，最终 PID 参数会自动保存回 `.slx` 文件。
 
 ### 方式二：直接调用 simulator
 
@@ -357,6 +360,10 @@ python simulator.py
 ```
 
 `MATLAB_MODEL_PATH` 填了值，程序会自动切换到 Simulink 模式，无需额外参数。
+如果你想强制使用英文界面，可以带上语言参数：
+```bash
+python simulator.py --lang en
+```
 
 ---
 
