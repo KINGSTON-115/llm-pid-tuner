@@ -2,6 +2,25 @@ from __future__ import annotations
 
 from typing import Any
 
+def build_hardware_prompt_context(
+    serial_port: str,
+    secondary_pid: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    context = {
+        "source": "serial_hardware",
+        "serial_port": serial_port,
+        "controller_output_signal": "PWM",
+        "pwm_signal_available": True,
+        "tuning_style": "conservative_hardware_safe",
+        "per_round_guardrail_hint": "Keep P within about 3x the current value, and keep I/D within about 4x. Prefer smaller moves near stability.",
+    }
+    if secondary_pid is not None:
+        context["controller_count"] = 2
+        context["controller_structure"] = "dual_controller"
+        context["controller_2_label"] = "controller_2"
+        context["controller_2_pid"] = dict(secondary_pid)
+    return context
+
 
 def build_python_sim_prompt_context() -> dict[str, Any]:
     return {

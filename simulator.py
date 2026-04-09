@@ -12,6 +12,8 @@ import traceback
 from typing import Any, Callable
 
 from core.buffer import AdvancedDataBuffer
+from core.adapters import PythonSimEnv, SimulinkEnv
+from core.tuning_engine import run_tuning_engine
 from core.config import CONFIG, initialize_runtime_config
 
 # Alias used by run_simulation and patchable in tests
@@ -277,25 +279,8 @@ def _run_tuning_loop(
     disable_early_exit: bool = False,
 ) -> dict[str, Any]:
     llm_mode = _resolve_llm_mode(mode_label, llm_mode)
-    base_pid_limits = get_pid_limits(llm_mode)
     if prompt_context is None:
         prompt_context = default_prompt_context_for_mode(sim, llm_mode)
-
-    def _resolve_round_pid_limits(
-        context: dict[str, Any] | None,
-    ) -> dict[str, dict[str, float]]:
-        if llm_mode != "simulink":
-            return get_pid_limits(llm_mode)
-        context_map = context or {}
-        return adapt_simulink_pid_limits(
-            base_pid_limits,
-            control_domain=str(context_map.get("control_domain", "") or ""),
-            controller_1_sample_time=context_map.get("controller_1_sample_time", ""),
-            controller_2_sample_time=context_map.get("controller_2_sample_time", ""),
-            model_fixed_step=context_map.get("model_fixed_step", ""),
-        )
-
-    pid_limits = _resolve_round_pid_limits(prompt_context)
 
     current_stream_round = [0]
     start_time = time.time()
@@ -319,9 +304,6 @@ def _run_tuning_loop(
         timeout=CONFIG.get("LLM_REQUEST_TIMEOUT", 60.0),
         debug_output=CONFIG.get("LLM_DEBUG_OUTPUT", False),
     )
-    session = create_tuning_session(
-        initial_pid={"p": sim.kp, "i": sim.ki, "d": sim.kd}, setpoint=setpoint
-    )
 
     _publish_doctor_checks(
         doctor_checks, event_sink=event_sink, emit_console=emit_console
@@ -330,265 +312,28 @@ def _run_tuning_loop(
     if warm_start and isinstance(sim, HeatingSimulator):
         _run_simulator_warm_start(sim, event_sink=event_sink, emit_console=emit_console)
 
-    session.buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-    session.buffer.setpoint = setpoint
     _emit_lifecycle(
         event_sink, start_time, "starting", f"{mode_label} simulation started."
     )
 
-    try:
-        while session.round_num < CONFIG["MAX_TUNING_ROUNDS"]:
-            if controller is not None and controller.should_stop:
-                session.completed_reason = "stopped_by_user"
-                _console(emit_console, "\n[INFO] Simulation stopped by user.")
-                _emit_lifecycle(
-                    event_sink, start_time, "stopped", "Simulation stopped by user."
-                )
-                break
+    if llm_mode == "simulink":
+        env = SimulinkEnv(sim, setpoint, controller=controller)
+    else:
+        env = PythonSimEnv(sim, setpoint, controller=controller)
+    
+    env.prompt_context = prompt_context
 
-            round_index = session.round_num + 1
-            _console(emit_console, f"\n[Round {round_index}] Collecting data...")
-            if hasattr(sim, "run_step"):
-                session.buffer.reset()
-            _emit_lifecycle(
-                event_sink,
-                start_time,
-                "collecting",
-                f"Collecting data for round {round_index}.",
-            )
-
-            steps, completed = _collect_data(
-                sim, session.buffer, event_sink=event_sink, controller=controller
-            )
-            if not completed:
-                session.completed_reason = "stopped_by_user"
-                _console(emit_console, "\n[INFO] Simulation stopped by user.")
-                _emit_lifecycle(
-                    event_sink, start_time, "stopped", "Simulation stopped by user."
-                )
-                break
-
-            _console(emit_console, f"[Round {round_index}] Collected {steps} samples.")
-
-            evaluation = evaluate_completed_round(
-                session, {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-            )
-            publish_round_metrics(event_sink, evaluation, round_index)
-
-            if evaluation.best_result_updated:
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "best_result",
-                    f"Captured a new best stable result at round {round_index}.",
-                )
-
-            if evaluation.rollback_pid and not disable_early_exit:
-                rollback_message = record_rollback_round(
-                    session,
-                    evaluation,
-                    evaluation.rollback_pid,
-                    target_round=int(evaluation.best_result["round"])
-                    if evaluation.best_result
-                    else None,
-                )
-                _console(emit_console, f"[Rollback] {rollback_message}")
-                if (
-                    evaluation.rollback_secondary_pid is not None
-                    and hasattr(sim, "set_pid_pair")
-                ):
-                    sim.set_pid_pair(
-                        dict(evaluation.rollback_pid),
-                        dict(evaluation.rollback_secondary_pid),
-                    )
-                else:
-                    sim.set_pid(
-                        evaluation.rollback_pid["p"],
-                        evaluation.rollback_pid["i"],
-                        evaluation.rollback_pid["d"],
-                    )
-                apply_rollback(
-                    session,
-                    evaluation.rollback_pid,
-                    rollback_secondary_pid=evaluation.rollback_secondary_pid,
-                )
-                publish_rollback(
-                    event_sink,
-                    round_index,
-                    evaluation,
-                    evaluation.rollback_pid,
-                    rollback_message,
-                )
-                if (
-                    evaluation.completed_reason == "rollback_to_best"
-                    and not disable_early_exit
-                ):
-                    session.completed_reason = "rollback_to_best"
-                    _emit_lifecycle(
-                        event_sink,
-                        start_time,
-                        "completed",
-                        "Rolled back to the best stable result and finished early.",
-                    )
-                    break
-                continue
-
-            if (
-                evaluation.completed_reason == "low_error_converged"
-                and not disable_early_exit
-            ):
-                session.completed_reason = "low_error_converged"
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "completed",
-                    "Simulation converged with stable low error.",
-                )
-                break
-
-            if (
-                evaluation.completed_reason == "stable_rounds_reached"
-                and not disable_early_exit
-            ):
-                session.completed_reason = "stable_rounds_reached"
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "completed",
-                    f"Reached {evaluation.stable_rounds} stable rounds and finished early.",
-                )
-                break
-
-            current_stream_round[0] = round_index
-            _emit_lifecycle(
-                event_sink,
-                start_time,
-                "llm_request",
-                f"Requesting PID suggestion for round {round_index}.",
-            )
-            prompt_context = refresh_prompt_context_for_mode(
-                sim,
-                llm_mode,
-                prompt_context,
-            )
-            pid_limits = _resolve_round_pid_limits(prompt_context)
-            # Make the dual-controller state visible to the LLM prompt.
-            if getattr(sim, "has_secondary_pid", False):
-                session.buffer.secondary_pid = {
-                    "p": float(getattr(sim, "secondary_kp", 0.0)),
-                    "i": float(getattr(sim, "secondary_ki", 0.0)),
-                    "d": float(getattr(sim, "secondary_kd", 0.0)),
-                }
-            result = tuner.analyze(
-                session.buffer.to_prompt_data(),
-                session.history.to_prompt_text(),
-                tuning_mode=llm_mode,
-                prompt_context=prompt_context,
-            )
-
-            if controller is not None and controller.should_stop:
-                session.completed_reason = "stopped_by_user"
-                _console(emit_console, "\n[INFO] Simulation stopped by user.")
-                _emit_lifecycle(
-                    event_sink, start_time, "stopped", "Simulation stopped by user."
-                )
-                break
-
-            if controller is not None and controller.is_paused:
-                if not wait_while_paused(controller):
-                    session.completed_reason = "stopped_by_user"
-                    break
-                continue
-
-            if not result:
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "fallback",
-                    f"LLM unavailable at round {round_index}; using fallback rules.",
-                )
-                result = build_fallback_suggestion(
-                    evaluation.current_pid,
-                    evaluation.metrics,
-                    limits=pid_limits,
-                )
-
-            result, primary_result, secondary_result = flatten_controller_result(
-                result, evaluation.current_pid
-            )
-
-            decision = finalize_decision(
-                session, evaluation, result, limits=pid_limits,
-            )
-            safe_pid = decision.safe_pid
-            if primary_result and hasattr(sim, "set_pid_pair"):
-                secondary_notes = sim.set_pid_pair(
-                    dict(safe_pid),
-                    dict(secondary_result) if secondary_result else None,
-                ) or []
-                if secondary_notes:
-                    decision.guardrail_notes.extend(
-                        f"Controller 2: {note}" for note in secondary_notes
-                    )
-                    session.guardrail_count += 1
-            else:
-                sim.set_pid(safe_pid["p"], safe_pid["i"], safe_pid["d"])
-            publish_decision(event_sink, round_index, decision)
-            if decision.guardrail_notes:
-                _console(
-                    emit_console,
-                    f"[Guardrail] {'; '.join(decision.guardrail_notes)}",
-                )
-
-            if decision.completed_reason == "llm_marked_done" and not disable_early_exit:
-                session.completed_reason = "llm_marked_done"
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "completed",
-                    "LLM marked the tuning run as done.",
-                )
-                break
-
-    except KeyboardInterrupt:
-        session.completed_reason = "keyboard_interrupt"
-        _console(emit_console, "\n[INFO] Simulation interrupted by keyboard.")
-        _emit_lifecycle(
-            event_sink, start_time, "stopped", "Simulation interrupted by keyboard."
-        )
-    except Exception as exc:
-        session.completed_reason = "error"
-        _console(emit_console, f"\n[ERROR] Simulation failed: {exc}")
-        _emit_lifecycle(event_sink, start_time, "error", f"Simulation failed: {exc}")
-        raise
-    finally:
-        elapsed_sec = now_elapsed(start_time)
-        _emit_lifecycle(
-            event_sink,
-            start_time,
-            "finished",
-            f"Simulation finished in {elapsed_sec:.1f}s.",
-        )
-        summary_line = (
-            f"\n[Summary] elapsed={elapsed_sec:.1f}s "
-            f"final_pid=P={sim.kp:.4f} I={sim.ki:.4f} D={sim.kd:.4f}"
-        )
-        if getattr(sim, "has_secondary_pid", False):
-            summary_line += (
-                f" | C2 P={getattr(sim, 'secondary_kp', 0.0):.4f}"
-                f" I={getattr(sim, 'secondary_ki', 0.0):.4f}"
-                f" D={getattr(sim, 'secondary_kd', 0.0):.4f}"
-            )
-        _console(emit_console, summary_line)
-
-    return {
-        "elapsed_sec": now_elapsed(start_time),
-        **build_tuning_result(
-            session,
-            final_pid={"p": sim.kp, "i": sim.ki, "d": sim.kd},
-            stopped=bool(controller.should_stop) if controller is not None else False,
-        ),
-    }
+    return run_tuning_engine(
+        env=env,
+        tuner=tuner,
+        llm_mode=llm_mode,
+        event_sink=event_sink,
+        controller=controller,
+        emit_console=emit_console,
+        disable_early_exit=disable_early_exit,
+        start_time=start_time,
+        current_stream_round=current_stream_round,
+    )
 
 
 def choose_simulink_ui_mode(force_plain: bool) -> bool:

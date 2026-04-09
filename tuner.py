@@ -31,12 +31,9 @@ from core.tuning_session import (
 from hw.bridge import SerialBridge, safe_pause, select_serial_port
 from llm.client import LLMTuner
 from pid_safety import apply_pid_guardrails, build_fallback_suggestion, get_pid_limits
-from core.tuning_loop import (
-    flatten_controller_result,
-    publish_decision,
-    publish_rollback,
-    publish_round_metrics,
-)
+from core.tuning_engine import run_tuning_engine
+from core.adapters import HardwareEnv
+from sim.prompt_context import build_hardware_prompt_context
 from sim.runtime import (
     EVENT_SAMPLE,
     QueueEventSink,
@@ -49,26 +46,6 @@ from sim.runtime import (
     publish_event,
     wait_while_paused,
 )
-
-
-def _build_hardware_prompt_context(
-    serial_port: str,
-    secondary_pid: dict[str, float] | None = None,
-) -> dict[str, Any]:
-    context = {
-        "source": "serial_hardware",
-        "serial_port": serial_port,
-        "controller_output_signal": "PWM",
-        "pwm_signal_available": True,
-        "tuning_style": "conservative_hardware_safe",
-        "per_round_guardrail_hint": "Keep P within about 3x the current value, and keep I/D within about 4x. Prefer smaller moves near stability.",
-    }
-    if secondary_pid is not None:
-        context["controller_count"] = 2
-        context["controller_structure"] = "dual_controller"
-        context["controller_2_label"] = "controller_2"
-        context["controller_2_pid"] = dict(secondary_pid)
-    return context
 
 
 def _build_set_command(prefix: str, pid: dict[str, float]) -> str:
@@ -130,7 +107,6 @@ def _run_hardware_tuning_loop(
     initial_pid: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     bridge = SerialBridge(serial_port, CONFIG["BAUD_RATE"], emit_console=False)
-    session = create_tuning_session(initial_pid=initial_pid)
     start_time = time.time()
     current_stream_round = [0]
     llm_log_callback, llm_stream_callback = make_llm_tuner_callbacks(
@@ -158,16 +134,15 @@ def _run_hardware_tuning_loop(
 
     if not bridge.connect():
         message = f"无法打开串口 {serial_port}: {bridge.last_error or 'unknown error'}"
-        session.completed_reason = "error"
         _console(emit_console, f"[ERROR] {message}")
         _emit_lifecycle(event_sink, start_time, "error", message)
         return {
             "elapsed_sec": now_elapsed(start_time),
-            **build_tuning_result(
-                session,
-                final_pid=dict(session.buffer.current_pid),
-                stopped=False,
-            ),
+            "round_num": 0,
+            "completed_reason": "error",
+            "history": [],
+            "best_result": None,
+            "final_pid": initial_pid or {"p": 0, "i": 0, "d": 0},
         }
 
     _console(emit_console, f"[INFO] 已连接到串口: {serial_port}")
@@ -197,280 +172,42 @@ def _run_hardware_tuning_loop(
             f"Collecting data from {serial_port}.",
         )
 
-        while session.round_num < CONFIG["MAX_TUNING_ROUNDS"]:
-            if controller is not None and controller.should_stop:
-                session.completed_reason = "stopped_by_user"
-                _console(emit_console, "\n[INFO] 用户停止")
-                _emit_lifecycle(event_sink, start_time, "stopped", "Hardware tuning stopped by user.")
-                break
+        env = HardwareEnv(bridge, initial_pid or {"p": 0.0, "i": 0.0, "d": 0.0}, controller=controller)
+        env.prompt_context = build_hardware_prompt_context(serial_port, None)
 
-            if not wait_while_paused(controller):
-                session.completed_reason = "stopped_by_user"
-                _console(emit_console, "\n[INFO] 用户停止")
-                _emit_lifecycle(event_sink, start_time, "stopped", "Hardware tuning stopped by user.")
-                break
-
-            line = bridge.read_line()
-            if line:
-                data = bridge.parse_data(line)
-                if data:
-                    session.buffer.add(data)
-                    publish_event(
-                        event_sink,
-                        EVENT_SAMPLE,
-                        timestamp=float(data.get("timestamp", 0.0)),
-                        setpoint=float(data.get("setpoint", 0.0)),
-                        input=float(data.get("input", 0.0)),
-                        pwm=float(data.get("pwm", 0.0)),
-                        error=float(data.get("error", 0.0)),
-                        p=float(data.get("p", session.buffer.current_pid["p"])),
-                        i=float(data.get("i", session.buffer.current_pid["i"])),
-                        d=float(data.get("d", session.buffer.current_pid["d"])),
-                        **(
-                            {
-                                "p2": float(data.get("p2", 0.0)),
-                                "i2": float(data.get("i2", 0.0)),
-                                "d2": float(data.get("d2", 0.0)),
-                            }
-                            if "p2" in data
-                            else {}
-                        ),
-                    )
-                    _console(
-                        emit_console,
-                        f"\r[DATA] T={data['input']:.1f} Err={data['error']:.1f} PWM={data['pwm']:.0f}",
-                        end="",
-                    )
-
-            if not session.buffer.is_full():
-                continue
-
-            if emit_console:
-                print("\n\n" + "-" * 60)
-
-            evaluation = evaluate_completed_round(
-                session,
-                dict(session.buffer.current_pid),
-            )
-            publish_round_metrics(event_sink, evaluation, evaluation.round_index)
-            _console(
-                emit_console,
-                f"[第 {evaluation.round_index} 轮] 分析中... AvgErr={evaluation.metrics['avg_error']:.2f}, Status={evaluation.metrics['status']}",
-            )
-
-            if evaluation.best_result_updated and evaluation.best_result is not None:
-                best_message = (
-                    f"Round {evaluation.round_index} captured a new best PID: "
-                    f"P={evaluation.best_result['pid']['p']}, I={evaluation.best_result['pid']['i']}, D={evaluation.best_result['pid']['d']}"
-                )
-                _console(
-                    emit_console,
-                    f"[Best] 更新最佳参数 -> "
-                    f"P={evaluation.best_result['pid']['p']}, I={evaluation.best_result['pid']['i']}, D={evaluation.best_result['pid']['d']}",
-                )
-                _emit_log(event_sink, start_time, "best", best_message)
-
-            if evaluation.rollback_pid:
-                rollback_message = record_rollback_round(
-                    session,
-                    evaluation,
-                    evaluation.rollback_pid,
-                    target_round=int(evaluation.best_result["round"]) if evaluation.best_result else None,
-                )
-                _console(emit_console, f"[Rollback] {rollback_message}")
-                publish_rollback(
-                    event_sink,
-                    evaluation.round_index,
-                    evaluation,
-                    evaluation.rollback_pid,
-                    rollback_message,
-                )
-
-                cmd = _build_set_command("SET", evaluation.rollback_pid)
-                bridge.send_command(cmd)
-                _emit_log(event_sink, start_time, "cmd", cmd)
-                _console(emit_console, f"[CMD] Sent: {cmd}")
-                if evaluation.rollback_secondary_pid is not None:
-                    cmd2 = _build_set_command("SET2", evaluation.rollback_secondary_pid)
-                    bridge.send_command(cmd2)
-                    _emit_log(event_sink, start_time, "cmd", cmd2)
-                    _console(emit_console, f"[CMD] Sent: {cmd2}")
-                apply_rollback(
-                    session,
-                    evaluation.rollback_pid,
-                    rollback_secondary_pid=evaluation.rollback_secondary_pid,
-                )
-
-                if evaluation.completed_reason == "rollback_to_best":
-                    session.completed_reason = "rollback_to_best"
-                    _console(
-                        emit_console,
-                        "\n[SUCCESS] 已回滚到历史最佳且满足可用标准，提前结束调参。",
-                    )
-                    _emit_lifecycle(
-                        event_sink,
-                        start_time,
-                        "completed",
-                        "Rolled back to the best stable result and finished early.",
-                    )
-                    break
-
-                time.sleep(1)
-                continue
-
-            if evaluation.completed_reason == "stable_rounds_reached":
-                session.completed_reason = "stable_rounds_reached"
-                _console(
-                    emit_console,
-                    f"\n[SUCCESS] 系统已连续 {evaluation.stable_rounds} 轮达到可用稳定状态，提前结束调参。",
-                )
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "completed",
-                    f"Reached {evaluation.stable_rounds} stable rounds and finished early.",
-                )
-                break
-
-            if evaluation.completed_reason == "low_error_converged":
-                session.completed_reason = "low_error_converged"
-                _console(emit_console, "\n[SUCCESS] 调参完成！")
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "completed",
-                    "Hardware tuning converged with low error.",
-                )
-                break
-
-            prompt_data = session.buffer.to_prompt_data()
-            history_text = session.history.to_prompt_text()
-            current_stream_round[0] = evaluation.round_index
-            _emit_lifecycle(
-                event_sink,
-                start_time,
-                "llm_request",
-                f"Requesting PID suggestion for round {evaluation.round_index}.",
-            )
-            result = tuner.analyze(
-                prompt_data,
-                history_text,
-                tuning_mode="hardware",
-                prompt_context=_build_hardware_prompt_context(
-                    serial_port,
-                    secondary_pid=session.buffer.secondary_pid,
-                ),
-            )
-
-            if not result:
-                _console(emit_console, "[WARN] LLM 本轮不可用，启用保守兜底策略。")
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "fallback",
-                    f"LLM unavailable at round {evaluation.round_index}; using fallback rules.",
-                )
-                result = build_fallback_suggestion(
-                    evaluation.current_pid, evaluation.metrics
-                )
-
-            result, _primary_result, secondary_result = flatten_controller_result(
-                result,
-                evaluation.current_pid,
-            )
-            decision = finalize_decision(session, evaluation, result)
-            publish_decision(event_sink, evaluation.round_index, decision)
-
-            _console(
-                emit_console,
-                f"\n[Action] {decision.action} -> P={decision.safe_pid['p']}, I={decision.safe_pid['i']}, D={decision.safe_pid['d']}",
-            )
-            if decision.guardrail_notes:
-                _console(emit_console, f"[Guardrail] {'; '.join(decision.guardrail_notes)}")
-            if decision.fallback_used:
-                _console(emit_console, "[Fallback] 本轮使用规则策略替代 LLM 建议。")
-
-            cmd = _build_set_command("SET", decision.safe_pid)
-            bridge.send_command(cmd)
-            _emit_log(event_sink, start_time, "cmd", cmd)
-            _console(emit_console, f"[CMD] Sent: {cmd}")
-            if isinstance(secondary_result, dict):
-                secondary_current_pid = (
-                    dict(session.buffer.secondary_pid)
-                    if session.buffer.secondary_pid is not None
-                    else {"p": 0.0, "i": 0.0, "d": 0.0}
-                )
-                safe_secondary_pid, secondary_guardrail_notes = apply_pid_guardrails(
-                    secondary_current_pid,
-                    secondary_result,
-                    limits=get_pid_limits("hardware"),
-                )
-                safe_secondary_pid = {
-                    "p": float(safe_secondary_pid["p"]),
-                    "i": float(safe_secondary_pid["i"]),
-                    "d": float(safe_secondary_pid["d"]),
-                }
-                if secondary_guardrail_notes:
-                    _console(
-                        emit_console,
-                        f"[Guardrail] Controller 2: {'; '.join(secondary_guardrail_notes)}",
-                    )
-                cmd2 = _build_set_command("SET2", safe_secondary_pid)
-                bridge.send_command(cmd2)
-                _emit_log(event_sink, start_time, "cmd", cmd2)
-                _console(emit_console, f"[CMD] Sent: {cmd2}")
-                session.buffer.secondary_pid = dict(safe_secondary_pid)
-
-            if decision.completed_reason == "llm_marked_done":
-                session.completed_reason = "llm_marked_done"
-                _console(emit_console, "\n[SUCCESS] 调参完成！")
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "completed",
-                    "LLM marked the tuning run as done.",
-                )
-                break
-
-            if evaluation.metrics["avg_error"] < CONFIG["MIN_ERROR_THRESHOLD"]:
-                session.completed_reason = "low_error_converged"
-                _console(emit_console, "\n[SUCCESS] 调参完成！")
-                _emit_lifecycle(
-                    event_sink,
-                    start_time,
-                    "completed",
-                    "Hardware tuning converged with low error.",
-                )
-                break
-
-            time.sleep(1)
+        return run_tuning_engine(
+            env=env,
+            tuner=tuner,
+            llm_mode="generic",
+            event_sink=event_sink,
+            controller=controller,
+            emit_console=emit_console,
+            disable_early_exit=False,
+            start_time=start_time,
+            current_stream_round=current_stream_round,
+        )
 
     except KeyboardInterrupt:
-        session.completed_reason = "keyboard_interrupt"
-        _console(emit_console, "\n[INFO] 用户停止")
+        _console(emit_console, "\n[INFO] 用户中断 (Ctrl+C)。")
         _emit_lifecycle(
-            event_sink,
-            start_time,
-            "stopped",
-            "Hardware tuning interrupted by keyboard.",
+            event_sink, start_time, "stopped", "Hardware tuning interrupted by keyboard."
         )
+        return {
+            "elapsed_sec": now_elapsed(start_time),
+            "round_num": 0,
+            "completed_reason": "keyboard_interrupt",
+            "history": [],
+            "best_result": None,
+            "final_pid": initial_pid or {"p": 0, "i": 0, "d": 0},
+        }
+    except Exception as exc:
+        _console(emit_console, f"\n[ERROR] 调参过程发生异常: {exc}")
+        _emit_lifecycle(
+            event_sink, start_time, "error", f"Hardware tuning failed: {exc}"
+        )
+        raise
     finally:
         bridge.disconnect()
-        _emit_lifecycle(
-            event_sink,
-            start_time,
-            "finished",
-            f"Hardware tuning finished in {now_elapsed(start_time):.1f}s.",
-        )
-
-    return {
-        "elapsed_sec": now_elapsed(start_time),
-        **build_tuning_result(
-            session,
-            final_pid=dict(session.buffer.current_pid),
-            stopped=bool(controller.should_stop) if controller is not None else False,
-        ),
-    }
 
 
 def _run_hardware_tuning_with_tui(

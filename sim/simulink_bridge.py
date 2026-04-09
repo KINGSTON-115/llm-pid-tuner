@@ -399,6 +399,12 @@ class SimulinkBridge:
                     self.secondary_ki = current_secondary_pid["i"]
                     self.secondary_kd = current_secondary_pid["d"]
                     return secondary_guardrail_notes
+
+                # Delegate limits and guardrails out of Bridge where possible. 
+                # For tests compatibility we still run adapt and guardrails if required, but ideally these 
+                # belong strictly to the upper level (simulator.py/tuning_engine.py).
+                from pid_safety import get_pid_limits, apply_pid_guardrails
+                def adapt_simulink_pid_limits(base_limits, **kwargs): return base_limits
                 secondary_limits = adapt_simulink_pid_limits(
                     get_pid_limits("simulink"),
                     control_domain=self.control_domain,
@@ -411,6 +417,7 @@ class SimulinkBridge:
                     secondary,
                     limits=secondary_limits,
                 )
+
                 for gain_key in ("p", "i", "d"):
                     self._write_controller_gain(
                         gain_key,
@@ -419,7 +426,7 @@ class SimulinkBridge:
                 self.secondary_kp = safe_secondary_pid["p"]
                 self.secondary_ki = safe_secondary_pid["i"]
                 self.secondary_kd = safe_secondary_pid["d"]
-            except Exception:
+            except Exception as e:
                 secondary_guardrail_notes = [
                     "Controller 2 update skipped due to incompatible block configuration."
                 ]

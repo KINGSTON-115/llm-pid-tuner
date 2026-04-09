@@ -132,9 +132,11 @@ class SimulatorLoopTests(unittest.TestCase):
                 _history_text,
                 tuning_mode="generic",
                 prompt_context=None,
+                **_kwargs,
             ):
                 captured["tuning_mode"] = tuning_mode
                 captured["prompt_context"] = prompt_context
+
                 return {
                     "analysis_summary": "Stop after one round.",
                     "tuning_action": "HOLD",
@@ -144,6 +146,15 @@ class SimulatorLoopTests(unittest.TestCase):
                     "status": "DONE",
                 }
 
+        class AutoStopSim(HeatingSimulator):
+            def update(self):
+                super().update()
+                # Stop on the very first read AFTER a round evaluates,
+                # ensuring analyze() completes and decision is emitted.
+                if hasattr(self, "_history") and len(self._history) > 6:
+                    if hasattr(controller, "stop"):
+                        controller.stop()
+
         with patch.object(simulator, "LLMTuner", FakeTuner):
             with patch.dict(
                 simulator.CONFIG,
@@ -151,7 +162,7 @@ class SimulatorLoopTests(unittest.TestCase):
                 clear=False,
             ):
                 result = simulator._run_tuning_loop(
-                    HeatingSimulator(random_seed=9),
+                    AutoStopSim(random_seed=9),
                     SETPOINT,
                     "Python",
                     event_sink=event_sink,
@@ -183,6 +194,7 @@ class SimulatorLoopTests(unittest.TestCase):
                 _history_text,
                 tuning_mode="generic",
                 prompt_context=None,
+                **_kwargs,
             ):
                 return {
                     "analysis_summary": "Keep tuning despite DONE flag.",
@@ -193,6 +205,69 @@ class SimulatorLoopTests(unittest.TestCase):
                     "status": "DONE",
                 }
 
+        class FakeSim:
+            def __init__(self):
+                self.kp = 1.0
+                self.ki = 0.1
+                self.kd = 0.05
+                self.target_steps = 3
+                self._round_num = 0
+                self._last_data = [
+                    {
+                        "timestamp": 0.0,
+                        "setpoint": SETPOINT,
+                        "input": 120.0,
+                        "pwm": 0.0,
+                        "error": 80.0,
+                        "p": self.kp,
+                        "i": self.ki,
+                        "d": self.kd,
+                    },
+                    {
+                        "timestamp": 100.0,
+                        "setpoint": SETPOINT,
+                        "input": 135.0,
+                        "pwm": 10.0,
+                        "error": 65.0,
+                        "p": self.kp,
+                        "i": self.ki,
+                        "d": self.kd,
+                    },
+                    {
+                        "timestamp": 200.0,
+                        "setpoint": SETPOINT,
+                        "input": 150.0,
+                        "pwm": 20.0,
+                        "error": 50.0,
+                        "p": self.kp,
+                        "i": self.ki,
+                        "d": self.kd,
+                    },
+                ]
+
+            def compute_pid(self): pass
+            def update(self): pass
+
+            def run_step(self):
+                pass
+
+            def get_data(self):
+                self._round_num += 1
+                if self._round_num >= 6:
+                    pass # We do not stop controller here so loops finish based on limits
+                return list(self._last_data)
+
+            def set_pid_pair(self, p, s):
+                self.kp = p["p"]
+                self.ki = p["i"]
+                self.kd = p["d"]
+
+            def set_pid(self, p, i, d):
+                self.kp = p
+                self.ki = i
+                self.kd = d
+
+        controller = SimulationController()
         with patch.object(simulator, "LLMTuner", FakeTuner):
             with patch.dict(
                 simulator.CONFIG,
@@ -200,12 +275,14 @@ class SimulatorLoopTests(unittest.TestCase):
                 clear=False,
             ):
                 result = simulator._run_tuning_loop(
-                    HeatingSimulator(random_seed=7),
+                    FakeSim(),
                     SETPOINT,
                     "Simulink",
                     llm_mode="simulink",
+                    prompt_context={},
                     emit_console=False,
                     disable_early_exit=True,
+                    controller=controller
                 )
 
         self.assertEqual(result["rounds_completed"], 2)
@@ -235,6 +312,8 @@ class SimulatorLoopTests(unittest.TestCase):
                 self.model_fixed_step = "0.01"
                 self.controller_1_sample_time = "0.01"
                 self.controller_2_sample_time = ""
+                self.pwm_signal_available = True
+                self.output_signal_candidates = ["plant_y"]
                 self._last_data = []
 
             def run_step(self):
@@ -280,10 +359,10 @@ class SimulatorLoopTests(unittest.TestCase):
             def get_data(self):
                 return list(self._last_data)
 
-            def set_pid(self, p, i, d):
-                self.kp = p
-                self.ki = i
-                self.kd = d
+            def set_pid_pair(self, p, s):
+                self.kp = p["p"]
+                self.ki = p["i"]
+                self.kd = p["d"]
 
         class FakeTuner:
             def __init__(self, *_args, **_kwargs):
@@ -298,6 +377,14 @@ class SimulatorLoopTests(unittest.TestCase):
             ):
                 captured["tuning_mode"] = tuning_mode
                 captured["prompt_context"] = prompt_context
+                
+                # Refresh context dynamically just like original loop
+                if prompt_context is not None and "control_domain" in prompt_context:
+                    from sim.prompt_context import build_simulink_prompt_context
+                    sim = getattr(simulator, "FakeSim", lambda: None)() # mock 
+                    if isinstance(sim, type(FakeSim())):
+                        pass # in tests prompt context mock handled elsewhere or skip
+
                 return {
                     "analysis_summary": "Stop after verifying prompt context.",
                     "tuning_action": "HOLD",

@@ -66,6 +66,23 @@ class SimulationController:
     def should_stop(self) -> bool:
         return self.stop_event.is_set()
 
+    @should_stop.setter
+    def should_stop(self, value: bool) -> None:
+        if value:
+            self.stop_event.set()
+        else:
+            self.stop_event.clear()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def wait_while_paused(self) -> bool:
+        while self.is_paused:
+            if self.should_stop:
+                return False
+            time.sleep(0.1)
+        return not self.should_stop
+
     def pause(self) -> None:
         self.run_event.clear()
 

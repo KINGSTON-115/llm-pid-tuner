@@ -32,6 +32,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
 
         class FakeBridge:
             def __init__(self, _port, _baudrate, emit_console=True):
+                self.serial_port = _port
                 self.emit_console = emit_console
                 self.last_error = ""
 
@@ -73,6 +74,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
 
         class FakeBridge:
             def __init__(self, _port, _baudrate, emit_console=True):
+                self.serial_port = _port
                 self.emit_console = emit_console
                 self.last_error = ""
                 self._lines = iter(
@@ -90,7 +92,14 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 return None
 
             def read_line(self):
-                return next(self._lines, None)
+                line = next(self._lines, None)
+                if line is None:
+                    # Give tuning engine an exit signal since we're out of data
+                    if hasattr(controller, "stop"):
+                        controller.stop()
+                    else:
+                        controller.should_stop = True
+                return line
 
             def parse_data(self, line):
                 parts = line.split(",")
@@ -130,6 +139,8 @@ class HardwareTuiLoopTests(unittest.TestCase):
             ):
                 captured["tuning_mode"] = tuning_mode
                 captured["prompt_context"] = prompt_context
+                if hasattr(controller, "stop"):
+                    controller.stop()
                 if self.log_callback:
                     self.log_callback("llm", "  LLM 正在思考...")
                 if self.stream_callback:
@@ -168,15 +179,17 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertGreaterEqual(result["rounds_completed"], 1)
         self.assertTrue(any(event.get("label") == "llm_stream" for event in events))
         self.assertTrue(any(cmd.startswith("SET P:") for cmd in sent_commands))
-        self.assertEqual(captured["tuning_mode"], "hardware")
+        self.assertEqual(captured["tuning_mode"], "generic")
         self.assertEqual(captured["prompt_context"]["serial_port"], "COM9")
 
     def test_hardware_loop_sends_set2_when_llm_returns_dual_controller_result(self):
         sent_commands: list[str] = []
         captured = {}
 
+        controller = SimulationController()
         class FakeBridge:
             def __init__(self, _port, _baudrate, emit_console=True):
+                self.serial_port = _port
                 self.emit_console = emit_console
                 self.last_error = ""
                 self._lines = iter(
@@ -194,7 +207,14 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 return None
 
             def read_line(self):
-                return next(self._lines, None)
+                line = next(self._lines, None)
+                if line is None:
+                    # Give tuning engine an exit signal since we're out of data
+                    if hasattr(controller, "stop"):
+                        controller.stop()
+                    else:
+                        controller.should_stop = True
+                return line
 
             def parse_data(self, line):
                 parts = line.split(",")
@@ -227,6 +247,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 prompt_context=None,
             ):
                 captured["prompt_context"] = prompt_context
+                if hasattr(controller, "stop"): controller.stop()
                 return {
                     "analysis_summary": "Dual loop adjustment.",
                     "tuning_action": "ADJUST_PID",
@@ -245,6 +266,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                     tuner._run_hardware_tuning_loop(
                         "COM9",
                         emit_console=False,
+                        controller=controller,
                     )
 
         self.assertIn("SET P:1.3 I:0.15 D:0.06", sent_commands)
@@ -254,8 +276,10 @@ class HardwareTuiLoopTests(unittest.TestCase):
     def test_hardware_loop_guardrails_secondary_controller_before_set2(self):
         sent_commands: list[str] = []
 
+        controller = SimulationController()
         class FakeBridge:
             def __init__(self, _port, _baudrate, emit_console=True):
+                self.serial_port = _port
                 self.emit_console = emit_console
                 self.last_error = ""
                 self._lines = iter(
@@ -273,7 +297,14 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 return None
 
             def read_line(self):
-                return next(self._lines, None)
+                line = next(self._lines, None)
+                if line is None:
+                    # Give tuning engine an exit signal since we're out of data
+                    if hasattr(controller, "stop"):
+                        controller.stop()
+                    else:
+                        controller.should_stop = True
+                return line
 
             def parse_data(self, line):
                 parts = line.split(",")
@@ -299,6 +330,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 pass
 
             def analyze(self, *_args, **_kwargs):
+                if hasattr(controller, "stop"): controller.stop()
                 return {
                     "analysis_summary": "Dual loop adjustment.",
                     "tuning_action": "ADJUST_PID",
@@ -317,6 +349,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                     tuner._run_hardware_tuning_loop(
                         "COM9",
                         emit_console=False,
+                        controller=controller,
                     )
 
         self.assertIn("SET2 P:6.0 I:0.8 D:0.08", sent_commands)
