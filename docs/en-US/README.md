@@ -176,11 +176,16 @@ If you prefer starting from a template, check `config.example.json`.
 }
 ```
 
-Those six fields are the **minimum usable Simulink setup** on the current stable `main` branch.
+Those six fields are the **minimum setup** for a single-controller model.
 
-- If your goal is just to get the first run working, start with only those six
-- The MATLAB version in `MATLAB_ROOT` is only an example; replace it with the version installed on your machine
-- If you already know the exact controller block path, prefer the explicit `MATLAB_PID_BLOCK_PATH`
+If your Simulink model is not the simplest "single standard PID Controller block + one output signal" layout (e.g., dual-loop, split P/I/D gain blocks), the tool also supports advanced compatibility fields.
+
+> **Please refer directly to the full [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)**.
+> The guide covers:
+> - How to find exact Simulink block paths easily
+> - How to configure dual controllers and split gain blocks
+> - When `MATLAB_ROOT` is actually required
+> - How to troubleshoot environment errors (e.g., `No module named matlab.engine`)
 
 ### Config groups by use case
 
@@ -189,14 +194,12 @@ Those six fields are the **minimum usable Simulink setup** on the current stable
 | Serial hardware | Real hardware tuning | `SERIAL_PORT` `BAUD_RATE` | Start with `SERIAL_PORT: "AUTO"` and match the firmware baud rate |
 | LLM basics | Required in every mode | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | This is the core set needed for any tuning run |
 | Tuning behavior | Optional | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` | Leave defaults unless you are tuning strategy or debugging |
-| Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT` | Points to the model, PID block, MATLAB install, and output signal |
+| Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`, plus optional `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | Start with the minimum six fields, then add compatibility fields only when needed |
 | Proxy | Only if you need one | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | Leave empty to disable |
 
 ### When should I fill `MATLAB_ROOT`?
 
-- For the packaged `exe`, filling `MATLAB_ROOT` is recommended, for example `D:/Program Files/MATLAB/R2025b`
-- For source runs, you can leave it empty if the current Python environment already imports `matlab.engine` successfully
-- If source mode still fails with `No module named matlab.engine` or cannot locate the runtime, fill `MATLAB_ROOT` and follow the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md)
+See the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
 
 Environment variables are also supported and override `config.json`, but beginners usually find `config.json` easier.
 
@@ -258,20 +261,22 @@ python simulator.py
 
 `simulator.py` models a simple local heating system and opens a lightweight Textual terminal dashboard by default when run in an interactive terminal.
 
-Before the tuning loop starts, it now does two beginner-friendly things automatically:
+Before the tuning loop starts, it now does three beginner-friendly things automatically:
 
 - runs a quick doctor check for config, API reachability, serial ports, expected protocol fields, and proxy settings
 - runs a short system-identification warm start so the initial PID is better than the fixed default values
+- supports a **Pre-Tuning Conversation** (Interactive mode only), where you can describe tuning preferences and hard constraints in natural language (e.g., "overshoot must be less than 5%"), which the LLM will automatically enforce.
 
 - Press `q` to quit the dashboard
 - Press `p` to pause or resume the simulation loop
 - Press `l` to toggle concise vs detailed event logs
 - Press `r` to clear the event log and temporary summary
 
-If you prefer the old plain log output, run:
+If you prefer the old plain log output, or want to explicitly set the language:
 
 ```bash
 python simulator.py --plain
+python simulator.py --lang zh  # Override language to Chinese. The system auto-detects English/Chinese by default.
 ```
 
 If the current terminal is non-interactive, or if `textual` is not installed yet, the simulator falls back to plain console logs automatically.
@@ -341,6 +346,7 @@ If `config.json` does not exist yet, the program will create a default one on fi
 | `pid_safety.py`             | Guardrails, fallback logic, best-result tracking, rollback |
 | `firmware.cpp`              | Example MCU firmware                                       |
 | `system_id.py`              | Step-response based system identification                  |
+| `doctor.py`                 | Environment check utility to debug config/API issues       |
 | `benchmark.py`              | Fixed-seed comparison utility                              |
 | `docs/en-US/PROJECT_DOC.md` | Developer-oriented project notes                           |
 

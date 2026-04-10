@@ -216,11 +216,16 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 }
 ```
 
-上面这 6 项就是当前 `main` 分支下 **最小可用的 Simulink 配置**。
+这 6 项是跑通单控制器模型的**最小必填**。
 
-- 如果只是第一次跑通，先填这 6 项即可
-- `MATLAB_ROOT` 里的版本号只是示例，请替换成你本机实际安装的 MATLAB 版本
-- 如果你已经知道准确块路径，优先使用显式的 `MATLAB_PID_BLOCK_PATH`
+如果你的 Simulink 模型不是“单个标准 PID Controller 块 + 一个输出信号”这种最简单结构（例如主副环、分离式 P/I/D 增益块），程序也支持更复杂的兼容字段。
+
+> **请直接查看完整的 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)**。
+> 指南里详细说明了：
+> - 如何快速获取正确的 Simulink 块路径
+> - 如何配置双控制器与分离式增益块
+> - `MATLAB_ROOT` 什么时候可以不填
+> - 常见环境报错（如 `No module named matlab.engine`）的解决方法
 
 ### 按场景看配置项
 
@@ -229,14 +234,12 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 | 硬件串口 | 真实硬件调参 | `SERIAL_PORT` `BAUD_RATE` | `SERIAL_PORT` 不确定先填 `AUTO`，`BAUD_RATE` 要和固件一致 |
 | LLM 基础 | 所有模式都需要 | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | 这是最核心的一组配置，不填就无法调参 |
 | 调参行为 | 想微调策略时再改 | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` | 新手建议先保持默认，只有在采样不够、网络慢或需要排查日志时再动 |
-| Simulink | 只在 MATLAB/Simulink 模式下需要 | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT` | 指向模型、PID 模块、MATLAB 安装目录和仿真输出 |
+| Simulink | 只在 MATLAB/Simulink 模式下需要 | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`，以及按需填写 `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | 最小 6 项先跑通，复杂模型再逐步补充兼容字段 |
 | 代理 | 只有需要代理时才填 | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | 留空就是不启用 |
 
 ### `MATLAB_ROOT` 什么时候要填
 
-- 用打包版 `exe` 跑 Simulink 时，建议直接填 `MATLAB_ROOT`，例如 `D:/Program Files/MATLAB/R2025b`
-- 源码方式运行时，如果你当前这个 Python 环境已经能正常 `import matlab.engine`，`MATLAB_ROOT` 可以留空
-- 如果源码运行也报 `No module named matlab.engine`，或者 MATLAB Engine 路径找不到，就把 `MATLAB_ROOT` 填上，同时按 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md) 安装 Engine
+见 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)。
 
 ### 关于环境变量
 
@@ -314,6 +317,18 @@ python simulator.py
 `simulator.py` 会在本地模拟一个热系统，然后让 LLM 自动调参。
 这条路线最适合先理解项目，而不是直接上真实硬件。
 
+在调参循环开始前，程序现在会自动进行两个对新手非常友好的操作：
+- 运行环境诊断（`doctor.py`），检查配置、API 连接性、串口及代理设置。
+- 进行简短的系统辨识（热启动），给出比默认值更合理的初始 PID 建议。
+
+此外，交互模式下支持**预调参对话**（Pre-Tuning Dialog）。你可以用自然语言直接输入调参偏好或限制（例如：“超调不能超过 5%” 或 “响应可以慢点但绝不能震荡”），LLM 会自动提取为调参的硬性约束。
+
+如果你只想手动运行环境检查而不启动仿真，可以使用：
+
+```bash
+python doctor.py
+```
+
 ---
 
 ## 进阶：源码方式运行
@@ -363,10 +378,11 @@ pip install -r requirements.txt
 python simulator.py
 ```
 
-如果你想用旧式纯日志输出，而不是 TUI：
+如果你想用旧式纯日志输出，而不是 TUI，或者需要强制切换显示语言：
 
 ```bash
 python simulator.py --plain
+python simulator.py --lang en  # 强制使用英文界面，默认支持根据系统自动检测语言
 ```
 
 ### 连接真实硬件
@@ -391,11 +407,13 @@ python system_id.py --file sample_step.csv
 
 | 文件                        | 用途                                       |
 | :-------------------------- | :----------------------------------------- |
+| `launcher.py`               | 启动器，可选择硬件或仿真模式并支持语言切换 |
 | `tuner.py`                  | 真实硬件调参主程序，也是 exe 的核心入口    |
 | `simulator.py`              | 本地热系统仿真，适合演示和验证策略         |
 | `pid_safety.py`             | 参数保护、保底策略、最佳结果记录、回退逻辑 |
 | `firmware.cpp`              | 单片机侧示例固件，负责串口上报与执行 PID   |
 | `system_id.py`              | 利用阶跃响应做系统辨识，给出初始 PID 建议  |
+| `doctor.py`                 | 环境诊断检查工具，快速排查配置与连接问题   |
 | `benchmark.py`              | 固定随机种子的对比工具，更偏开发验证用途   |
 | `config.json`               | 运行配置文件                               |
 | `docs/zh-CN/PROJECT_DOC.md` | 面向开发者的内部说明文档                   |
@@ -490,4 +508,4 @@ python system_id.py --file sample_step.csv
 
 ## License
 
-`Apache-2.0`
+`CC BY-NC-SA 4.0`
