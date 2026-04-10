@@ -13,6 +13,19 @@
 > 如果你是第一次接触这个项目，**不要先折腾 Python**。
 > **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
 
+## 最新开发版教程入口
+
+如果你想看 **最新功能、最新教程、最新 Simulink 配置说明**，请直接参考 `dev` 分支文档：
+
+- 最新总览（中文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/README.md>
+- 最新总览（英文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md>
+- 最新 Simulink 指南（中文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/MATLAB_GUIDE.md>
+- 最新 Simulink 指南（英文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/MATLAB_GUIDE.md>
+- 最新项目说明（中文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/PROJECT_DOC.md>
+- 最新项目说明（英文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/PROJECT_DOC.md>
+
+如果你只想使用 **当前稳定版 main**，继续阅读本页即可。
+
 ## 系统结构图
 
 ```text

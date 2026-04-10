@@ -4,6 +4,9 @@ This document is for maintainers, contributors, and anyone who wants a quick und
 
 If you just want to use the packaged build, start with [README.md](README.md).
 
+> If you want the **latest development internals and newest tutorial entry points**, prefer the `dev` branch version of this document:  
+> <https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/PROJECT_DOC.md>
+
 ## 1. Project Goals
 
 The core goal is not to produce impressive benchmark numbers. It is to:
