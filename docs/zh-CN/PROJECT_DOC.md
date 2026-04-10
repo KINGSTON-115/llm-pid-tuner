@@ -4,6 +4,9 @@
 
 如果你只是想直接使用打包版，请先看 [README.md](../../README.md)。
 
+> 如果你想看 **最新开发版的内部结构和最新教程入口**，请优先看 `dev` 分支版本：  
+> <https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/PROJECT_DOC.md>
+
 ## 1. 项目目标
 
 本项目的核心目标不是跑出好看的 benchmark，而是：
