@@ -7,6 +7,8 @@ import time
 from typing import Any, Dict
 
 from core.compat import slotted_dataclass
+from core.config import CONFIG
+from core.csv_export import CsvEventExporter
 
 
 EVENT_SAMPLE = "sample"
@@ -18,6 +20,7 @@ EVENT_LOG = "log"
 
 
 RuntimeEvent = Dict[str, Any]
+_CSV_EXPORTER = CsvEventExporter()
 
 
 def build_event(event_type: str, **payload: Any) -> RuntimeEvent:
@@ -108,8 +111,15 @@ class SimulationController:
 
 
 def publish_event(event_sink: QueueEventSink | None, event_type: str, **payload: Any) -> None:
+    csv_export_path = str(CONFIG.get("CSV_EXPORT_PATH", "") or "").strip()
+    if csv_export_path:
+        _CSV_EXPORTER.handle_event(event_type, payload, csv_path=csv_export_path)
     if event_sink is not None:
         event_sink.publish(event_type, **payload)
+
+
+def reset_csv_exporter_for_tests() -> None:
+    _CSV_EXPORTER.reset()
 
 
 def wait_while_paused(controller: SimulationController | None, poll_interval: float = 0.05) -> bool:

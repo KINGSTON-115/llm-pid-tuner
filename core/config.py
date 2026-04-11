@@ -79,6 +79,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "MAX_TUNING_ROUNDS"             : 50,
     "LLM_REQUEST_TIMEOUT"           : 60,
     "LLM_DEBUG_OUTPUT"              : False,
+    "CSV_EXPORT_PATH"               : "",
     "GOOD_ENOUGH_AVG_ERROR"         : 0.1,
     "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.05,
     "GOOD_ENOUGH_OVERSHOOT"         : 1.0,
