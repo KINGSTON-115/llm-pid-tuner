@@ -35,6 +35,14 @@ class LauncherDispatchTests(unittest.TestCase):
         run_simulation.assert_called_once_with(True, lang=None)
         run_tuner.assert_not_called()
 
+    def test_plain_flag_can_be_forwarded_to_hardware_mode(self):
+        with patch.object(launcher, "run_tuner") as run_tuner:
+            with patch.object(launcher, "run_simulation") as run_simulation:
+                launcher.main(["tune", "--plain"])
+
+        run_tuner.assert_called_once_with(["--plain"])
+        run_simulation.assert_not_called()
+
     def test_lang_flag_is_forwarded_to_simulator(self):
         with patch.object(launcher, "run_simulation") as run_simulation:
             launcher.main(["sim", "--lang", "en"])
@@ -47,6 +55,14 @@ class LauncherDispatchTests(unittest.TestCase):
                 launcher.main(["COM7"])
 
         run_tuner.assert_called_once_with(["COM7"])
+        run_simulation.assert_not_called()
+
+    def test_plain_flag_can_be_forwarded_with_legacy_serial_port(self):
+        with patch.object(launcher, "run_tuner") as run_tuner:
+            with patch.object(launcher, "run_simulation") as run_simulation:
+                launcher.main(["COM7", "--plain"])
+
+        run_tuner.assert_called_once_with(["COM7", "--plain"])
         run_simulation.assert_not_called()
 
     def test_interactive_prompt_can_start_hardware_mode(self):

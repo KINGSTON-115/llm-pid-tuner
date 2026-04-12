@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import deque
 from dataclasses import field
@@ -70,6 +70,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "lbl_flags": "标  记",
         # help hotkeys
         "help_q": "退出",
+        "help_s": "保存并退出",
         "help_p": "暂停/继续",
         "help_l": "日志详情",
         "help_r": "清空视图",
@@ -90,6 +91,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "event_elapsed": "耗时",
         # system messages
         "stopping": "等待仿真线程安全退出...",
+        "saving_exit": "保存当前 PID 并等待线程安全退出...",
         "paused_msg": "已暂停仿真。",
         "resumed_msg": "已恢复仿真。",
     },
@@ -127,6 +129,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "lbl_flags": "flags",
         # help hotkeys
         "help_q": "Quit",
+        "help_s": "Save & Exit",
         "help_p": "Pause/Resume",
         "help_l": "Log Detail",
         "help_r": "Reset View",
@@ -147,6 +150,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "event_elapsed": "elapsed",
         # system messages
         "stopping": "Waiting for worker to stop...",
+        "saving_exit": "Saving the current PID and waiting for the worker to stop...",
         "paused_msg": "Simulation paused.",
         "resumed_msg": "Simulation resumed.",
     },
@@ -421,11 +425,19 @@ class PanelState:
             return f"[reverse bold] {key} [/reverse bold] {desc}"
 
         if self.tuning_done:
-            line1 = hk("n", self.tr("help_n")) + sep + hk("q", self.tr("help_q"))
+            line1 = (
+                hk("n", self.tr("help_n"))
+                + sep
+                + hk("s", self.tr("help_s"))
+                + sep
+                + hk("q", self.tr("help_q"))
+            )
             return f"{line1}\n[dim]{self.tr('help_done')}[/dim]"
 
         line1 = (
-            hk("q", self.tr("help_q"))
+            hk("s", self.tr("help_s"))
+            + sep
+            + hk("q", self.tr("help_q"))
             + sep
             + hk("p", self.tr("help_p"))
             + sep
@@ -562,6 +574,7 @@ class SimulationTUIApp(App[None]):
 
     BINDINGS = [
         ("q", "request_quit", "Quit"),
+        ("s", "save_and_exit", "Save and exit"),
         ("p", "toggle_pause", "Pause"),
         ("l", "toggle_event_detail", "Log detail"),
         ("r", "reset_view", "Reset view"),
@@ -765,7 +778,7 @@ class SimulationTUIApp(App[None]):
             self.state.tuning_done = True
             self._refresh_all()
 
-    def action_request_quit(self) -> None:
+    def _request_shutdown(self, *, phase: str, message_key: str) -> None:
         self.controller.request_stop()
         if not self._worker_is_running():
             self.exit()
@@ -774,13 +787,31 @@ class SimulationTUIApp(App[None]):
         self.state.apply_event(
             {
                 "type": EVENT_LIFECYCLE,
-                "phase": "stopping",
-                "message": self.state.tr("stopping"),
+                "phase": phase,
+                "message": self.state.tr(message_key),
                 "elapsed_sec": self.state.elapsed_sec,
             }
         )
         self._log_requires_full_refresh = True
         self._refresh_all()
+
+    def action_request_quit(self) -> None:
+        self._request_shutdown(phase="stopping", message_key="stopping")
+
+    def action_save_and_exit(self) -> None:
+        # 触发保存最佳 PID 的逻辑
+        if self._last_result and hasattr(self._last_result, "best_pid"):
+            best = self._last_result.best_pid
+            if best:
+                self.state.apply_event(
+                    {
+                        "type": EVENT_LIFECYCLE,
+                        "phase": "saving",
+                        "message": f"Saved best PID: P={best.get('p', 0):.3f}, I={best.get('i', 0):.3f}, D={best.get('d', 0):.3f}",
+                        "elapsed_sec": self.state.elapsed_sec,
+                    }
+                )
+        self._request_shutdown(phase="saving", message_key="saving_exit")
 
     def action_next_round(self) -> None:
         if (

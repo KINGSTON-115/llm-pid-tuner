@@ -26,7 +26,83 @@ def _make_csv_line(timestamp: int, temp: float, pwm: float = 200.0) -> str:
     return f"{timestamp},{setpoint},{temp},{pwm},{error},1.0,0.1,0.05"
 
 
+class HardwareUiModeTests(unittest.TestCase):
+    def test_hardware_prompt_defaults_to_plain(self):
+        with patch("builtins.input", return_value=""):
+            use_tui = tuner.choose_hardware_ui_mode(False)
+
+        self.assertFalse(use_tui)
+
+    def test_hardware_prompt_can_choose_plain_mode(self):
+        with patch("builtins.input", return_value="2"):
+            use_tui = tuner.choose_hardware_ui_mode(False)
+
+        self.assertFalse(use_tui)
+
+    def test_hardware_prompt_can_choose_tui_mode(self):
+        with patch("builtins.input", return_value="1"):
+            use_tui = tuner.choose_hardware_ui_mode(False)
+
+        self.assertTrue(use_tui)
+
+    def test_hardware_prompt_uses_plain_on_eof(self):
+        with patch("builtins.input", side_effect=EOFError):
+            use_tui = tuner.choose_hardware_ui_mode(False)
+
+        self.assertFalse(use_tui)
+
+
 class HardwareTuiLoopTests(unittest.TestCase):
+    def test_hardware_loop_passes_abort_check_to_llm(self):
+        captured = {}
+
+        class FakeBridge:
+            def __init__(self, _port, _baudrate, emit_console=True):
+                self.serial_port = _port
+                self.emit_console = emit_console
+                self.last_error = ""
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+            def read_line(self):
+                return None
+
+            def parse_data(self, line):
+                return None
+
+            def send_command(self, cmd):
+                return None
+
+        class FakeTuner:
+            def __init__(self, *_args, abort_check=None, **_kwargs):
+                captured["abort_check"] = abort_check
+
+            def analyze(self, *_args, **_kwargs):
+                return None
+
+        controller = SimulationController()
+        with patch.object(tuner, "SerialBridge", FakeBridge):
+            with patch.object(tuner, "LLMTuner", FakeTuner):
+                with patch.dict(
+                    tuner.CONFIG,
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 0},
+                    clear=False,
+                ):
+                    tuner._run_hardware_tuning_loop(
+                        "COM9",
+                        controller=controller,
+                        emit_console=False,
+                    )
+
+        self.assertTrue(callable(captured["abort_check"]))
+        self.assertFalse(captured["abort_check"]())
+        controller.stop()
+        self.assertTrue(captured["abort_check"]())
+
     def test_hardware_loop_applies_initial_pid_before_tuning(self):
         sent_commands: list[str] = []
 
@@ -138,11 +214,6 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 captured["tuning_mode"] = tuning_mode
                 captured["prompt_context"] = prompt_context
                 
-                # Signal stop only AFTER returning the decision, 
-                # so that tuning_engine completes the round
-                if hasattr(controller, "stop"):
-                    controller.stop()
-                    
                 if self.log_callback:
                     self.log_callback("llm", "  LLM 正在思考...")
                 if self.stream_callback:
@@ -154,14 +225,14 @@ class HardwareTuiLoopTests(unittest.TestCase):
                     "p": 1.2,
                     "i": 0.1,
                     "d": 0.05,
-                    "status": "DONE",
+                    "status": "TUNING",
                 }
 
         with patch.object(tuner, "SerialBridge", FakeBridge):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
                     clear=False,
                 ):
                     result = tuner._run_hardware_tuning_loop(
@@ -245,21 +316,19 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 prompt_context=None,
             ):
                 captured["prompt_context"] = prompt_context
-                if hasattr(controller, "stop"):
-                    controller.stop()
                 return {
                     "analysis_summary": "Dual loop adjustment.",
                     "tuning_action": "ADJUST_PID",
                     "controller_1": {"p": 1.3, "i": 0.15, "d": 0.06},
                     "controller_2": {"p": 2.4, "i": 0.25, "d": 0.03},
-                    "status": "DONE",
+                    "status": "TUNING",
                 }
 
         with patch.object(tuner, "SerialBridge", FakeBridge):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
                     clear=False,
                 ):
                     tuner._run_hardware_tuning_loop(
@@ -332,21 +401,19 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 tuning_mode="generic",
                 prompt_context=None,
             ):
-                if hasattr(controller, "stop"):
-                    controller.stop()
                 return {
                     "analysis_summary": "Dual loop adjustment.",
                     "tuning_action": "ADJUST_PID",
                     "controller_1": {"p": 1.3, "i": 0.15, "d": 0.06},
                     "controller_2": {"p": 99.0, "i": 5.0, "d": 3.0},
-                    "status": "DONE",
+                    "status": "TUNING",
                 }
 
         with patch.object(tuner, "SerialBridge", FakeBridge):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
                     clear=False,
                 ):
                     tuner._run_hardware_tuning_loop(
@@ -356,6 +423,75 @@ class HardwareTuiLoopTests(unittest.TestCase):
                     )
 
         self.assertIn("SET2 P:6.0 I:0.8 D:0.08", sent_commands)
+
+    def test_hardware_loop_stops_without_fallback_when_user_stops_during_llm(self):
+        controller = SimulationController()
+        sent_commands: list[str] = []
+
+        class FakeBridge:
+            def __init__(self, _port, _baudrate, emit_console=True):
+                self.serial_port = _port
+                self.emit_console = emit_console
+                self.last_error = ""
+                self._lines = iter(
+                    [
+                        _make_csv_line(0, 100.0),
+                        _make_csv_line(1, 120.0),
+                        _make_csv_line(2, 150.0),
+                    ]
+                )
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+            def read_line(self):
+                line = next(self._lines, None)
+                if line is None:
+                    return ""
+                return line
+
+            def parse_data(self, line):
+                parts = line.split(",")
+                return {
+                    "timestamp": float(parts[0]),
+                    "setpoint": float(parts[1]),
+                    "input": float(parts[2]),
+                    "pwm": float(parts[3]),
+                    "error": float(parts[4]),
+                    "p": float(parts[5]),
+                    "i": float(parts[6]),
+                    "d": float(parts[7]),
+                }
+
+            def send_command(self, cmd):
+                sent_commands.append(cmd)
+
+        class FakeTuner:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def analyze(self, *_args, **_kwargs):
+                controller.stop()
+                return None
+
+        with patch.object(tuner, "SerialBridge", FakeBridge):
+            with patch.object(tuner, "LLMTuner", FakeTuner):
+                with patch.dict(
+                    tuner.CONFIG,
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
+                    clear=False,
+                ):
+                    result = tuner._run_hardware_tuning_loop(
+                        "COM9",
+                        controller=controller,
+                        emit_console=False,
+                    )
+
+        self.assertEqual(result["completed_reason"], "stopped_by_user")
+        self.assertEqual(sent_commands, ["STATUS"])
 
     def test_hardware_connection_failure_reports_error_result(self):
         event_queue = Queue()
@@ -389,11 +525,30 @@ class HardwareTuiLoopTests(unittest.TestCase):
         with patch.object(tuner, "initialize_runtime_config"):
             with patch.object(tuner, "resolve_serial_port", return_value="COM9"):
                 with patch.dict(tuner.CONFIG, {"LLM_DEBUG_OUTPUT": False}, clear=False):
+                    with patch.object(tuner, "choose_hardware_ui_mode", return_value=True):
+                        with patch.object(
+                            tuner,
+                            "_run_hardware_tuning_with_tui",
+                            side_effect=RuntimeError("tui boom"),
+                        ):
+                            with patch.object(
+                                tuner,
+                                "_run_hardware_tuning_plain",
+                                return_value={"mode": "plain"},
+                            ) as plain:
+                                result = tuner.run_hardware_tuner(force_plain=False)
+
+        self.assertEqual(result, {"mode": "plain"})
+        plain.assert_called_once_with("COM9", initial_pid=None)
+
+    def test_run_hardware_tuner_can_choose_plain_runner(self):
+        with patch.object(tuner, "initialize_runtime_config"):
+            with patch.object(tuner, "resolve_serial_port", return_value="COM9"):
+                with patch.object(tuner, "choose_hardware_ui_mode", return_value=False):
                     with patch.object(
                         tuner,
                         "_run_hardware_tuning_with_tui",
-                        side_effect=RuntimeError("tui boom"),
-                    ):
+                    ) as tui:
                         with patch.object(
                             tuner,
                             "_run_hardware_tuning_plain",
@@ -402,6 +557,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                             result = tuner.run_hardware_tuner(force_plain=False)
 
         self.assertEqual(result, {"mode": "plain"})
+        tui.assert_not_called()
         plain.assert_called_once_with("COM9", initial_pid=None)
 
 

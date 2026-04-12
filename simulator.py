@@ -529,6 +529,17 @@ def _run_simulink_simulation(
         f"Setpoint: {settings.setpoint}, Model: {CONFIG['LLM_MODEL_NAME']}",
     )
     _console(emit_console, f"Simulink model: {settings.model_path}")
+    _console(
+        emit_console,
+        "[Simulink] Connecting to MATLAB Engine and loading the model...",
+    )
+    publish_event(
+        event_sink,
+        EVENT_LIFECYCLE,
+        phase="connecting",
+        message="Connecting to MATLAB Engine and loading the Simulink model.",
+        elapsed_sec=0.0,
+    )
 
     try:
         with _maybe_silence_stdout(emit_console):
@@ -536,6 +547,18 @@ def _run_simulink_simulation(
     except Exception as exc:
         _emit_terminal_error(f"Failed to connect to Simulink: {exc}")
         return None
+
+    _console(
+        emit_console,
+        "[Simulink] Model connected. Starting the tuning loop...",
+    )
+    publish_event(
+        event_sink,
+        EVENT_LIFECYCLE,
+        phase="connected",
+        message="Simulink model connected. Starting the tuning loop.",
+        elapsed_sec=0.0,
+    )
 
     if initial_pid:
         sim.set_pid(initial_pid["p"], initial_pid["i"], initial_pid["d"])

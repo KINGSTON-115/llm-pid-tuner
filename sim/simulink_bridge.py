@@ -602,18 +602,53 @@ class SimulinkBridge:
         candidates: list[str] | None = None,
     ) -> tuple[str, object]:
         controller_io = self._controller_io or self._create_controller_io()
-        resolved = controller_io.resolve_named_signal(
-            sim_out,
-            primary_signal,
-            candidates=candidates or self._resolve_output_signal_candidates(primary_signal),
+        signal_candidates = candidates or self._resolve_output_signal_candidates(
+            primary_signal
         )
-        return resolved.name, resolved.container
+        try:
+            resolved = controller_io.resolve_named_signal(
+                sim_out,
+                primary_signal,
+                candidates=signal_candidates,
+            )
+            return resolved.name, resolved.container
+        except RuntimeError as exc:
+            workspace_resolved = self._resolve_workspace_signal(signal_candidates)
+            if workspace_resolved is not None:
+                return workspace_resolved
+            raise exc
+
+    def _resolve_workspace_signal(
+        self,
+        candidates: list[str],
+    ) -> tuple[str, object] | None:
+        for signal_name in candidates:
+            raw_signal = self._try_engine_method("eval", signal_name)
+            if raw_signal is not None:
+                print(
+                    f"[Simulink] Resolved signal '{signal_name}' from MATLAB workspace."
+                )
+                return signal_name, raw_signal
+        return None
+
+    def _resolve_workspace_time_vector(self) -> list[float]:
+        for candidate in ("tout", "time", "Time"):
+            raw_time = self._try_engine_method("eval", candidate)
+            if raw_time is None:
+                continue
+            values = self._to_float_series(raw_time)
+            if values:
+                return values
+        return []
 
     def run_step(self) -> None:
         if self._eng is None:
             raise RuntimeError(
                 "[SimulinkBridge] MATLAB Engine is not connected. Call connect() first."
             )
+
+        # 清理可能残留的工作区变量，防止 fallback 吃到旧数据
+        self._try_engine_method("eval", "clear tout time Time yout y_out u_out", nargout=0)
 
         self._call_engine_method(
             "set_param",
@@ -641,6 +676,8 @@ class SimulinkBridge:
         time_values, output_values = controller_io.extract_signal_series(
             signal_container, sim_out
         )
+        if not time_values:
+            time_values = self._resolve_workspace_time_vector()
 
         pwm_values: list[float] = []
         self.resolved_control_signal = ""

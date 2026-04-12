@@ -25,7 +25,6 @@ PID 系统辨识工具 - 硬件版
 
 import csv
 import os
-import serial
 import argparse
 import time
 from typing import List, Dict, Optional
@@ -319,6 +318,13 @@ def read_from_serial(port: str, baud: int = 115200, duration: float = 10.0) -> D
     Returns:
         辨识结果
     """
+    try:
+        import serial
+    except ImportError:
+        return {
+            "error": "未安装 pyserial，请运行: pip install pyserial 后再使用 --mode live",
+        }
+
     print(f"🔌 正在连接串口 {port} @ {baud} baud...")
 
     ser = None

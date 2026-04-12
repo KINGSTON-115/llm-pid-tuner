@@ -173,9 +173,12 @@ def run_tuning_engine(
                         pid_block_path=getattr(bridge, "pid_block_path", ""),
                         output_signal=getattr(bridge, "output_signal", ""),
                         sim_step_time=getattr(bridge, "sim_step_time", 1.0),
-                        control_signal=getattr(bridge, "control_signal", ""),
+                        control_signal=(
+                            getattr(bridge, "resolved_control_signal", "")
+                            or getattr(bridge, "control_signal", "")
+                        ),
                         output_signal_candidates=getattr(bridge, "output_signal_candidates", []),
-                        pwm_signal_available=getattr(bridge, "pwm_signal_available", False),
+                        pwm_signal_available=getattr(bridge, "has_control_signal", False),
                     )
                 prompt_context.update({
                     "setpoint_block": getattr(bridge, "setpoint_block", ""),
@@ -198,6 +201,12 @@ def run_tuning_engine(
                 tuning_mode=llm_mode,
                 prompt_context=prompt_context,
             )
+
+            if controller is not None and getattr(controller, "should_stop", False):
+                session.completed_reason = "stopped_by_user"
+                _console(emit_console, "\n[INFO] Tuning stopped by user.")
+                _emit_lifecycle(event_sink, start_time, "stopped", "Tuning stopped by user.")
+                break
 
             if not result:
                 _console(emit_console, "[WARN] LLM unavailable, using fallback.")

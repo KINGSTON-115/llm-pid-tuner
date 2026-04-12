@@ -289,6 +289,34 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         self.assertEqual(bridge.get_data()[0]["input"], 200.0)
         self.assertEqual(bridge.get_data()[1]["input"], 210.0)
 
+    def test_run_step_reads_signal_from_matlab_workspace_when_sim_out_omits_it(self):
+        class _WorkspaceEngine(_FakeEngine):
+            def __init__(self, sim_output, workspace_vars):
+                super().__init__(sim_output)
+                self.workspace_vars = workspace_vars
+
+            def eval(self, expression, nargout=0):  # type: ignore[override]
+                self.eval_calls.append((expression, nargout))
+                return self.workspace_vars.get(expression)
+
+        bridge = self._make_bridge({})
+        bridge._eng = _WorkspaceEngine(
+            {},
+            {
+                "y_out": {
+                    "Time": [[0.0], [0.01], [0.02]],
+                    "Data": [[10.0], [15.0], [21.0]],
+                }
+            },
+        )
+
+        bridge.run_step()
+
+        self.assertEqual(len(bridge.get_data()), 3)
+        self.assertEqual(bridge.get_data()[0]["timestamp"], 0.0)
+        self.assertEqual(bridge.get_data()[1]["timestamp"], 10.0)
+        self.assertEqual(bridge.get_data()[2]["input"], 21.0)
+
     def test_run_step_reads_from_yout_fallback(self):
         # Case: user configured y_out but model outputs yout
         sim_output = {

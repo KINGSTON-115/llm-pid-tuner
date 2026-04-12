@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--plain",
         action="store_true",
-        help="When using `sim`, disable the Textual dashboard and use plain logs.",
+        help="Disable the Textual dashboard and use plain logs for simulator or hardware tuning.",
     )
     parser.add_argument(
         "--lang",
@@ -115,9 +115,10 @@ def dispatch(
         return
 
     if normalized == MODE_TUNE:
+        tuner_args = list(extra)
         if force_plain:
-            raise SystemExit("`--plain` only applies to simulator mode.")
-        run_tuner(extra)
+            tuner_args.append("--plain")
+        run_tuner(tuner_args)
         return
 
     if normalized == MODE_QUIT:
@@ -125,9 +126,10 @@ def dispatch(
         return
 
     if mode_or_port:
+        tuner_args = [mode_or_port, *extra]
         if force_plain:
-            raise SystemExit("`--plain` only applies to simulator mode.")
-        run_tuner([mode_or_port, *extra])
+            tuner_args.append("--plain")
+        run_tuner(tuner_args)
         return
 
     if force_plain:

@@ -18,6 +18,7 @@ if TEXTUAL_AVAILABLE:
     from textual.widgets import RichLog, Static
 
 import simulator
+from core.adapters import SimulinkEnv
 from doctor import DoctorCheck
 from sim.model import HeatingSimulator, SETPOINT
 from sim.prompt_context import build_simulink_prompt_context
@@ -113,6 +114,24 @@ class SimulationControllerTests(unittest.TestCase):
         thread.join(timeout=0.2)
         self.assertFalse(thread.is_alive())
         self.assertEqual(resumed, [True])
+
+
+class SimulinkEnvTests(unittest.TestCase):
+    def test_get_current_pid_reads_secondary_bridge_gains_from_secondary_attrs(self):
+        class FakeBridge:
+            kp = 1.0
+            ki = 0.1
+            kd = 0.05
+            secondary_kp = 2.0
+            secondary_ki = 0.2
+            secondary_kd = 0.06
+            has_secondary_pid = True
+
+        env = SimulinkEnv(FakeBridge(), SETPOINT)
+        primary, secondary = env.get_current_pid()
+
+        self.assertEqual(primary, {"p": 1.0, "i": 0.1, "d": 0.05})
+        self.assertEqual(secondary, {"p": 2.0, "i": 0.2, "d": 0.06})
 
 
 class SimulatorLoopTests(unittest.TestCase):
@@ -701,6 +720,65 @@ class SimulatorLoopTests(unittest.TestCase):
         self.assertEqual(events[-1]["phase"], "error")
         self.assertIn("connect boom", events[-1]["message"])
 
+    def test_run_simulink_simulation_emits_progress_events_before_tuning(self):
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+
+        class FakeBridge:
+            def __init__(
+                self,
+                model_path,
+                setpoint,
+                pid_block_path,
+                output_signal,
+                sim_step_time,
+                matlab_root="",
+                control_signal="",
+                output_signal_candidates=None,
+                setpoint_block="",
+                pid_block_paths=None,
+                p_block_path="",
+                i_block_path="",
+                d_block_path="",
+            ):
+                self.kp = 1.0
+                self.ki = 0.1
+                self.kd = 0.05
+
+            def connect(self):
+                return None
+
+            def disconnect(self):
+                return None
+
+        with patch("sim.simulink_bridge.SimulinkBridge", FakeBridge):
+            with patch.object(simulator, "_run_tuning_loop", return_value={"mode": "simulink"}):
+                with patch.dict(
+                    simulator.CONFIG,
+                    {
+                        "MATLAB_MODEL_PATH": "C:/models/demo.slx",
+                        "MATLAB_PID_BLOCK_PATH": "demo/PID Controller",
+                        "MATLAB_OUTPUT_SIGNAL": "y_out",
+                        "MATLAB_SIM_STEP_TIME": 12.5,
+                        "MATLAB_SETPOINT": 180.0,
+                    },
+                    clear=False,
+                ):
+                    result = simulator._run_simulink_simulation(
+                        event_sink=event_sink,
+                        emit_console=False,
+                    )
+
+        self.assertEqual(result, {"mode": "simulink"})
+        events = drain_event_queue(event_queue)
+        phases = [
+            event["phase"]
+            for event in events
+            if event.get("type") == EVENT_LIFECYCLE
+        ]
+        self.assertIn("connecting", phases)
+        self.assertIn("connected", phases)
+
     def test_run_simulink_simulation_suppresses_plain_output_in_tui_mode(self):
         captured = {}
 
@@ -1209,6 +1287,7 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.state.latest_action, "-")
             self.assertTrue(app.state.detailed_events)
             self.assertGreater(app.state.current_setpoint, 0.0)
+            self.assertIn("s", help_text)
             self.assertIn("q", help_text)
             self.assertIn("p", help_text)
 
@@ -1334,6 +1413,40 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(worker_finished.is_set())
             self.assertIsNotNone(app._worker_thread)
             self.assertFalse(app._worker_thread.is_alive())
+
+    async def test_save_and_exit_waits_for_worker_to_finish(self):
+        from sim.tui import SimulationTUIApp
+
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+        controller = SimulationController()
+        worker_finished = threading.Event()
+
+        def worker() -> None:
+            while not controller.should_stop:
+                time.sleep(0.01)
+            worker_finished.set()
+
+        app = SimulationTUIApp(
+            event_queue=event_queue,
+            controller=controller,
+            worker_target=worker,
+            event_sink=event_sink,
+            mode_label="Hardware",
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.press("s")
+            for _ in range(10):
+                if worker_finished.wait(timeout=0.05):
+                    break
+                await pilot.pause()
+
+            help_text = str(app.query_one("#help", Static).content)
+            self.assertTrue(controller.should_stop)
+            self.assertTrue(worker_finished.is_set())
+            self.assertIn("s", help_text)
+            self.assertIn("保存", str(app.state.phase_message))
 
     async def test_completed_phase_disables_log_auto_scroll(self):
         from sim.tui import SimulationTUIApp

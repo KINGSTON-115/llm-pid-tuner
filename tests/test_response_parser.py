@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm.response_parser import (
     extract_json_candidates,
+    parse_structured_text_response,
     parse_json_response,
     sanitize_result,
 )
@@ -111,6 +112,47 @@ class ParseJsonResponseTests(unittest.TestCase):
 
     def test_returns_none_on_non_dict_json(self):
         self.assertIsNone(parse_json_response("[1, 2, 3]"))
+
+    def test_parses_structured_single_controller_text(self):
+        parsed = parse_json_response(
+            """
+            [Thought] Response is still a bit slow.
+            [Analysis] Stable with low overshoot.
+            [Action] Increase I slightly.
+            [PID] P=0.12, I=5.8, D=0.05
+            [Status] TUNING
+            """
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["p"], 0.12)
+        self.assertEqual(parsed["i"], 5.8)
+        self.assertEqual(parsed["status"], "TUNING")
+
+    def test_parses_structured_dual_controller_text(self):
+        parsed = parse_structured_text_response(
+            """
+            [思考] 主环继续优化，副环保持稳定。
+            [分析] Round 11 is near the best region.
+            [调参] 回退主环增益。
+            [控制器 1] P=0.12, I=5.8, D=0.05
+            [控制器 2] P=1.0, I=0.1, D=0.05
+            [状态] TUNING
+            """
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["controller_1"]["p"], 0.12)
+        self.assertEqual(parsed["controller_2"]["i"], 0.1)
+        self.assertEqual(parsed["status"], "TUNING")
+
+    def test_structured_text_without_pid_returns_none(self):
+        self.assertIsNone(
+            parse_structured_text_response(
+                """
+                [思考] 只有分析，没有参数。
+                [分析] Continue observing.
+                """
+            )
+        )
 
 
 if __name__ == "__main__":

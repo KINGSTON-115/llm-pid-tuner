@@ -20,22 +20,12 @@ import traceback
 from typing import Any, Callable
 
 from core.config import CONFIG, initialize_runtime_config
-from core.tuning_session import (
-    apply_rollback,
-    build_tuning_result,
-    create_tuning_session,
-    evaluate_completed_round,
-    finalize_decision,
-    record_rollback_round,
-)
 from hw.bridge import SerialBridge, safe_pause, select_serial_port
 from llm.client import LLMTuner
-from pid_safety import apply_pid_guardrails, build_fallback_suggestion, get_pid_limits
 from core.tuning_engine import run_tuning_engine
 from core.adapters import HardwareEnv
 from sim.prompt_context import build_hardware_prompt_context
 from sim.runtime import (
-    EVENT_SAMPLE,
     QueueEventSink,
     SimulationController,
     emit_console_message as _console,
@@ -43,8 +33,6 @@ from sim.runtime import (
     emit_log as _emit_log,
     make_llm_tuner_callbacks,
     now_elapsed,
-    publish_event,
-    wait_while_paused,
 )
 
 
@@ -99,6 +87,21 @@ def choose_tui_language(default: str = "zh") -> str:
     return default
 
 
+def choose_hardware_ui_mode(force_plain: bool) -> bool:
+    if force_plain:
+        return False
+
+    print("Hardware display mode")
+    print("[1] TUI mode")
+    print("[2] Plain console mode (--plain, default)")
+
+    try:
+        choice = input("Choose a mode [2]: ").strip().lower()
+    except EOFError:
+        return False
+    return choice in {"1", "tui"}
+
+
 def _run_hardware_tuning_loop(
     serial_port: str,
     event_sink: QueueEventSink | None = None,
@@ -121,6 +124,11 @@ def _run_hardware_tuning_loop(
         stream_callback=llm_stream_callback,
         log_callback=llm_log_callback,
         emit_console=emit_console,
+        abort_check=(
+            (lambda: bool(getattr(controller, "should_stop", False)))
+            if controller is not None
+            else None
+        ),
         timeout=CONFIG.get("LLM_REQUEST_TIMEOUT", 60.0),
         debug_output=CONFIG.get("LLM_DEBUG_OUTPUT", False),
     )
@@ -280,7 +288,8 @@ def run_hardware_tuner(
         safe_pause()
         return {"completed_reason": "no_serial_port"}
 
-    if not force_plain:
+    use_tui = choose_hardware_ui_mode(force_plain)
+    if use_tui:
         try:
             return _run_hardware_tuning_with_tui(serial_port, initial_pid=initial_pid)
         except Exception as exc:

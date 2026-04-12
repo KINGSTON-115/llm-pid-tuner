@@ -60,6 +60,17 @@ class SimulinkEnv(BaseTuningEnvironment):
         self.controller = controller
         self.prompt_context = {}
 
+    def _bridge_gain(self, *names: str, default: float) -> float:
+        for name in names:
+            if not hasattr(self.bridge, name):
+                continue
+            value = getattr(self.bridge, name)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return float(default)
+
     def collect_samples(self) -> List[Dict[str, float]]:
         samples = []
         max_run_steps = 200
@@ -91,10 +102,24 @@ class SimulinkEnv(BaseTuningEnvironment):
         self.bridge.set_pid_pair(primary_pid, secondary_pid)
 
     def get_current_pid(self) -> Tuple[Dict[str, float], Optional[Dict[str, float]]]:
-        primary = {"p": self.bridge.kp, "i": self.bridge.ki, "d": self.bridge.kd}
+        primary = {
+            "p": self._bridge_gain("kp", default=1.0),
+            "i": self._bridge_gain("ki", default=0.1),
+            "d": self._bridge_gain("kd", default=0.05),
+        }
         secondary = None
         if getattr(self.bridge, "has_secondary_pid", False):
-            secondary = {"p": self.bridge.kp2, "i": self.bridge.ki2, "d": self.bridge.kd2}
+            secondary = {
+                "p": self._bridge_gain(
+                    "secondary_kp", "kp2", default=primary["p"]
+                ),
+                "i": self._bridge_gain(
+                    "secondary_ki", "ki2", default=primary["i"]
+                ),
+                "d": self._bridge_gain(
+                    "secondary_kd", "kd2", default=primary["d"]
+                ),
+            }
         return primary, secondary
 
     def get_setpoint(self) -> float:

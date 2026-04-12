@@ -17,14 +17,25 @@
 
 如果你想看 **最新功能、最新教程、最新 Simulink 配置说明**，请直接参考 `dev` 分支文档：
 
-- 最新总览（中文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/README.md>
-- 最新总览（英文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md>
-- 最新 Simulink 指南（中文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/MATLAB_GUIDE.md>
-- 最新 Simulink 指南（英文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/MATLAB_GUIDE.md>
-- 最新项目说明（中文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/PROJECT_DOC.md>
-- 最新项目说明（英文）：<https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/PROJECT_DOC.md>
+- [最新总览（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/README.md) | [最新总览（英文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md)
+- [最新 Simulink 指南（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/MATLAB_GUIDE.md) | [最新 Simulink 指南（英文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/MATLAB_GUIDE.md)
+- [最新项目说明（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/PROJECT_DOC.md) | [最新项目说明（英文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/PROJECT_DOC.md)
 
 如果你只想使用 **当前稳定版 main**，继续阅读本页即可。
+
+## 目录
+
+- [系统结构图](#系统结构图)
+- [先看你该怎么用](#先看你该怎么用)
+- [这个项目适合什么场景](#这个项目适合什么场景)
+- [它不是做什么的](#它不是做什么的)
+- [3 分钟上手：Windows 打包版（推荐给小白）](#3-分钟上手windows-打包版推荐给小白)
+- [config.json 怎么填](#configjson-怎么填)
+- [推荐模型与接口填写方式](#推荐模型与接口填写方式)
+- [如何自定义提示词 (Prompt)](#如何自定义提示词-prompt)
+- [MATLAB/Simulink 仿真模式](#matlabsimulink-仿真模式)
+- [如果你还没有硬件，先跑仿真](#如果你还没有硬件先跑仿真)
+- [进阶：源码方式运行](#进阶源码方式运行)
 
 ## 系统结构图
 
@@ -271,6 +282,21 @@ $env:LLM_PROVIDER="openai"
 ```
 
 留空则**不启用代理**，对不需要代理的用户没有影响。
+
+### 导出 CSV 数据（可选）
+
+如果你希望将调参过程中的实时数据（时间戳、设定值、当前值、PWM、误差、PID参数等）保存下来，以便后续在 Excel 或 MATLAB 中分析，可以在 `config.json` 中配置 `CSV_EXPORT_PATH` 字段：
+
+```json
+{
+  "CSV_EXPORT_PATH": "logs/tuning_data.csv"
+}
+```
+
+- 填入你希望保存的 CSV 文件路径（支持相对路径或绝对路径）。
+- 每次运行调参时，程序会自动将数据追加到该文件中，并记录当前的 `session_id` 和 `round`（轮次），方便你区分不同次的调参记录。
+- 留空（`""`）则**不导出 CSV**。
+
 ---
 
 ## 推荐模型与接口填写方式
@@ -286,6 +312,28 @@ $env:LLM_PROVIDER="openai"
 | Anthropic Claude                 | `https://api.anthropic.com` | `anthropic`     | 原生接口用这个                              |
 
 这个项目现在做了更稳的解析和回退处理，**对 OpenAI 兼容接口更友好**。如果 SDK 路径不顺，它也会尽量走更直接的 HTTP 路径，减少“能调通 API 但程序不工作”的情况。
+
+---
+
+## 如何自定义提示词 (Prompt)
+
+本项目提供了两种自定义提示词（调参策略）的方式，以适应不同的需求：
+
+### 1. 预调参对话（推荐，无需改代码）
+在每次启动调参（无论是仿真还是硬件模式）时，程序会首先进入**预调参对话 (Pre-Tuning Conversation)**。
+在这里，你可以直接用自然语言输入你的偏好。例如：
+- *"我希望系统绝对稳定，不能有任何超调，哪怕响应慢一点也没关系。"*
+- *"这是一个对响应速度要求极高的系统，允许 10% 以内的超调，请尽可能激进地调参。"*
+- *"注意，这个电机的死区比较大，P 参数可以给大一点。"*
+
+程序会自动将你的自然语言偏好转化为结构化的 JSON 约束，并附加到 LLM 的系统提示词中，从而改变 LLM 的调参行为。
+
+### 2. 修改源码中的系统提示词（进阶）
+如果你希望永久改变 LLM 的核心调参逻辑或角色设定，你需要修改源码：
+1. 打开 `llm/prompts.py` 文件。
+2. 找到 `_BASE_SYSTEM_PROMPT` 变量，这里定义了 LLM 的核心角色、职责和调参原则。
+3. 找到 `_MODE_NOTES` 变量，这里定义了不同模式（如 `hardware`, `simulink`, `python_sim`）下的特定规则。
+4. 根据你的需求修改这些字符串内容即可。
 
 ---
 

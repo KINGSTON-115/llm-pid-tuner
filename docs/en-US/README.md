@@ -12,6 +12,17 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 > New here? The easiest path is **not** Python.
 > Download the packaged `llm-pid-tuner.exe` from Releases and start there.
 
+## Table of Contents
+
+- [System Architecture](#system-architecture)
+- [Best starting path](#best-starting-path)
+- [3-minute quick start for beginners](#3-minute-quick-start-for-beginners)
+- [How to fill config.json](#how-to-fill-configjson)
+- [How to customize prompts](#how-to-customize-prompts)
+- [MATLAB/Simulink Simulation Mode](#matlabsimulink-simulation-mode)
+- [If you don't have hardware yet, run the simulator](#if-you-dont-have-hardware-yet-run-the-simulator)
+- [Advanced: Running from source](#advanced-running-from-source)
+
 ## System Architecture
 
 ```text
@@ -218,6 +229,20 @@ If you need a VPN/proxy, add these fields to `config.json`:
 
 Leave them empty to **disable proxy**. If you do not need a proxy, you can ignore these fields.
 
+### Export CSV Data (optional)
+
+If you want to save real-time data during the tuning process (timestamp, setpoint, input, PWM, error, PID parameters, etc.) for later analysis in Excel or MATLAB, you can configure the `CSV_EXPORT_PATH` field in `config.json`:
+
+```json
+{
+  "CSV_EXPORT_PATH": "logs/tuning_data.csv"
+}
+```
+
+- Fill in the path where you want to save the CSV file (supports relative or absolute paths).
+- Every time you run the tuner, the program will automatically append data to this file and record the current `session_id` and `round`, making it easy to distinguish between different tuning sessions.
+- Leave it empty (`""`) to **disable CSV export**.
+
 ---
 
 ## Recommended providers
@@ -233,6 +258,28 @@ Leave them empty to **disable proxy**. If you do not need a proxy, you can ignor
 | Anthropic Claude                | `https://api.anthropic.com` | `anthropic`     |
 
 The current runtime is hardened for OpenAI-compatible endpoints and includes a more direct HTTP fallback path when SDK behavior is not enough.
+
+---
+
+## How to customize prompts
+
+This project provides two ways to customize prompts (tuning strategies) to suit different needs:
+
+### 1. Pre-Tuning Conversation (Recommended, no coding required)
+Every time you start tuning (whether in simulation or hardware mode), the program will first enter the **Pre-Tuning Conversation**.
+Here, you can directly input your preferences in natural language. For example:
+- *"I want the system to be absolutely stable with zero overshoot, even if the response is a bit slow."*
+- *"This is a system that requires extremely fast response. Overshoot within 10% is acceptable. Please tune as aggressively as possible."*
+- *"Note that this motor has a large deadband, so the P parameter can be larger."*
+
+The program will automatically convert your natural language preferences into structured JSON constraints and append them to the LLM's system prompt, thereby changing the LLM's tuning behavior.
+
+### 2. Modify the system prompt in source code (Advanced)
+If you want to permanently change the core tuning logic or role setting of the LLM, you need to modify the source code:
+1. Open the `llm/prompts.py` file.
+2. Find the `_BASE_SYSTEM_PROMPT` variable, which defines the core role, responsibilities, and tuning principles of the LLM.
+3. Find the `_MODE_NOTES` variable, which defines specific rules for different modes (e.g., `hardware`, `simulink`, `python_sim`).
+4. Modify these string contents according to your needs.
 
 ---
 
