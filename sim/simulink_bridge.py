@@ -330,7 +330,10 @@ class SimulinkBridge:
                 )
             except Exception as exc:
                 print(f"[WARN] Failed to close Simulink model: {exc}")
-            self._with_suppressed_engine_output(lambda: self._eng.quit())
+            try:
+                self._with_suppressed_engine_output(lambda: self._eng.quit())
+            except Exception as exc:
+                print(f"[WARN] Failed to quit MATLAB Engine gracefully: {exc}")
             self._eng = None
             self._session = None
             print("[Simulink] Engine closed.")

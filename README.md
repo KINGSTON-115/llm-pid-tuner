@@ -244,7 +244,7 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 | :--- | :--- | :--- | :--- |
 | 硬件串口 | 真实硬件调参 | `SERIAL_PORT` `BAUD_RATE` | `SERIAL_PORT` 不确定先填 `AUTO`，`BAUD_RATE` 要和固件一致 |
 | LLM 基础 | 所有模式都需要 | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | 这是最核心的一组配置，不填就无法调参 |
-| 调参行为 | 想微调策略时再改 | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` | 新手建议先保持默认，只有在采样不够、网络慢或需要排查日志时再动 |
+| 调参行为 | 想微调策略时再改 | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` `PID_MAX_INCREASE_RATIO` | 新手建议先保持默认，只有在采样不够、网络慢或需要排查日志时再动。`PID_MAX_INCREASE_RATIO` 用于限制单次参数调整的最大倍数（如 1.5 表示最多增加 50%），填 0.0 则使用默认限制。 |
 | Simulink | 只在 MATLAB/Simulink 模式下需要 | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`，以及按需填写 `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | 最小 6 项先跑通，复杂模型再逐步补充兼容字段 |
 | 代理 | 只有需要代理时才填 | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | 留空就是不启用 |
 

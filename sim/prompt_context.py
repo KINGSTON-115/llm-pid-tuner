@@ -94,7 +94,8 @@ def build_simulink_prompt_context(
             "with controller sample time."
             if is_discrete_domain
             else "Simulation environment with wider guardrails. Each round may raise P by "
-            "up to 5x the current value, and I/D by up to 6x the current value."
+            "up to 5x the current value, and I/D by up to 6x the current value. "
+            "However, if PID_MAX_INCREASE_RATIO is configured, you MUST strictly follow that limit."
         ),
         "controller_count": controller_count,
     }

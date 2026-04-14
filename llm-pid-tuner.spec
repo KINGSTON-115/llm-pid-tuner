@@ -1,67 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from __future__ import annotations
-
-import importlib.util
-from pathlib import Path
-import sys
-
-from PyInstaller.utils.hooks import collect_submodules
-
-
-ROOT_DIR = Path(globals().get("SPECPATH", Path.cwd())).resolve()
-PYTHON_PREFIX = Path(sys.prefix).resolve()
-
-hiddenimports = collect_submodules("rich._unicode_data") + ["_ssl", "_hashlib"]
-
-if importlib.util.find_spec("textual") is not None:
-    hiddenimports += ["sim.tui"]
-datas = []
-binaries = []
-excludes = [
-    # Simulink mode must load the user's local MATLAB Engine from MATLAB_ROOT at runtime.
-    # Freezing the build machine's engine makes the exe machine-specific.
-    "matlab",
-    "matlab.engine",
-    "matlabmultidimarrayforpython",
-]
-
-
-def add_optional_binary(binary_name: str, source_dir: Path, target_dir: str = ".") -> None:
-    candidate = source_dir / binary_name
-    if candidate.exists():
-        binaries.append((str(candidate), target_dir))
-
-
-for binary_name in ("python3.dll",):
-    add_optional_binary(binary_name, PYTHON_PREFIX)
-    add_optional_binary(binary_name, PYTHON_PREFIX / "DLLs")
-
-for binary_name in ("libssl-3-x64.dll", "libcrypto-3-x64.dll"):
-    add_optional_binary(binary_name, PYTHON_PREFIX / "Library" / "bin")
-
-for binary_name in (
-    "ffi.dll",
-    "liblzma.dll",
-    "LIBBZ2.dll",
-    "libexpat.dll",
-    "vcruntime140.dll",
-    "vcruntime140_1.dll",
-    "msvcp140.dll",
-    "ucrtbase.dll",
-):
-    add_optional_binary(binary_name, PYTHON_PREFIX / "Library" / "bin")
 
 a = Analysis(
-    ["launcher.py"],
-    pathex=[str(ROOT_DIR)],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    ['launcher.py'],
+    pathex=[],
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=excludes,
+    excludes=[],
     noarchive=False,
     optimize=0,
 )
@@ -73,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="llm-pid-tuner",
+    name='llm-pid-tuner',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

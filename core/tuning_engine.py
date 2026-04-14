@@ -180,6 +180,15 @@ def run_tuning_engine(
                         output_signal_candidates=getattr(bridge, "output_signal_candidates", []),
                         pwm_signal_available=getattr(bridge, "has_control_signal", False),
                     )
+                
+                # Apply dynamic guardrail hint based on config
+                global_ratio_limit = float(CONFIG.get("PID_MAX_INCREASE_RATIO", 0.0))
+                if global_ratio_limit > 1.0:
+                    prompt_context["per_round_guardrail_hint"] = (
+                        f"Simulation environment. Each round may raise P/I/D by up to {global_ratio_limit}x the current value. "
+                        "You MUST strictly follow this limit."
+                    )
+                
                 prompt_context.update({
                     "setpoint_block": getattr(bridge, "setpoint_block", ""),
                     "resolved_output_signal": getattr(bridge, "resolved_output_signal", ""),
@@ -214,7 +223,7 @@ def run_tuning_engine(
                 result = build_fallback_suggestion(evaluation.current_pid, evaluation.metrics)
 
             result, primary_result, secondary_result = flatten_controller_result(result, evaluation.current_pid)
-            decision = finalize_decision(session, evaluation, result)
+            decision = finalize_decision(session, evaluation, result, limits=pid_limits)
             publish_decision(event_sink, evaluation.round_index, decision)
 
             _console(emit_console, f"\n[Action] {decision.action} -> P={decision.safe_pid['p']}, I={decision.safe_pid['i']}, D={decision.safe_pid['d']}")
@@ -233,7 +242,8 @@ def run_tuning_engine(
             safe_secondary = None
             if isinstance(secondary_result, dict):
                 sec_curr = dict(session.buffer.secondary_pid) if session.buffer.secondary_pid is not None else {"p": 0.0, "i": 0.0, "d": 0.0}
-                safe_secondary, sec_notes = apply_pid_guardrails(sec_curr, secondary_result, limits=pid_limits.get("controller_2") if "controller_2" in pid_limits else base_pid_limits)
+                # Use the same limits as primary controller for secondary controller
+                safe_secondary, sec_notes = apply_pid_guardrails(sec_curr, secondary_result, limits=pid_limits)
                 if sec_notes:
                     _console(emit_console, f"[Guardrail] Controller 2: {'; '.join(sec_notes)}")
 

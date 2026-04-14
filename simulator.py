@@ -426,19 +426,30 @@ def _run_python_simulation_plain(
         warm_start,
         setpoint,
     )
-    return _run_tuning_loop(
-        sim,
-        setpoint,
-        "Python",
-        llm_mode="python_sim",
-        prompt_context=_merge_prompt_context(
-            build_python_sim_prompt_context(),
-            prompt_context_overrides,
-        ),
-        emit_console=True,
-        warm_start=effective_warm_start,
-        doctor_checks=doctor_checks,
-    )
+    try:
+        return _run_tuning_loop(
+            sim,
+            setpoint,
+            "Python",
+            llm_mode="python_sim",
+            prompt_context=_merge_prompt_context(
+                build_python_sim_prompt_context(),
+                prompt_context_overrides,
+            ),
+            emit_console=True,
+            warm_start=effective_warm_start,
+            doctor_checks=doctor_checks,
+        )
+    except KeyboardInterrupt:
+        print("\n[INFO] 用户中断 (Ctrl+C)。正在保存并退出...")
+        return {
+            "elapsed_sec": 0.0,
+            "round_num": 0,
+            "completed_reason": "interrupted",
+            "history": [],
+            "best_result": None,
+            "final_pid": initial_pid or {"p": 0, "i": 0, "d": 0},
+        }
 
 
 def _run_simulink_simulation_with_tui(
@@ -579,6 +590,23 @@ def _run_simulink_simulation(
             doctor_checks=doctor_checks,
             disable_early_exit=True,
         )
+    except KeyboardInterrupt:
+        _console(emit_console, "\n[INFO] 用户中断 (Ctrl+C)。正在保存并退出...")
+        publish_event(
+            event_sink,
+            EVENT_LIFECYCLE,
+            phase="interrupted",
+            message="User interrupted the tuning process.",
+            elapsed_sec=0.0,
+        )
+        return {
+            "elapsed_sec": 0.0,
+            "round_num": 0,
+            "completed_reason": "interrupted",
+            "history": [],
+            "best_result": None,
+            "final_pid": initial_pid or {"p": 0, "i": 0, "d": 0},
+        }
     finally:
         with _maybe_silence_stdout(emit_console):
             sim.disconnect()

@@ -95,6 +95,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "MATLAB_PID_BLOCK_PATH_2"       : "",
     "MATLAB_SIM_STEP_TIME"          : 15.0,
     "MATLAB_SETPOINT"               : 200.0,
+    "PID_MAX_INCREASE_RATIO"        : 0.0,
 }
 
 CONFIG: dict[str, Any] = dict(DEFAULT_CONFIG)
