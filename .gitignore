@@ -26,3 +26,6 @@ result.json
 
 # Local artifacts
 artifacts/
+logs/
+build_with_matlab310.bat
+fix_py38_compat.py

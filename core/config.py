@@ -6,7 +6,7 @@ import io
 import json
 import os
 import sys
-from typing import Any
+from typing import Any, Dict
 
 
 def ensure_utf8_console() -> None:
@@ -63,7 +63,7 @@ def ensure_utf8_console() -> None:
 # Default Configuration
 # ============================================================================
 
-DEFAULT_CONFIG: dict[str, Any] = {
+DEFAULT_CONFIG: Dict[str, Any] = {
     "SERIAL_PORT"                   : "AUTO",
     "BAUD_RATE"                     : 115200,
     "LLM_API_KEY"                   : "your-api-key-here",
@@ -98,7 +98,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "PID_MAX_INCREASE_RATIO"        : 0.0,
 }
 
-CONFIG: dict[str, Any] = dict(DEFAULT_CONFIG)
+CONFIG: Dict[str, Any] = dict(DEFAULT_CONFIG)
 CONFIG_PATH = "config.json"
 PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
 

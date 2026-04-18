@@ -9,7 +9,7 @@ import io
 from queue import Queue
 import time
 import traceback
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.buffer import AdvancedDataBuffer
 from core.adapters import PythonSimEnv, SimulinkEnv
@@ -18,20 +18,10 @@ from core.config import CONFIG, initialize_runtime_config
 
 # Alias used by run_simulation and patchable in tests
 ensure_runtime_config = initialize_runtime_config
-from core.tuning_session import (
-    apply_rollback,
-    build_tuning_result,
-    create_tuning_session,
-    evaluate_completed_round,
-    finalize_decision,
-    record_rollback_round,
-)
 from doctor import collect_doctor_checks, print_doctor_report, summarize_doctor_checks
 from llm.client import LLMTuner
 from pid_safety import (
-    adapt_simulink_pid_limits,
     apply_pid_guardrails,
-    build_fallback_suggestion,
     get_pid_limits,
 )
 from sim.model import HeatingSimulator, SETPOINT
@@ -41,12 +31,6 @@ from sim.prompt_context import (
     default_prompt_context_for_mode,
     _merge_prompt_context,
     refresh_prompt_context_for_mode,
-)
-from core.tuning_loop import (
-    flatten_controller_result,
-    publish_decision,
-    publish_rollback,
-    publish_round_metrics,
 )
 from sim.runtime import (
     EVENT_LIFECYCLE,
@@ -87,8 +71,8 @@ def _maybe_silence_stdout(enabled: bool):
 
 
 def _publish_doctor_checks(
-    doctor_checks: list[Any] | None,
-    event_sink: QueueEventSink | None = None,
+    doctor_checks: Optional[List[Any]],
+    event_sink: Optional[QueueEventSink] = None,
     emit_console: bool = True,
 ) -> None:
     if not doctor_checks:
@@ -115,14 +99,14 @@ def _publish_doctor_checks(
 
 def _run_simulator_warm_start(
     sim: HeatingSimulator,
-    event_sink: QueueEventSink | None = None,
+    event_sink: Optional[QueueEventSink] = None,
     emit_console: bool = True,
-) -> dict[str, float] | None:
+) -> Dict[str, float] | None:
     probe = HeatingSimulator(random_seed=0)
     probe.set_pid(0.0, 0.0, 0.0)
-    time_data: list[float] = []
-    temp_data: list[float] = []
-    pwm_data: list[float] = []
+    time_data: List[float] = []
+    temp_data: List[float] = []
+    pwm_data: List[float] = []
 
     sample_count = max(40, min(80, int(CONFIG.get("BUFFER_SIZE", 100))))
     for _ in range(sample_count):
@@ -173,11 +157,11 @@ def _run_simulator_warm_start(
 
 
 def _emit_sample_event(
-    event_sink: QueueEventSink | None, sim: Any, data: dict[str, Any]
+    event_sink: Optional[QueueEventSink], sim: Any, data: Dict[str, Any]
 ) -> None:
     """Publish EVENT_SAMPLE, including secondary PID fields when the sim
     exposes them (dual-controller Simulink setups)."""
-    payload: dict[str, Any] = {
+    payload: Dict[str, Any] = {
         "timestamp": float(data.get("timestamp", 0.0)),
         "setpoint": float(data.get("setpoint", 0.0)),
         "input": float(data.get("input", 0.0)),
@@ -197,9 +181,9 @@ def _emit_sample_event(
 def _collect_data(
     sim: Any,
     buffer: AdvancedDataBuffer,
-    event_sink: QueueEventSink | None = None,
-    controller: SimulationController | None = None,
-) -> tuple[int, bool]:
+    event_sink: Optional[QueueEventSink] = None,
+    controller: Optional[SimulationController] = None,
+) -> Tuple[int, bool]:
     steps = 0
     max_simulink_run_steps = 200
     simulink_run_count = 0
@@ -239,10 +223,10 @@ def _collect_data(
 
 
 def _create_python_simulator(
-    initial_pid: dict[str, float] | None,
+    initial_pid: Optional[Dict[str, float]],
     warm_start: bool,
     setpoint: float,
-) -> tuple[HeatingSimulator, bool]:
+) -> Tuple[HeatingSimulator, bool]:
     sim = HeatingSimulator(setpoint=setpoint)
     effective_warm_start = warm_start
     if initial_pid:
@@ -270,14 +254,14 @@ def _run_tuning_loop(
     setpoint: float,
     mode_label: str,
     llm_mode: str = "generic",
-    prompt_context: dict[str, Any] | None = None,
-    event_sink: QueueEventSink | None = None,
-    controller: SimulationController | None = None,
+    prompt_context: Optional[Dict[str, Any]] = None,
+    event_sink: Optional[QueueEventSink] = None,
+    controller: Optional[SimulationController] = None,
     emit_console: bool = True,
     warm_start: bool = True,
-    doctor_checks: list[Any] | None = None,
+    doctor_checks: Optional[List[Any]] = None,
     disable_early_exit: bool = False,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     llm_mode = _resolve_llm_mode(mode_label, llm_mode)
     if prompt_context is None:
         prompt_context = default_prompt_context_for_mode(sim, llm_mode)
@@ -353,20 +337,20 @@ def choose_simulink_ui_mode(force_plain: bool) -> bool:
 
 def _run_python_simulation_with_tui(
     warm_start: bool = True,
-    doctor_checks: list[Any] | None = None,
-    initial_pid: dict[str, float] | None = None,
-    prompt_context_overrides: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    doctor_checks: Optional[List[Any]] = None,
+    initial_pid: Optional[Dict[str, float]] = None,
+    prompt_context_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
-    event_queue: Queue[dict[str, Any]] = Queue()
+    event_queue: Queue[Dict[str, Any]] = Queue()
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
-    result_box: dict[str, Any] = {}
+    result_box: Dict[str, Any] = {}
     language = get_language()
     setpoint = _get_configured_setpoint()
 
-    def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
+    def make_worker(pid: Optional[Dict[str, float]]) -> Callable[[], None]:
         def worker() -> None:
             sim, effective_warm_start = _create_python_simulator(
                 pid,
@@ -393,7 +377,7 @@ def _run_python_simulation_with_tui(
 
         return worker
 
-    def next_round_factory(last_result: dict[str, Any]) -> Callable[[], None]:
+    def next_round_factory(last_result: Dict[str, Any]) -> Callable[[], None]:
         pid = last_result.get("final_pid")
         return make_worker(pid if isinstance(pid, dict) else None)
 
@@ -412,10 +396,10 @@ def _run_python_simulation_with_tui(
 
 def _run_python_simulation_plain(
     warm_start: bool = True,
-    doctor_checks: list[Any] | None = None,
-    initial_pid: dict[str, float] | None = None,
-    prompt_context_overrides: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    doctor_checks: Optional[List[Any]] = None,
+    initial_pid: Optional[Dict[str, float]] = None,
+    prompt_context_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     setpoint = _get_configured_setpoint()
     print("=" * 60)
     print("  LLM PID Tuner PRO - Simulation")
@@ -453,19 +437,19 @@ def _run_python_simulation_plain(
 
 
 def _run_simulink_simulation_with_tui(
-    doctor_checks: list[Any] | None = None,
-    initial_pid: dict[str, float] | None = None,
-    prompt_context_overrides: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    doctor_checks: Optional[List[Any]] = None,
+    initial_pid: Optional[Dict[str, float]] = None,
+    prompt_context_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
-    event_queue: Queue[dict[str, Any]] = Queue()
+    event_queue: Queue[Dict[str, Any]] = Queue()
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
-    result_box: dict[str, Any] = {}
+    result_box: Dict[str, Any] = {}
     language = get_language()
 
-    def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
+    def make_worker(pid: Optional[Dict[str, float]]) -> Callable[[], None]:
         def worker() -> None:
             result = _run_simulink_simulation(
                 initial_pid=pid,
@@ -480,7 +464,7 @@ def _run_simulink_simulation_with_tui(
 
         return worker
 
-    def next_round_factory(last_result: dict[str, Any]) -> Callable[[], None]:
+    def next_round_factory(last_result: Dict[str, Any]) -> Callable[[], None]:
         pid = last_result.get("final_pid")
         return make_worker(pid if isinstance(pid, dict) else None)
 
@@ -498,13 +482,13 @@ def _run_simulink_simulation_with_tui(
 
 
 def _run_simulink_simulation(
-    initial_pid: dict[str, float] | None = None,
-    doctor_checks: list[Any] | None = None,
-    prompt_context_overrides: dict[str, Any] | None = None,
-    event_sink: QueueEventSink | None = None,
-    controller: SimulationController | None = None,
+    initial_pid: Optional[Dict[str, float]] = None,
+    doctor_checks: Optional[List[Any]] = None,
+    prompt_context_overrides: Optional[Dict[str, Any]] = None,
+    event_sink: Optional[QueueEventSink] = None,
+    controller: Optional[SimulationController] = None,
     emit_console: bool = True,
-) -> dict[str, Any] | None:
+) -> Dict[str, Any] | None:
     def _emit_terminal_error(message: str) -> None:
         _console(emit_console, f"[ERROR] {message}")
         publish_event(
@@ -612,7 +596,7 @@ def _run_simulink_simulation(
             sim.disconnect()
 
 
-def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
+def run_simulation(force_plain: bool = False) -> Dict[str, Any] | None:
     ensure_runtime_config(verbose=True)
     doctor_checks = collect_doctor_checks()
     matlab_model_path = CONFIG.get("MATLAB_MODEL_PATH", "").strip()
@@ -622,7 +606,7 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
         prompt_context_overrides = collect_pre_tuning_preferences("Simulink")
         if use_tui:
             try:
-                tui_kwargs: dict[str, Any] = {"doctor_checks": doctor_checks}
+                tui_kwargs: Dict[str, Any] = {"doctor_checks": doctor_checks}
                 if prompt_context_overrides is not None:
                     tui_kwargs["prompt_context_overrides"] = prompt_context_overrides
                 return _run_simulink_simulation_with_tui(**tui_kwargs)
@@ -635,7 +619,7 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
                     traceback.print_exc()
 
         print_doctor_report(doctor_checks)
-        plain_kwargs: dict[str, Any] = {"doctor_checks": doctor_checks}
+        plain_kwargs: Dict[str, Any] = {"doctor_checks": doctor_checks}
         if prompt_context_overrides is not None:
             plain_kwargs["prompt_context_overrides"] = prompt_context_overrides
         return _run_simulink_simulation(**plain_kwargs)
@@ -662,7 +646,7 @@ def run_simulation(force_plain: bool = False) -> dict[str, Any] | None:
     return _run_python_simulation_plain(**plain_kwargs)
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Run the LLM PID simulator.")
     parser.add_argument(
         "--plain",

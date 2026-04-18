@@ -101,9 +101,23 @@ class HTTPFallbackProvider(BaseLLMProvider):
         self.is_anthropic = is_anthropic
         if requests_module is None:
             import requests
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.ssl_ import create_urllib3_context
+
+            class SSLAdapter(HTTPAdapter):
+                def init_poolmanager(self, *args, **kwargs):
+                    context = create_urllib3_context()
+                    context.load_default_certs()
+                    context.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
+                    kwargs['ssl_context'] = context
+                    return super().init_poolmanager(*args, **kwargs)
+
             self.requests = requests
+            self.session = requests.Session()
+            self.session.mount('https://', SSLAdapter())
         else:
             self.requests = requests_module
+            self.session = requests_module.Session() if hasattr(requests_module, 'Session') else None
 
     def execute_request(
         self,
@@ -135,7 +149,8 @@ class HTTPFallbackProvider(BaseLLMProvider):
         base_url = self.base_url.rstrip("/")
         if not base_url.endswith("/v1"):
             base_url = f"{base_url}/v1"
-        with self.requests.post(f"{base_url}/messages", headers=headers, json=payload, timeout=self.timeout, stream=True) as resp:
+        session = self.session if self.session else self.requests
+        with session.post(f"{base_url}/messages", headers=headers, json=payload, timeout=self.timeout, stream=True) as resp:
             resp.raise_for_status()
             self._parse_stream(resp, on_chunk, abort_check, self._extract_anthropic)
 
@@ -155,7 +170,8 @@ class HTTPFallbackProvider(BaseLLMProvider):
             "temperature": 0.3,
             "stream": True,
         }
-        with self.requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=self.timeout, stream=True) as resp:
+        session = self.session if self.session else self.requests
+        with session.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=self.timeout, stream=True) as resp:
             resp.raise_for_status()
             self._parse_stream(resp, on_chunk, abort_check, self._extract_openai)
 

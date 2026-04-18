@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 
 PRIMARY_CONTROLLER_TAG = "llm_pid_tuner_primary"
@@ -17,17 +17,17 @@ PID_BLOCK_TYPE_CANDIDATES = (
 @dataclass(slots=True)
 class ControllerDiscoveryResult:
     primary_path: str
-    primary_paths: list[str]
+    primary_paths: List[str]
     secondary_path: str
-    secondary_paths: list[str]
+    secondary_paths: List[str]
 
 
 class SimulinkBlockDiscovery:
     def __init__(
         self,
         *,
-        find_all_blocks: Callable[[], list[str]],
-        find_blocks_by_type: Callable[[str], list[str]],
+        find_all_blocks: Callable[[], List[str]],
+        find_blocks_by_type: Callable[[str], List[str]],
         get_param: Callable[[str, str], object | None],
         count_controller_gain_params: Callable[[str], int],
     ) -> None:
@@ -47,7 +47,7 @@ class SimulinkBlockDiscovery:
     def resolve_setpoint_block(
         self,
         explicit_setpoint_block: str,
-    ) -> tuple[str | None, str | None]:
+    ) -> Tuple[str | None, str | None]:
         if explicit_setpoint_block:
             for block_type in ("Step", "Constant"):
                 if self._get_param(explicit_setpoint_block, "BlockType") == block_type:
@@ -55,7 +55,7 @@ class SimulinkBlockDiscovery:
             return explicit_setpoint_block, None
 
         keywords = ("setpoint", "reference", "ref", "step", "鐩爣", "缁欏畾")
-        candidates: list[tuple[int, str, str]] = []
+        candidates: List[Tuple[int, str, str]] = []
         for block_type in ("Step", "Constant"):
             for block_path in self._find_blocks_by_type(block_type):
                 score = 0
@@ -85,7 +85,7 @@ class SimulinkBlockDiscovery:
     def _normalize_tag_text(self, value: object) -> str:
         return str(value or "").strip().lower()
 
-    def _discovery_rank(self, block_path: str) -> tuple[int, str]:
+    def _discovery_rank(self, block_path: str) -> Tuple[int, str]:
         lowered = block_path.lower()
         score = 0
         if "primary" in lowered or "outer" in lowered:
@@ -96,8 +96,8 @@ class SimulinkBlockDiscovery:
             score -= 10
         return score, block_path
 
-    def _sort_discovered_paths(self, paths: list[str]) -> list[str]:
-        unique_paths: list[str] = []
+    def _sort_discovered_paths(self, paths: List[str]) -> List[str]:
+        unique_paths: List[str] = []
         for path in paths:
             normalized = str(path or "").strip()
             if normalized and normalized not in unique_paths:
@@ -114,10 +114,10 @@ class SimulinkBlockDiscovery:
         self,
         tag_name: str,
         *,
-        excluded_paths: set[str] | None = None,
+        excluded_paths: Optional[Set[str]] = None,
     ) -> str:
         excluded = excluded_paths or set()
-        matches: list[str] = []
+        matches: List[str] = []
         for block_path in self._find_all_blocks():
             normalized_path = str(block_path or "").strip()
             if not normalized_path or normalized_path in excluded:
@@ -132,10 +132,10 @@ class SimulinkBlockDiscovery:
         return ranked[0] if ranked else ""
 
     def _find_pid_controller_blocks(
-        self, *, excluded_paths: set[str] | None = None
-    ) -> list[str]:
+        self, *, excluded_paths: Optional[Set[str]] = None
+    ) -> List[str]:
         excluded = excluded_paths or set()
-        matches: list[str] = []
+        matches: List[str] = []
         for block_type in PID_BLOCK_TYPE_CANDIDATES:
             for block_path in self._find_blocks_by_type(block_type):
                 normalized_path = str(block_path or "").strip()
@@ -146,7 +146,7 @@ class SimulinkBlockDiscovery:
                 matches.append(normalized_path)
         return self._sort_discovered_paths(matches)
 
-    def _score_controller_block(self, block_path: str) -> tuple[int, int]:
+    def _score_controller_block(self, block_path: str) -> Tuple[int, int]:
         lowered = block_path.lower()
         tail = lowered.rsplit("/", 1)[-1]
         controller_keywords = (
@@ -181,10 +181,10 @@ class SimulinkBlockDiscovery:
         return score, gain_count
 
     def _find_scored_controller_blocks(
-        self, *, excluded_paths: set[str] | None = None
-    ) -> list[str]:
+        self, *, excluded_paths: Optional[Set[str]] = None
+    ) -> List[str]:
         excluded = excluded_paths or set()
-        candidates: list[tuple[int, int, str]] = []
+        candidates: List[Tuple[int, int, str]] = []
         for block_path in self._find_all_blocks():
             normalized_path = str(block_path or "").strip()
             if not normalized_path or normalized_path in excluded:
@@ -202,9 +202,9 @@ class SimulinkBlockDiscovery:
         explicit_primary: bool,
         explicit_secondary: bool,
         primary_path: str,
-        primary_paths: list[str],
+        primary_paths: List[str],
         secondary_path: str,
-        secondary_paths: list[str],
+        secondary_paths: List[str],
     ) -> ControllerDiscoveryResult:
         taken_paths = {
             str(path).strip()
@@ -272,9 +272,9 @@ class SimulinkBlockDiscovery:
     def controller_sample_time_from_paths(
         self,
         *,
-        separate_gain_paths: dict[str, str],
+        separate_gain_paths: Dict[str, str],
         pid_block_path: str,
-        pid_block_paths: list[str],
+        pid_block_paths: List[str],
     ) -> str:
         for gain_key in ("p", "i", "d"):
             path = str(separate_gain_paths.get(gain_key, "") or "").strip()
@@ -303,7 +303,7 @@ class SimulinkBlockDiscovery:
         model_fixed_step: str,
         model_solver_type: str,
     ) -> str:
-        sample_times: list[float] = []
+        sample_times: List[float] = []
         for raw_value in (
             controller_1_sample_time,
             controller_2_sample_time,

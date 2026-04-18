@@ -23,7 +23,7 @@ DEMO_SERIAL_PORT_ALIASES = {
 }
 
 
-def _is_demo_port(port: str | None) -> bool:
+def _is_demo_port(port: Optional[str]) -> bool:
     return str(port or "").strip().upper() in DEMO_SERIAL_PORT_ALIASES
 
 
@@ -45,7 +45,7 @@ class _DemoSerialDevice:
         self.is_open = True
         self._sim = HeatingSimulator(random_seed=7)
         self._last_command = ""
-        self._secondary_pid: dict[str, float] | None = None
+        self._secondary_pid: Optional[Dict[str, float]] = None
 
     def close(self) -> None:
         self.is_open = False

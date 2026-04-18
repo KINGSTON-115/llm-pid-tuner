@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import field
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from core.buffer import AdvancedDataBuffer
 from core.compat import slotted_dataclass
@@ -21,12 +21,12 @@ from pid_safety import (
 class TuningSessionState:
     buffer: AdvancedDataBuffer
     history: TuningHistory
-    good_enough_rules: dict[str, float]
+    good_enough_rules: Dict[str, float]
     round_num: int = 0
     last_round: int = 0
     stable_rounds: int = 0
-    best_result: dict[str, Any] | None = None
-    last_metrics: dict[str, Any] = field(default_factory=dict)
+    best_result: Optional[Dict[str, Any]] = None
+    last_metrics: Dict[str, Any] = field(default_factory=dict)
     completed_reason: str = "max_rounds_reached"
     fallback_count: int = 0
     guardrail_count: int = 0
@@ -36,32 +36,32 @@ class TuningSessionState:
 @slotted_dataclass
 class RoundEvaluation:
     round_index: int
-    metrics: dict[str, Any]
-    current_pid: dict[str, float]
+    metrics: Dict[str, Any]
+    current_pid: Dict[str, float]
     stable_rounds: int
-    best_result: dict[str, Any] | None = None
+    best_result: Optional[Dict[str, Any]] = None
     best_result_updated: bool = False
-    rollback_pid: dict[str, float] | None = None
-    rollback_secondary_pid: dict[str, float] | None = None
-    completed_reason: str | None = None
+    rollback_pid: Optional[Dict[str, float]] = None
+    rollback_secondary_pid: Optional[Dict[str, float]] = None
+    completed_reason: Optional[str] = None
 
 
 @slotted_dataclass
 class DecisionOutcome:
-    safe_pid: dict[str, float]
+    safe_pid: Dict[str, float]
     action: str
     analysis: str
     thought: str
-    guardrail_notes: list[str]
+    guardrail_notes: List[str]
     fallback_used: bool
     status: str
-    completed_reason: str | None = None
+    completed_reason: Optional[str] = None
 
 
 def create_tuning_session(
     *,
-    initial_pid: dict[str, float] | None = None,
-    setpoint: float | None = None,
+    initial_pid: Optional[Dict[str, float]] = None,
+    setpoint: Optional[float] = None,
     max_history: int = 5,
 ) -> TuningSessionState:
     buffer = AdvancedDataBuffer(max_size=CONFIG["BUFFER_SIZE"])
@@ -82,7 +82,7 @@ def create_tuning_session(
 
 
 def evaluate_completed_round(
-    state: TuningSessionState, current_pid: dict[str, float]
+    state: TuningSessionState, current_pid: Dict[str, float]
 ) -> RoundEvaluation:
     metrics = state.buffer.calculate_advanced_metrics()
     round_index = state.round_num + 1
@@ -116,9 +116,9 @@ def evaluate_completed_round(
         state.best_result is not None and state.best_result is not previous_best
     )
 
-    rollback_pid: dict[str, float] | None = None
-    rollback_secondary_pid: dict[str, float] | None = None
-    completed_reason: str | None = None
+    rollback_pid: Optional[Dict[str, float]] = None
+    rollback_secondary_pid: Optional[Dict[str, float]] = None
+    completed_reason: Optional[str] = None
     if (
         state.best_result
         and not pid_equals(current_pid, state.best_result["pid"])
@@ -153,9 +153,9 @@ def evaluate_completed_round(
 
 def apply_rollback(
     state: TuningSessionState,
-    rollback_pid: dict[str, float],
+    rollback_pid: Dict[str, float],
     *,
-    rollback_secondary_pid: dict[str, float] | None = None,
+    rollback_secondary_pid: Optional[Dict[str, float]] = None,
 ) -> None:
     state.rollback_count += 1
     state.round_num += 1
@@ -168,9 +168,9 @@ def apply_rollback(
 def record_rollback_round(
     state: TuningSessionState,
     evaluation: RoundEvaluation,
-    rollback_pid: dict[str, float],
+    rollback_pid: Dict[str, float],
     *,
-    target_round: int | None = None,
+    target_round: Optional[int] = None,
 ) -> str:
     target_label = (
         f"round {target_round}" if target_round is not None else "the best stable round"
@@ -198,9 +198,9 @@ def record_rollback_round(
 def finalize_decision(
     state: TuningSessionState,
     evaluation: RoundEvaluation,
-    result: dict[str, Any] | None,
+    result: Optional[Dict[str, Any]],
     *,
-    limits: dict[str, dict[str, float]] | None = None,
+    limits: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> DecisionOutcome:
     if not result:
         result = build_fallback_suggestion(
@@ -249,8 +249,8 @@ def finalize_decision(
 
 
 def build_tuning_result(
-    state: TuningSessionState, *, final_pid: dict[str, float], stopped: bool
-) -> dict[str, Any]:
+    state: TuningSessionState, *, final_pid: Dict[str, float], stopped: bool
+) -> Dict[str, Any]:
     return {
         "provider": CONFIG["LLM_PROVIDER"],
         "model": CONFIG["LLM_MODEL_NAME"],

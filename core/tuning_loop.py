@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, Optional, Tuple
 
 from sim.runtime import (
     EVENT_DECISION,
@@ -14,7 +14,7 @@ from sim.runtime import (
 
 
 def publish_round_metrics(
-    event_sink: QueueEventSink | None, evaluation: Any, round_index: int
+    event_sink: Optional[QueueEventSink], evaluation: Any, round_index: int
 ) -> None:
     m = evaluation.metrics
     publish_event(
@@ -31,7 +31,7 @@ def publish_round_metrics(
 
 
 def publish_decision(
-    event_sink: QueueEventSink | None, round_index: int, decision: Any
+    event_sink: Optional[QueueEventSink], round_index: int, decision: Any
 ) -> None:
     publish_event(
         event_sink, EVENT_DECISION,
@@ -44,8 +44,8 @@ def publish_decision(
 
 
 def flatten_controller_result(
-    result: dict[str, Any], current_pid: dict[str, float]
-) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
+    result: Dict[str, Any], current_pid: Dict[str, float]
+) -> Tuple[Dict[str, Any], Dict[str, Any] | None, Dict[str, Any] | None]:
     """Flatten a dual-controller LLM result into root-level p/i/d.
 
     Returns ``(result_out, primary, secondary)``. When ``controller_1`` is a
@@ -69,10 +69,10 @@ def flatten_controller_result(
 
 
 def publish_rollback(
-    event_sink: QueueEventSink | None,
+    event_sink: Optional[QueueEventSink],
     round_index: int,
     evaluation: Any,
-    rollback_pid: dict[str, float],
+    rollback_pid: Dict[str, float],
     reason: str,
 ) -> None:
     target_round = (
