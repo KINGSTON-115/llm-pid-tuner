@@ -24,6 +24,7 @@ class HeatingSimulator:
     ):
         self.temp = INITIAL_TEMP
         self.pwm = 0.0
+        self.base_setpoint = float(setpoint)
         self.setpoint = float(setpoint)
         self.integral = 0.0
         self.prev_error = 0.0
@@ -39,6 +40,7 @@ class HeatingSimulator:
         self.cooling_coeff = 0.05
         self.noise_level = 0.1
         self.rng = random.Random(random_seed)
+        self.step_count = 0
 
     def set_pid(self, kp: float, ki: float, kd: float) -> None:
         self.kp = kp
@@ -46,6 +48,13 @@ class HeatingSimulator:
         self.kd = kd
 
     def compute_pid(self) -> None:
+        # Dynamic setpoint: step change every 50 steps (10 seconds)
+        if self.step_count > 0 and self.step_count % 50 == 0:
+            if self.setpoint == self.base_setpoint:
+                self.setpoint = self.base_setpoint + 50.0
+            else:
+                self.setpoint = self.base_setpoint
+
         error = self.setpoint - self.temp
         self.integral += error * CONTROL_INTERVAL
         self.integral = max(-500.0, min(500.0, self.integral))
@@ -66,6 +75,7 @@ class HeatingSimulator:
         self.temp += self.rng.gauss(0.0, self.noise_level)
         self.temp = max(0.0, self.temp)
         self.timestamp += int(CONTROL_INTERVAL * 1000)
+        self.step_count += 1
 
     def get_data(self) -> dict[str, float]:
         return {

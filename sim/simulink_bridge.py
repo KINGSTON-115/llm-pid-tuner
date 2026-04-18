@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 from pid_safety import (
     adapt_simulink_pid_limits,
@@ -43,9 +43,9 @@ class SimulinkBridge:
         matlab_root: str = "",
         sim_step_time: float = 10.0,
         control_signal: str = "",
-        output_signal_candidates: list[str] | None = None,
+        output_signal_candidates: Optional[List[str]] = None,
         setpoint_block: str = "",
-        pid_block_paths: list[str] | None = None,
+        pid_block_paths: Optional[List[str]] = None,
         p_block_path: str = "",
         i_block_path: str = "",
         d_block_path: str = "",
@@ -85,10 +85,10 @@ class SimulinkBridge:
         self.secondary_kd: float = 0.05
 
         self._eng: Optional[object] = None
-        self._session: MatlabEngineSession | None = None
+        self._session: Optional[MatlabEngineSession] = None
         self._model_name = ""
         self._current_sim_time = 0.0
-        self._last_data: list[dict] = []
+        self._last_data: List[dict] = []
         self._warned_output_signal_fallback = False
         self._warned_control_signal_fallback = False
         self._warned_control_signal_autodetect = False
@@ -96,11 +96,11 @@ class SimulinkBridge:
         self.resolved_output_signal = self.output_signal
         self.resolved_control_signal = ""
         self.has_control_signal = False
-        self._block_discovery: SimulinkBlockDiscovery | None = None
-        self._controller_io: SimulinkControllerIO | None = None
+        self._block_discovery: Optional[SimulinkBlockDiscovery] = None
+        self._controller_io: Optional[SimulinkControllerIO] = None
 
         self.secondary_pid_block_path = ""
-        self.secondary_pid_block_paths: list[str] = []
+        self.secondary_pid_block_paths: List[str] = []
         self.secondary_separate_gain_paths = {"p": "", "i": "", "d": ""}
 
         self.model_solver_type = ""
@@ -177,7 +177,7 @@ class SimulinkBridge:
             self.kd = self._read_controller_gain("d", self.kd)
             print(f"[Simulink] Initial PID: P={self.kp}, I={self.ki}, D={self.kd}")
 
-    def _find_all_blocks(self) -> list[str]:
+    def _find_all_blocks(self) -> List[str]:
         raw_blocks = self._with_suppressed_engine_output(
             lambda: self._with_suppressed_engine_warnings(
                 lambda: self._call_engine_method(
@@ -309,18 +309,36 @@ class SimulinkBridge:
             pid_block_paths=self.pid_block_paths,
         )
 
+    def _save_model_after_pid_update(self) -> None:
+        """Persist model changes without mutating MATLAB runtime state."""
+        if self._eng is None or not self._model_name:
+            return
+        try:
+            # Primary path: save to the currently loaded model target.
+            self._call_engine_method(
+                "save_system",
+                self._model_name,
+                nargout=0,
+            )
+            print(f"[Simulink] Saved PID to model: {self.model_path}")
+            return
+        except Exception:
+            # Fallback path: explicit model file path for compatibility.
+            pass
+        try:
+            self._call_engine_method(
+                "save_system",
+                self._model_name,
+                self.model_path,
+                nargout=0,
+            )
+            print(f"[Simulink] Saved PID to model: {self.model_path}")
+        except Exception as exc:
+            print(f"[WARN] Failed to save Simulink model: {exc}")
+
     def disconnect(self) -> None:
         if self._eng is not None:
-            try:
-                self._call_engine_method(
-                    "save_system",
-                    self._model_name,
-                    self.model_path,
-                    nargout=0,
-                )
-                print(f"[Simulink] Saved model: {self.model_path}")
-            except Exception as exc:
-                print(f"[WARN] Failed to save Simulink model: {exc}")
+            self._save_model_after_pid_update()
             try:
                 self._call_engine_method(
                     "close_system",
@@ -338,21 +356,24 @@ class SimulinkBridge:
             self._session = None
             print("[Simulink] Engine closed.")
 
-    def set_pid(self, p: float, i: float, d: float) -> None:
+    def set_pid(self, p: float, i: float, d: float, *, save_to_model: bool = True) -> None:
         self.kp, self.ki, self.kd = p, i, d
         self._write_controller_gain("p", p)
         self._write_controller_gain("i", i)
         self._write_controller_gain("d", d)
+        if save_to_model:
+            self._save_model_after_pid_update()
 
     def set_pid_pair(
         self,
-        primary: dict[str, float],
-        secondary: dict[str, float] | None = None,
-    ) -> list[str]:
+        primary: Dict[str, float],
+        secondary: Optional[Dict[str, float]] = None,
+    ) -> List[str]:
         self.set_pid(
             float(primary.get("p", self.kp)),
             float(primary.get("i", self.ki)),
             float(primary.get("d", self.kd)),
+            save_to_model=secondary is None,
         )
         if secondary is None:
             return []
@@ -368,7 +389,7 @@ class SimulinkBridge:
         original_pid_block_path = self.pid_block_path
         original_pid_block_paths = list(self.pid_block_paths)
         original_separate_gain_paths = dict(self.separate_gain_paths)
-        secondary_guardrail_notes: list[str] = []
+        secondary_guardrail_notes: List[str] = []
         try:
             self.pid_block_path = self.secondary_pid_block_path
             self.pid_block_paths = list(self.secondary_pid_block_paths)
@@ -403,11 +424,6 @@ class SimulinkBridge:
                     self.secondary_kd = current_secondary_pid["d"]
                     return secondary_guardrail_notes
 
-                # Delegate limits and guardrails out of Bridge where possible. 
-                # For tests compatibility we still run adapt and guardrails if required, but ideally these 
-                # belong strictly to the upper level (simulator.py/tuning_engine.py).
-                from pid_safety import get_pid_limits, apply_pid_guardrails
-                def adapt_simulink_pid_limits(base_limits, **kwargs): return base_limits
                 secondary_limits = adapt_simulink_pid_limits(
                     get_pid_limits("simulink"),
                     control_domain=self.control_domain,
@@ -429,7 +445,7 @@ class SimulinkBridge:
                 self.secondary_kp = safe_secondary_pid["p"]
                 self.secondary_ki = safe_secondary_pid["i"]
                 self.secondary_kd = safe_secondary_pid["d"]
-            except Exception as e:
+            except Exception:
                 secondary_guardrail_notes = [
                     "Controller 2 update skipped due to incompatible block configuration."
                 ]
@@ -437,6 +453,9 @@ class SimulinkBridge:
             self.pid_block_path = original_pid_block_path
             self.pid_block_paths = original_pid_block_paths
             self.separate_gain_paths = original_separate_gain_paths
+
+        # Save once after both controllers are updated.
+        self._save_model_after_pid_update()
         return secondary_guardrail_notes
 
     def _get_field_or_none(
@@ -451,7 +470,7 @@ class SimulinkBridge:
         session = self._ensure_session()
         return bool(session and session.is_timeseries_object(obj))
 
-    def _to_string_list(self, raw_value: object) -> list[str]:
+    def _to_string_list(self, raw_value: object) -> List[str]:
         session = self._ensure_session()
         if session is not None:
             return session.to_string_list(raw_value)
@@ -499,13 +518,13 @@ class SimulinkBridge:
             method_name, *args, nargout=nargout, quiet=quiet
         )
 
-    def _find_blocks_by_type(self, block_type: str) -> list[str]:
+    def _find_blocks_by_type(self, block_type: str) -> List[str]:
         session = self._ensure_session()
         if session is None:
             return []
         return session.find_blocks_by_type(self._model_name, block_type)
 
-    def _resolve_setpoint_block(self) -> tuple[str | None, str | None]:
+    def _resolve_setpoint_block(self) -> Tuple[str | None, str | None]:
         discovery = self._block_discovery or self._create_block_discovery()
         return discovery.resolve_setpoint_block(self.setpoint_block)
 
@@ -558,7 +577,7 @@ class SimulinkBridge:
             return 0.0
         return self._to_float_scalar(converted[0])
 
-    def _to_float_series(self, raw_values: object) -> list[float]:
+    def _to_float_series(self, raw_values: object) -> List[float]:
         session = self._ensure_session()
         if session is not None:
             return session.to_float_series(raw_values)
@@ -574,9 +593,9 @@ class SimulinkBridge:
         self,
         primary_signal: str,
         *,
-        configured_candidates: list[str] | None = None,
-        fallback_candidates: tuple[str, ...] = (),
-    ) -> list[str]:
+        configured_candidates: Optional[List[str]] = None,
+        fallback_candidates: Tuple[str, ...] = (),
+    ) -> List[str]:
         controller_io = self._controller_io or self._create_controller_io()
         return controller_io.resolve_signal_candidates(
             primary_signal,
@@ -584,14 +603,14 @@ class SimulinkBridge:
             fallback_candidates=fallback_candidates,
         )
 
-    def _resolve_output_signal_candidates(self, primary_signal: str) -> list[str]:
+    def _resolve_output_signal_candidates(self, primary_signal: str) -> List[str]:
         return self._resolve_signal_candidates(
             primary_signal,
             configured_candidates=self.output_signal_candidates,
             fallback_candidates=("yout",) if primary_signal == self.output_signal else (),
         )
 
-    def _resolve_control_signal_candidates(self) -> list[str]:
+    def _resolve_control_signal_candidates(self) -> List[str]:
         return self._resolve_signal_candidates(
             self.control_signal,
             fallback_candidates=CONTROL_SIGNAL_FALLBACK_CANDIDATES,
@@ -602,8 +621,8 @@ class SimulinkBridge:
         sim_out: object,
         primary_signal: str,
         *,
-        candidates: list[str] | None = None,
-    ) -> tuple[str, object]:
+        candidates: Optional[List[str]] = None,
+    ) -> Tuple[str, object]:
         controller_io = self._controller_io or self._create_controller_io()
         signal_candidates = candidates or self._resolve_output_signal_candidates(
             primary_signal
@@ -623,8 +642,8 @@ class SimulinkBridge:
 
     def _resolve_workspace_signal(
         self,
-        candidates: list[str],
-    ) -> tuple[str, object] | None:
+        candidates: List[str],
+    ) -> Tuple[str, object] | None:
         for signal_name in candidates:
             raw_signal = self._try_engine_method("eval", signal_name)
             if raw_signal is not None:
@@ -634,7 +653,7 @@ class SimulinkBridge:
                 return signal_name, raw_signal
         return None
 
-    def _resolve_workspace_time_vector(self) -> list[float]:
+    def _resolve_workspace_time_vector(self) -> List[float]:
         for candidate in ("tout", "time", "Time"):
             raw_time = self._try_engine_method("eval", candidate)
             if raw_time is None:
@@ -682,7 +701,7 @@ class SimulinkBridge:
         if not time_values:
             time_values = self._resolve_workspace_time_vector()
 
-        pwm_values: list[float] = []
+        pwm_values: List[float] = []
         self.resolved_control_signal = ""
         self.has_control_signal = False
         control_signal_candidates = self._resolve_control_signal_candidates()
@@ -736,5 +755,5 @@ class SimulinkBridge:
                 }
             )
 
-    def get_data(self) -> list[dict]:
+    def get_data(self) -> List[dict]:
         return self._last_data

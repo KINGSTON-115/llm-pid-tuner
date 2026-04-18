@@ -107,6 +107,11 @@ class LLMTuner:
             self.log_callback(label, message)
         if self.emit_console:
             print(message)
+            try:
+                with open("logs/console_log.txt", "a", encoding="utf-8") as f:
+                    f.write(message + "\n")
+            except Exception:
+                pass
 
     def _emit_stream_update(
         self,
@@ -207,6 +212,11 @@ class LLMTuner:
             self._emit_stream_update(final_text, done=True)
         if self.emit_console:
             print()
+            try:
+                with open("logs/console_log.txt", "a", encoding="utf-8") as f:
+                    f.write(final_text + "\n\n")
+            except Exception:
+                pass
         return final_text
 
     def request_json(

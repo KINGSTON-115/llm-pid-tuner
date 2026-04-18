@@ -159,6 +159,16 @@ def main(argv: list[str] | None = None) -> None:
         dispatch(
             args.mode_or_port, list(args.extra), force_plain=args.plain, lang=args.lang
         )
+    except KeyboardInterrupt:
+        print("\n[INFO] Interrupted by user (Ctrl+C). Exiting gracefully.")
+        # Try to flush any pending logs or CSV writes before exiting
+        try:
+            import sys
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        sys.exit(0)
     except Exception as exc:
         print(f"[ERROR] Launcher failed: {exc}")
         if can_prompt():

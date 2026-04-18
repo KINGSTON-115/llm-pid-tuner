@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import CONFIG
 from core.i18n import get_language, set_language
@@ -59,9 +59,9 @@ def _text(lang: str, key: str, **kwargs: Any) -> str:
 def _resolve_choice(
     raw_value: str,
     *,
-    options: dict[str, tuple[str, dict[str, str]]],
+    options: Dict[str, Tuple[str, Dict[str, str]]],
     default_key: str,
-) -> tuple[str, dict[str, str]]:
+) -> Tuple[str, Dict[str, str]]:
     normalized = raw_value.strip()
     if not normalized:
         return options[default_key]
@@ -102,7 +102,7 @@ def _collect_user_request(language: str) -> str:
     print("=" * 60)
     print(_text(language, "intro"))
 
-    lines: list[str] = []
+    lines: List[str] = []
     while True:
         try:
             raw_line = input(_text(language, "input_prompt"))
@@ -114,13 +114,13 @@ def _collect_user_request(language: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _normalize_string_list(value: object) -> list[str]:
+def _normalize_string_list(value: object) -> List[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def _fallback_prompt_context(language: str, user_text: str) -> dict[str, Any]:
+def _fallback_prompt_context(language: str, user_text: str) -> Dict[str, Any]:
     summary = _text(language, "fallback_summary", user_text=user_text)
     return {
         "user_dialog_language": language,
@@ -138,8 +138,8 @@ def _build_prompt_context_from_result(
     *,
     language: str,
     user_text: str,
-    result: dict[str, Any] | None,
-) -> dict[str, Any]:
+    result: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
     if not result:
         return _fallback_prompt_context(language, user_text)
 
@@ -155,7 +155,7 @@ def _build_prompt_context_from_result(
     except (TypeError, ValueError):
         max_overshoot_value = None
 
-    context: dict[str, Any] = {
+    context: Dict[str, Any] = {
         "user_dialog_language": language,
         "user_preference_raw_request": user_text,
         "user_preference_summary": summary,
@@ -180,7 +180,7 @@ def _build_prompt_context_from_result(
     return context
 
 
-def _summarize_user_request(language: str, user_text: str) -> dict[str, Any] | None:
+def _summarize_user_request(language: str, user_text: str) -> Dict[str, Any] | None:
     tuner = LLMTuner(
         api_key=CONFIG["LLM_API_KEY"],
         base_url=CONFIG["LLM_API_BASE_URL"],
@@ -198,7 +198,7 @@ def _summarize_user_request(language: str, user_text: str) -> dict[str, Any] | N
     )
 
 
-def collect_pre_tuning_preferences(mode_label: str) -> dict[str, Any] | None:
+def collect_pre_tuning_preferences(mode_label: str) -> Dict[str, Any] | None:
     if not _can_prompt():
         return None
 

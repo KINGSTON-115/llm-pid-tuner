@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 import threading
-from typing import Any
+from typing import Any, Dict, Optional, Set
 
 
 CSV_FIELDNAMES = [
@@ -35,11 +35,11 @@ class CsvEventExporter:
         self._lock = threading.Lock()
         self._handle = None
         self._writer: csv.DictWriter[str] | None = None
-        self._path: Path | None = None
+        self._path: Optional[Path] = None
         self._session_id = ""
         self._mode = ""
         self._round_index = 0
-        self._warned_paths: set[str] = set()
+        self._warned_paths: Set[str] = set()
 
     def reset(self) -> None:
         with self._lock:
@@ -49,7 +49,7 @@ class CsvEventExporter:
             self._round_index = 0
 
     def handle_event(
-        self, event_type: str, payload: dict[str, Any], *, csv_path: str
+        self, event_type: str, payload: Dict[str, Any], *, csv_path: str
     ) -> None:
         normalized_path = csv_path.strip()
         with self._lock:
@@ -71,15 +71,26 @@ class CsvEventExporter:
             if not self._ensure_writer_unlocked(normalized_path):
                 return
 
+            is_first_row_of_round = getattr(self, "_last_round_index", None) != self._round_index
+            self._last_round_index = self._round_index
+
+            # For dynamic setpoints, we need to record it whenever it changes
+            current_setpoint = payload.get("setpoint", "")
+            last_setpoint = getattr(self, "_last_setpoint", None)
+            is_setpoint_changed = current_setpoint != last_setpoint
+            self._last_setpoint = current_setpoint
+
             row = {
-                "session_id": self._session_id,
-                "mode": self._mode,
-                "round": self._round_index or "",
+                "session_id": self._session_id if is_first_row_of_round else "",
+                "mode": self._mode if is_first_row_of_round else "",
+                "round": self._round_index if is_first_row_of_round else "",
                 "timestamp_ms": payload.get("timestamp", ""),
-                "setpoint": payload.get("setpoint", ""),
+                "setpoint": current_setpoint if is_first_row_of_round or is_setpoint_changed else "",
                 "input": payload.get("input", ""),
                 "pwm": payload.get("pwm", ""),
                 "error": payload.get("error", ""),
+                # Keep controller gains on every sample row so exports remain
+                # self-contained for post-run analysis and round replays.
                 "p": payload.get("p", ""),
                 "i": payload.get("i", ""),
                 "d": payload.get("d", ""),
@@ -91,7 +102,7 @@ class CsvEventExporter:
             self._handle.flush()
 
     def _handle_lifecycle_unlocked(
-        self, payload: dict[str, Any], normalized_path: str
+        self, payload: Dict[str, Any], normalized_path: str
     ) -> None:
         phase = str(payload.get("phase", "")).strip().lower()
         detail = str(payload.get("detail", "") or payload.get("message", "")).strip()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 
 CONTROLLER_PARAM_CANDIDATES = {
@@ -28,8 +28,8 @@ class SimulinkControllerIO:
         call_engine_method: Callable[..., object],
         get_field_or_none: Callable[[object, str, bool], object | None],
         is_timeseries_object: Callable[[object], bool],
-        to_float_series: Callable[[object], list[float]],
-        to_string_list: Callable[[object], list[str]],
+        to_float_series: Callable[[object], List[float]],
+        to_string_list: Callable[[object], List[str]],
     ) -> None:
         self._try_engine_method = try_engine_method
         self._call_engine_method = call_engine_method
@@ -60,9 +60,9 @@ class SimulinkControllerIO:
         self,
         *,
         gain_key: str,
-        separate_gain_paths: dict[str, str],
+        separate_gain_paths: Dict[str, str],
         pid_block_path: str,
-        pid_block_paths: list[str],
+        pid_block_paths: List[str],
     ) -> str | None:
         separate_gain_path = separate_gain_paths.get(gain_key, "")
         if separate_gain_path:
@@ -88,9 +88,9 @@ class SimulinkControllerIO:
         *,
         gain_key: str,
         default: float,
-        separate_gain_paths: dict[str, str],
+        separate_gain_paths: Dict[str, str],
         pid_block_path: str,
-        pid_block_paths: list[str],
+        pid_block_paths: List[str],
     ) -> float:
         active_path = self.resolve_active_controller_path(
             gain_key=gain_key,
@@ -127,9 +127,9 @@ class SimulinkControllerIO:
         *,
         gain_key: str,
         value: float,
-        separate_gain_paths: dict[str, str],
+        separate_gain_paths: Dict[str, str],
         pid_block_path: str,
-        pid_block_paths: list[str],
+        pid_block_paths: List[str],
     ) -> None:
         active_path = self.resolve_active_controller_path(
             gain_key=gain_key,
@@ -169,10 +169,10 @@ class SimulinkControllerIO:
         self,
         primary_signal: str,
         *,
-        configured_candidates: list[str] | None = None,
-        fallback_candidates: tuple[str, ...] = (),
-    ) -> list[str]:
-        candidates: list[str] = []
+        configured_candidates: Optional[List[str]] = None,
+        fallback_candidates: Tuple[str, ...] = (),
+    ) -> List[str]:
+        candidates: List[str] = []
         for signal_name in [primary_signal, *(configured_candidates or []), *fallback_candidates]:
             normalized = str(signal_name or "").strip()
             if normalized and normalized not in candidates:
@@ -184,7 +184,7 @@ class SimulinkControllerIO:
         sim_out: object,
         primary_signal: str,
         *,
-        candidates: list[str],
+        candidates: List[str],
     ) -> ResolvedSignal:
         for signal_name in candidates:
             direct_signal = self._get_field_or_none(sim_out, signal_name, True)
@@ -218,7 +218,7 @@ class SimulinkControllerIO:
             error_msg += f" Available fields in simOut: {', '.join(available_fields)}"
         raise RuntimeError(error_msg)
 
-    def resolve_time_vector(self, sim_out: object) -> list[float]:
+    def resolve_time_vector(self, sim_out: object) -> List[float]:
         for candidate in ("tout", "time", "Time"):
             raw_time = self._get_field_or_none(sim_out, candidate, True)
             if raw_time is not None:
@@ -236,7 +236,7 @@ class SimulinkControllerIO:
                         return values
         return []
 
-    def extract_signal_series(self, signal_container: object, sim_out: object) -> tuple[list[float], list[float]]:
+    def extract_signal_series(self, signal_container: object, sim_out: object) -> Tuple[List[float], List[float]]:
         if self._is_timeseries_object(signal_container):
             raw_time = self._get_field_or_none(signal_container, "Time", False)
             raw_output = self._get_field_or_none(signal_container, "Data", False)

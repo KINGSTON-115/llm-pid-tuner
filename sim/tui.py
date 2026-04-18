@@ -5,7 +5,7 @@ from dataclasses import field
 import threading
 import time
 from queue import Queue
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Optional
 
 from rich.markup import escape as markup_escape
 from core.compat import slotted_dataclass
@@ -35,7 +35,7 @@ from sim.runtime import (
 # alignment.  Render functions build the display lines so that CJK full-width
 # characters never cause column-misalignment.
 # ---------------------------------------------------------------------------
-TRANSLATIONS: dict[str, dict[str, str]] = {
+TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "zh": {
         # waiting placeholders
         "waiting_status": "等待仿真数据...",
@@ -178,11 +178,11 @@ class PanelState:
     current_setpoint: float = 0.0
     current_pwm: float = 0.0
     current_error: float = 0.0
-    current_pid: dict[str, float] = field(
+    current_pid: Dict[str, float] = field(
         default_factory=lambda: {"p": 1.0, "i": 0.1, "d": 0.05}
     )
-    secondary_pid: dict[str, float] | None = None
-    metrics: dict[str, float | int] = field(
+    secondary_pid: Optional[Dict[str, float]] = None
+    metrics: Dict[str, float | int] = field(
         default_factory=lambda: {
             "avg_error": 0.0,
             "max_error": 0.0,
@@ -193,7 +193,7 @@ class PanelState:
     )
     latest_action: str = "-"
     latest_analysis: str = ""
-    latest_flags: list[str] = field(default_factory=list)
+    latest_flags: List[str] = field(default_factory=list)
     event_history: deque[RuntimeEvent] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -246,7 +246,7 @@ class PanelState:
             self.latest_analysis = str(
                 event.get("analysis_summary", self.tr("no_decision"))
             )
-            flags: list[str] = []
+            flags: List[str] = []
             if event.get("fallback_used"):
                 flags.append(self.tr("event_fallback"))
             if event.get("guardrail_notes"):
@@ -447,7 +447,7 @@ class PanelState:
         )
         return f"{line1}\n[dim]{self.tr('help_browse')}[/dim]"
 
-    def render_event_lines(self) -> list[str]:
+    def render_event_lines(self) -> List[str]:
         return [
             self._format_event(event, detailed=self.detailed_events)
             for event in self.event_history
@@ -585,11 +585,11 @@ class SimulationTUIApp(App[None]):
         self,
         event_queue: Queue[RuntimeEvent],
         controller: SimulationController,
-        worker_target: Callable[[], None] | None,
-        event_sink: QueueEventSink | None = None,
+        worker_target: Optional[Callable[[], None]],
+        event_sink: Optional[QueueEventSink] = None,
         mode_label: str = "Python",
         language: str = "zh",
-        next_round_factory: Callable[[dict[str, Any]], Callable[[], None]] | None = None,
+        next_round_factory: Optional[Callable[[Dict[str, Any]], Callable[[], None]]] = None,
     ) -> None:
         super().__init__()
         self.event_queue = event_queue
@@ -601,12 +601,12 @@ class SimulationTUIApp(App[None]):
         self._worker_thread: threading.Thread | None = None
         self._started_at = time.time()
         self._shutdown_requested = False
-        self._ignore_events_before_seq: int | None = None
+        self._ignore_events_before_seq: Optional[int] = None
         self._rendered_event_count = 0
         self._log_requires_full_refresh = True
         self._placeholder_visible = False
         self._history_browsing_enabled = False
-        self._last_result: dict[str, Any] = {}
+        self._last_result: Dict[str, Any] = {}
 
     def compose(self) -> ComposeResult:
         yield Static(self.state.tr("waiting_status"), id="status", markup=True)

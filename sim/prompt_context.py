@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 def build_hardware_prompt_context(
     serial_port: str,
-    secondary_pid: dict[str, float] | None = None,
-) -> dict[str, Any]:
+    secondary_pid: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
     context = {
         "source": "serial_hardware",
         "serial_port": serial_port,
@@ -22,7 +22,7 @@ def build_hardware_prompt_context(
     return context
 
 
-def build_python_sim_prompt_context() -> dict[str, Any]:
+def build_python_sim_prompt_context() -> Dict[str, Any]:
     return {
         "source": "built_in_python_heating_simulator",
         "plant_family": "single_loop_thermal",
@@ -37,13 +37,13 @@ def build_python_sim_prompt_context() -> dict[str, Any]:
 
 
 def _merge_prompt_context(
-    base_context: dict[str, Any] | None,
-    extra_context: dict[str, Any] | None,
-) -> dict[str, Any] | None:
+    base_context: Optional[Dict[str, Any]],
+    extra_context: Optional[Dict[str, Any]],
+) -> Dict[str, Any] | None:
     if not base_context and not extra_context:
         return None
 
-    merged: dict[str, Any] = {}
+    merged: Dict[str, Any] = {}
     if base_context:
         merged.update(base_context)
     if extra_context:
@@ -63,11 +63,11 @@ def build_simulink_prompt_context(
     sim_step_time: float,
     *,
     control_signal: str = "",
-    output_signal_candidates: list[str] | None = None,
+    output_signal_candidates: Optional[List[str]] = None,
     setpoint_block: str = "",
     resolved_output_signal: str = "",
     resolved_control_signal: str = "",
-    pwm_signal_available: bool | None = None,
+    pwm_signal_available: Optional[bool] = None,
     controller_2_path: str = "",
     controller_count: int = 1,
     control_domain: str = "",
@@ -76,7 +76,7 @@ def build_simulink_prompt_context(
     model_fixed_step: str = "",
     controller_1_sample_time: str = "",
     controller_2_sample_time: str = "",
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     effective_pwm_signal_available = (
         bool(control_signal) if pwm_signal_available is None else pwm_signal_available
     )
@@ -147,7 +147,7 @@ def _first_nonempty_text(*values: object) -> str:
     return next((text for value in values if (text := str(value or "").strip())), "")
 
 
-def default_prompt_context_for_mode(sim: Any, llm_mode: str) -> dict[str, Any] | None:
+def default_prompt_context_for_mode(sim: Any, llm_mode: str) -> Dict[str, Any] | None:
     if llm_mode == "python_sim":
         return build_python_sim_prompt_context()
 
@@ -183,8 +183,8 @@ def default_prompt_context_for_mode(sim: Any, llm_mode: str) -> dict[str, Any] |
 def refresh_prompt_context_for_mode(
     sim: Any,
     llm_mode: str,
-    prompt_context: dict[str, Any] | None,
-) -> dict[str, Any] | None:
+    prompt_context: Optional[Dict[str, Any]],
+) -> Dict[str, Any] | None:
     if prompt_context is None:
         return default_prompt_context_for_mode(sim, llm_mode)
 

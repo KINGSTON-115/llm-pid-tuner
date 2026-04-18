@@ -5,13 +5,23 @@ from llm.client import LLMTuner
 from core.tuning_session import create_tuning_session, evaluate_completed_round, finalize_decision, record_rollback_round, apply_rollback, build_tuning_result
 from core.tuning_loop import publish_round_metrics, publish_decision, flatten_controller_result, publish_rollback
 from core.config import CONFIG
-from sim.runtime import EVENT_DECISION, EVENT_ROLLBACK, EVENT_ROUND_METRICS, EVENT_SAMPLE, QueueEventSink, publish_event
-from pid_safety import build_fallback_suggestion, get_pid_limits, apply_pid_guardrails
-def adapt_simulink_pid_limits(base_limits, **kwargs): return base_limits
+from sim.runtime import EVENT_SAMPLE, QueueEventSink, publish_event
+from pid_safety import (
+    adapt_simulink_pid_limits,
+    apply_pid_guardrails,
+    build_fallback_suggestion,
+    get_pid_limits,
+)
 
 def _console(emit_console: bool, message: str, end: str = "\n") -> None:
     if emit_console:
         print(message, end=end, flush=True)
+        # Also append to a log file
+        try:
+            with open("logs/console_log.txt", "a", encoding="utf-8") as f:
+                f.write(message + end)
+        except Exception:
+            pass
 
 def _emit_lifecycle(event_sink: Optional[QueueEventSink], start_time: float, phase: str, detail: str = "") -> None:
     publish_event(event_sink, "lifecycle", timestamp=time.time() - start_time, phase=phase, detail=detail)
@@ -132,7 +142,7 @@ def run_tuning_engine(
                 _console(emit_console, f"\n[WARN] {rollback_message}")
                 _emit_lifecycle(event_sink, start_time, "rollback", rollback_message)
                 
-                apply_rollback(session, evaluation.rollback_pid, evaluation.rollback_secondary_pid)
+                apply_rollback(session, evaluation.rollback_pid, rollback_secondary_pid=evaluation.rollback_secondary_pid)
                 publish_rollback(event_sink, round_index, evaluation, evaluation.rollback_pid, rollback_message)
                 env.apply_pid(evaluation.rollback_pid, evaluation.rollback_secondary_pid)
                 _console(emit_console, f"[CMD] Applied rollback PID.")

@@ -1,12 +1,29 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+import sys
+
+# Determine the conda environment path
+if hasattr(sys, 'base_prefix'):
+    conda_env = sys.prefix
+else:
+    conda_env = sys.prefix
+
+# Add missing DLL files from conda environment
+dll_path = os.path.join(conda_env, 'Library', 'bin')
+binaries = []
+if os.path.exists(dll_path):
+    for dll in ['ffi.dll', 'ffi-7.dll', 'ffi-8.dll', 'libbz2.dll', 'liblzma.dll']:
+        dll_file = os.path.join(dll_path, dll)
+        if os.path.exists(dll_file):
+            binaries.append((dll_file, '.'))
 
 a = Analysis(
     ['launcher.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=[],
-    hiddenimports=[],
+    hiddenimports=['ssl', 'urllib3', 'requests', 'serial', 'serial.tools', 'serial.tools.list_ports'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

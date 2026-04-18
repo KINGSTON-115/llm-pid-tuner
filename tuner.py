@@ -17,7 +17,7 @@ from queue import Queue
 import sys
 import time
 import traceback
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Optional
 
 from core.config import CONFIG, initialize_runtime_config
 from hw.bridge import SerialBridge, safe_pause, select_serial_port
@@ -36,7 +36,7 @@ from sim.runtime import (
 )
 
 
-def _build_set_command(prefix: str, pid: dict[str, float]) -> str:
+def _build_set_command(prefix: str, pid: Dict[str, float]) -> str:
     return (
         f"{prefix} P:{pid['p']} "
         f"I:{pid['i']} D:{pid['d']}"
@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def resolve_serial_port(serial_port_arg: str | None) -> str | None:
+def resolve_serial_port(serial_port_arg: Optional[str]) -> str | None:
     if serial_port_arg:
         return serial_port_arg
 
@@ -104,11 +104,11 @@ def choose_hardware_ui_mode(force_plain: bool) -> bool:
 
 def _run_hardware_tuning_loop(
     serial_port: str,
-    event_sink: QueueEventSink | None = None,
-    controller: SimulationController | None = None,
+    event_sink: Optional[QueueEventSink] = None,
+    controller: Optional[SimulationController] = None,
     emit_console: bool = True,
-    initial_pid: dict[str, float] | None = None,
-) -> dict[str, Any]:
+    initial_pid: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
     bridge = SerialBridge(serial_port, CONFIG["BAUD_RATE"], emit_console=False)
     start_time = time.time()
     current_stream_round = [0]
@@ -220,17 +220,17 @@ def _run_hardware_tuning_loop(
 
 def _run_hardware_tuning_with_tui(
     serial_port: str,
-    initial_pid: dict[str, float] | None = None,
-) -> dict[str, Any]:
+    initial_pid: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
-    event_queue: Queue[dict[str, Any]] = Queue()
+    event_queue: Queue[Dict[str, Any]] = Queue()
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
-    result_box: dict[str, Any] = {}
+    result_box: Dict[str, Any] = {}
     language = choose_tui_language()
 
-    def make_worker(pid: dict[str, float] | None) -> Callable[[], None]:
+    def make_worker(pid: Optional[Dict[str, float]]) -> Callable[[], None]:
         def worker() -> None:
             result = _run_hardware_tuning_loop(
                 serial_port,
@@ -244,7 +244,7 @@ def _run_hardware_tuning_with_tui(
 
         return worker
 
-    def next_round_factory(last_result: dict[str, Any]) -> Callable[[], None]:
+    def next_round_factory(last_result: Dict[str, Any]) -> Callable[[], None]:
         pid = last_result.get("final_pid")
         return make_worker(pid if isinstance(pid, dict) else None)
 
@@ -263,8 +263,8 @@ def _run_hardware_tuning_with_tui(
 
 def _run_hardware_tuning_plain(
     serial_port: str,
-    initial_pid: dict[str, float] | None = None,
-) -> dict[str, Any]:
+    initial_pid: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
     print("=" * 60)
     print("  LLM PID Tuner PRO - 增强版自动调参系统")
     print("=" * 60)
@@ -277,10 +277,10 @@ def _run_hardware_tuning_plain(
 
 
 def run_hardware_tuner(
-    serial_port_arg: str | None = None,
+    serial_port_arg: Optional[str] = None,
     force_plain: bool = False,
-    initial_pid: dict[str, float] | None = None,
-) -> dict[str, Any]:
+    initial_pid: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
     initialize_runtime_config(create_if_missing=True, verbose=True)
     serial_port = resolve_serial_port(serial_port_arg)
     if not serial_port:
@@ -299,7 +299,7 @@ def run_hardware_tuner(
     return _run_hardware_tuning_plain(serial_port, initial_pid=initial_pid)
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: Optional[List[str]] = None) -> None:
     args = build_parser().parse_args(argv)
     run_hardware_tuner(args.serial_port, force_plain=args.plain)
 
