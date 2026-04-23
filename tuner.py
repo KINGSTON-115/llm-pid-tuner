@@ -162,14 +162,25 @@ def _run_hardware_tuning_loop(
     )
 
     try:
-        bridge.send_command("STATUS")
+        _console(emit_console, "[CMD] Sending: STATUS")
+        status_sent = bridge.send_command("STATUS")
         _emit_log(event_sink, start_time, "cmd", "STATUS")
-        _console(emit_console, "[CMD] Sent: STATUS")
+        if status_sent is False:
+            warn = f"[WARN] STATUS send failed: {bridge.last_error or 'unknown write error'}"
+            _console(emit_console, warn)
+            _emit_log(event_sink, start_time, "warn", warn)
+        else:
+            _console(emit_console, "[CMD] Sent: STATUS")
         if initial_pid:
             cmd = f"SET P:{initial_pid['p']} I:{initial_pid['i']} D:{initial_pid['d']}"
-            bridge.send_command(cmd)
+            cmd_sent = bridge.send_command(cmd)
             _emit_log(event_sink, start_time, "cmd", cmd)
-            _console(emit_console, f"[CMD] Initial PID: {cmd}")
+            if cmd_sent is False:
+                warn = f"[WARN] Initial PID send failed: {bridge.last_error or 'unknown write error'}"
+                _console(emit_console, warn)
+                _emit_log(event_sink, start_time, "warn", warn)
+            else:
+                _console(emit_console, f"[CMD] Initial PID: {cmd}")
         time.sleep(1)
 
         _console(emit_console, "[INFO] 开始采集数据...")
@@ -296,12 +307,20 @@ def run_hardware_tuner(
             print(f"[WARN] Failed to start the TUI ({exc}); falling back to plain output.")
             if bool(CONFIG.get("LLM_DEBUG_OUTPUT")):
                 traceback.print_exc()
-    return _run_hardware_tuning_plain(serial_port, initial_pid=initial_pid)
+    try:
+        return _run_hardware_tuning_plain(serial_port, initial_pid=initial_pid)
+    except Exception as exc:
+        print(f"[ERROR] Hardware tuning failed: {exc}")
+        if bool(CONFIG.get("LLM_DEBUG_OUTPUT")):
+            traceback.print_exc()
+        return {"completed_reason": "error", "error": str(exc)}
 
 
 def main(argv: Optional[List[str]] = None) -> None:
     args = build_parser().parse_args(argv)
-    run_hardware_tuner(args.serial_port, force_plain=args.plain)
+    result = run_hardware_tuner(args.serial_port, force_plain=args.plain)
+    if isinstance(result, dict) and result.get("completed_reason") in {"error", "keyboard_interrupt"}:
+        safe_pause("Press Enter to exit...")
 
 
 if __name__ == "__main__":

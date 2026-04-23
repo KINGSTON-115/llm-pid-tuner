@@ -521,6 +521,124 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertEqual(result["completed_reason"], "error")
         self.assertTrue(any(event.get("phase") == "error" for event in events))
 
+    def test_hardware_loop_reports_error_when_no_valid_csv_samples(self):
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+
+        class InvalidDataBridge:
+            def __init__(self, _port, _baudrate, emit_console=True):
+                self.emit_console = emit_console
+                self.last_error = ""
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+            def read_line(self):
+                return "garbage_line_without_csv_fields"
+
+            def parse_data(self, _line):
+                return None
+
+            def send_command(self, _cmd):
+                return None
+
+        class FakeTuner:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def analyze(self, *_args, **_kwargs):
+                return None
+
+        with patch.object(tuner, "SerialBridge", InvalidDataBridge):
+            with patch.object(tuner, "LLMTuner", FakeTuner):
+                with patch.dict(
+                    tuner.CONFIG,
+                    {
+                        "BUFFER_SIZE": 3,
+                        "MAX_TUNING_ROUNDS": 1,
+                        "HARDWARE_SAMPLE_TIMEOUT_SEC": 0.01,
+                    },
+                    clear=False,
+                ):
+                    result = tuner._run_hardware_tuning_loop(
+                        "COM9",
+                        event_sink=event_sink,
+                        emit_console=False,
+                    )
+
+        events = drain_event_queue(event_queue)
+        self.assertEqual(result["completed_reason"], "error")
+        self.assertTrue(any(event.get("phase") == "error" for event in events))
+        self.assertTrue(
+            any(
+                "Expected CSV" in str(event.get("detail", ""))
+                for event in events
+                if event.get("type") == EVENT_LIFECYCLE
+            )
+        )
+
+    def test_hardware_loop_reports_error_when_no_serial_data(self):
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+
+        class EmptyDataBridge:
+            def __init__(self, _port, _baudrate, emit_console=True):
+                self.emit_console = emit_console
+                self.last_error = ""
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+            def read_line(self):
+                return ""
+
+            def parse_data(self, _line):
+                return None
+
+            def send_command(self, _cmd):
+                return None
+
+        class FakeTuner:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def analyze(self, *_args, **_kwargs):
+                return None
+
+        with patch.object(tuner, "SerialBridge", EmptyDataBridge):
+            with patch.object(tuner, "LLMTuner", FakeTuner):
+                with patch.dict(
+                    tuner.CONFIG,
+                    {
+                        "BUFFER_SIZE": 3,
+                        "MAX_TUNING_ROUNDS": 1,
+                        "HARDWARE_SAMPLE_TIMEOUT_SEC": 0.01,
+                    },
+                    clear=False,
+                ):
+                    result = tuner._run_hardware_tuning_loop(
+                        "COM9",
+                        event_sink=event_sink,
+                        emit_console=False,
+                    )
+
+        events = drain_event_queue(event_queue)
+        self.assertEqual(result["completed_reason"], "error")
+        self.assertTrue(any(event.get("phase") == "error" for event in events))
+        self.assertTrue(
+            any(
+                "No serial data was received" in str(event.get("detail", ""))
+                for event in events
+                if event.get("type") == EVENT_LIFECYCLE
+            )
+        )
+
     def test_run_hardware_tuner_tui_failure_falls_back_to_plain_runner(self):
         with patch.object(tuner, "initialize_runtime_config"):
             with patch.object(tuner, "resolve_serial_port", return_value="COM9"):
@@ -559,6 +677,32 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertEqual(result, {"mode": "plain"})
         tui.assert_not_called()
         plain.assert_called_once_with("COM9", initial_pid=None)
+
+    def test_run_hardware_tuner_plain_failure_returns_error_result(self):
+        with patch.object(tuner, "initialize_runtime_config"):
+            with patch.object(tuner, "resolve_serial_port", return_value="COM9"):
+                with patch.object(tuner, "choose_hardware_ui_mode", return_value=False):
+                    with patch.dict(tuner.CONFIG, {"LLM_DEBUG_OUTPUT": False}, clear=False):
+                        with patch.object(
+                            tuner,
+                            "_run_hardware_tuning_plain",
+                            side_effect=RuntimeError("plain boom"),
+                        ):
+                            result = tuner.run_hardware_tuner(force_plain=False)
+
+        self.assertEqual(result.get("completed_reason"), "error")
+        self.assertIn("plain boom", str(result.get("error", "")))
+
+    def test_main_pauses_on_error_result(self):
+        with patch.object(
+            tuner,
+            "run_hardware_tuner",
+            return_value={"completed_reason": "error", "error": "boom"},
+        ):
+            with patch.object(tuner, "safe_pause") as pause:
+                tuner.main(["COM9", "--plain"])
+
+        pause.assert_called_once()
 
 
 if __name__ == "__main__":

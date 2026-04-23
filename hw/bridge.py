@@ -117,7 +117,14 @@ class SerialBridge:
                     print(f"[INFO] Connected to virtual hardware feed: {DEMO_SERIAL_PORT}")
                 return True
 
-            self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
+            # Set write_timeout so serial writes cannot block forever on
+            # problematic adapters or flow-control mismatch.
+            self.serial = serial.Serial(
+                self.port,
+                self.baudrate,
+                timeout=1,
+                write_timeout=1,
+            )
             self.last_error = ""
             if self.emit_console:
                 print(f"[INFO] Connected to {self.port}")
@@ -141,17 +148,21 @@ class SerialBridge:
                 pass
         return None
 
-    def send_command(self, cmd: str) -> None:
+    def send_command(self, cmd: str) -> bool:
         if self.serial and self.serial.is_open:
             try:
                 self.serial.write(f"{cmd}\n".encode("utf-8"))
                 self.last_error = ""
                 if self.emit_console:
                     print(f"[CMD] Sent: {cmd}")
+                return True
             except Exception as e:
                 self.last_error = str(e)
                 if self.emit_console:
                     print(f"[ERROR] Failed to send command '{cmd}': {e}")
+                return False
+        self.last_error = "serial port is not connected"
+        return False
 
     def parse_data(self, line: str):
         if not line or line.startswith("#"):

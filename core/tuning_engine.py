@@ -109,7 +109,24 @@ def run_tuning_engine(
             
             session.buffer.reset()
             samples = env.collect_samples()
+            collect_warning = str(getattr(env, "last_collect_warning", "") or "").strip()
+            if collect_warning:
+                _console(emit_console, f"[WARN] {collect_warning}")
+                _emit_lifecycle(event_sink, start_time, "warning", collect_warning)
             if not samples:
+                if controller is not None and getattr(controller, "should_stop", False):
+                    session.completed_reason = "stopped_by_user"
+                    _console(emit_console, "\n[INFO] Tuning stopped by user.")
+                    _emit_lifecycle(event_sink, start_time, "stopped", "Tuning stopped by user.")
+                    break
+
+                collect_issue = str(getattr(env, "last_collect_issue", "") or "").strip()
+                if collect_issue:
+                    session.completed_reason = "error"
+                    _console(emit_console, f"\n[ERROR] {collect_issue}")
+                    _emit_lifecycle(event_sink, start_time, "error", collect_issue)
+                    break
+
                 session.completed_reason = "stopped_by_user"
                 _console(emit_console, "\n[INFO] Tuning stopped by user.")
                 _emit_lifecycle(event_sink, start_time, "stopped", "Tuning stopped by user.")

@@ -135,30 +135,69 @@ class SimulinkEnv(BaseTuningEnvironment):
         pass # The simulator.py _run_tuning_loop does session.buffer.reset() which is now in engine
 
 class HardwareEnv(BaseTuningEnvironment):
+    SAMPLE_TIMEOUT_SEC = 20.0
+    MIN_SAMPLES_PER_ROUND = 50
+
     def __init__(self, bridge: Any, initial_pid: Dict[str, float], controller: Any = None):
         self.bridge = bridge
         self.current_pid = initial_pid
         self.controller = controller
         self.prompt_context = {}
+        self.last_collect_issue = ""
+        self.last_collect_warning = ""
 
     def collect_samples(self) -> List[Dict[str, float]]:
         samples = []
         target_size = CONFIG["BUFFER_SIZE"]
-        
+        timeout_sec = float(self.SAMPLE_TIMEOUT_SEC)
+        started_at = time.time()
+        invalid_lines = 0
+        last_invalid_line = ""
+        self.last_collect_issue = ""
+        self.last_collect_warning = ""
+
         while len(samples) < target_size:
             if self.controller and hasattr(self.controller, "wait_while_paused") and not self.controller.wait_while_paused():
                 return samples
             if self.controller and getattr(self.controller, "should_stop", False):
                 return samples
-                
+
+            if (time.time() - started_at) >= timeout_sec:
+                expected = "timestamp_ms,setpoint,input,pwm,error,p,i,d"
+                if len(samples) >= int(self.MIN_SAMPLES_PER_ROUND):
+                    self.last_collect_warning = (
+                        f"Hardware sampling timed out after {timeout_sec:.1f}s: "
+                        f"collected {len(samples)}/{target_size} valid samples; "
+                        f"reached minimum {self.MIN_SAMPLES_PER_ROUND}, proceeding."
+                    )
+                    return samples
+                if samples:
+                    self.last_collect_issue = (
+                        f"Hardware sampling timed out after {timeout_sec:.1f}s: "
+                        f"collected {len(samples)}/{target_size} valid samples, "
+                        f"below minimum {self.MIN_SAMPLES_PER_ROUND}."
+                    )
+                elif invalid_lines > 0:
+                    detail = f" Last raw line: '{last_invalid_line[:160]}'." if last_invalid_line else ""
+                    self.last_collect_issue = (
+                        f"No valid hardware samples were parsed within {timeout_sec:.1f}s. "
+                        f"Expected CSV: {expected}.{detail}"
+                    )
+                else:
+                    self.last_collect_issue = (
+                        f"No serial data was received within {timeout_sec:.1f}s. "
+                        "Check serial port selection, baud rate, and firmware output."
+                    )
+                return []
+
             line = self.bridge.read_line()
             if line:
                 data = self.bridge.parse_data(line)
                 if data:
                     samples.append(data)
-            else:
-                # If bridge runs out of data (useful in mocks) just return what we have
-                break
+                    continue
+                invalid_lines += 1
+                last_invalid_line = str(line)
         return samples
 
     def apply_pid(self, primary_pid: Dict[str, float], secondary_pid: Optional[Dict[str, float]] = None) -> None:
