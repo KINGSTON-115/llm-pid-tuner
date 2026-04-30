@@ -96,3 +96,78 @@ class CsvExportTests(unittest.TestCase):
             self.assertEqual(rows[1]["i2"], "0.2")
             self.assertEqual(rows[1]["d2"], "0.02")
             self.assertTrue(rows[0]["session_id"])
+
+    def test_new_session_resets_round_and_setpoint_tracking(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            csv_path = Path(temp_dir) / "samples.csv"
+            config_patch = {"CSV_EXPORT_PATH": str(csv_path)}
+            with patch.dict(CONFIG, config_patch, clear=False):
+                publish_event(
+                    None,
+                    EVENT_LIFECYCLE,
+                    phase="starting",
+                    detail="Opening COM9 at 115200 baud.",
+                )
+                publish_event(
+                    None,
+                    EVENT_LIFECYCLE,
+                    phase="collecting",
+                    detail="Collecting data for round 1.",
+                )
+                publish_event(
+                    None,
+                    EVENT_SAMPLE,
+                    timestamp=1.0,
+                    setpoint=200.0,
+                    input=150.0,
+                    pwm=100.0,
+                    error=50.0,
+                    p=1.0,
+                    i=0.1,
+                    d=0.05,
+                )
+                publish_event(
+                    None,
+                    EVENT_LIFECYCLE,
+                    phase="completed",
+                    detail="Finished export.",
+                )
+                publish_event(
+                    None,
+                    EVENT_LIFECYCLE,
+                    phase="starting",
+                    detail="Opening COM9 at 115200 baud.",
+                )
+                publish_event(
+                    None,
+                    EVENT_LIFECYCLE,
+                    phase="collecting",
+                    detail="Collecting data for round 1.",
+                )
+                publish_event(
+                    None,
+                    EVENT_SAMPLE,
+                    timestamp=2.0,
+                    setpoint=200.0,
+                    input=151.0,
+                    pwm=101.0,
+                    error=49.0,
+                    p=1.0,
+                    i=0.1,
+                    d=0.05,
+                )
+                publish_event(
+                    None,
+                    EVENT_LIFECYCLE,
+                    phase="completed",
+                    detail="Finished export.",
+                )
+
+            with csv_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["round"], "1")
+            self.assertEqual(rows[1]["round"], "1")
+            self.assertEqual(rows[1]["setpoint"], "200.0")
+            self.assertTrue(rows[1]["session_id"])

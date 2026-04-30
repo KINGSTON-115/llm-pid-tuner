@@ -135,16 +135,20 @@ class SimulinkEnv(BaseTuningEnvironment):
         pass # The simulator.py _run_tuning_loop does session.buffer.reset() which is now in engine
 
 class HardwareEnv(BaseTuningEnvironment):
+    # Fixed hardware safeguards. These stay out of user-facing config because
+    # most runs should share the same conservative serial sampling thresholds.
     SAMPLE_TIMEOUT_SEC = 20.0
     MIN_SAMPLES_PER_ROUND = 50
 
     def __init__(self, bridge: Any, initial_pid: Dict[str, float], controller: Any = None):
         self.bridge = bridge
-        self.current_pid = initial_pid
+        self.current_pid = dict(initial_pid)
+        self.current_secondary_pid: Optional[Dict[str, float]] = None
         self.controller = controller
         self.prompt_context = {}
         self.last_collect_issue = ""
         self.last_collect_warning = ""
+        self.last_apply_issue = ""
 
     def collect_samples(self) -> List[Dict[str, float]]:
         samples = []
@@ -194,6 +198,18 @@ class HardwareEnv(BaseTuningEnvironment):
             if line:
                 data = self.bridge.parse_data(line)
                 if data:
+                    if all(key in data for key in ("p", "i", "d")):
+                        self.current_pid = {
+                            "p": float(data["p"]),
+                            "i": float(data["i"]),
+                            "d": float(data["d"]),
+                        }
+                    if all(key in data for key in ("p2", "i2", "d2")):
+                        self.current_secondary_pid = {
+                            "p": float(data["p2"]),
+                            "i": float(data["i2"]),
+                            "d": float(data["d2"]),
+                        }
                     samples.append(data)
                     continue
                 invalid_lines += 1
@@ -201,15 +217,34 @@ class HardwareEnv(BaseTuningEnvironment):
         return samples
 
     def apply_pid(self, primary_pid: Dict[str, float], secondary_pid: Optional[Dict[str, float]] = None) -> None:
+        self.last_apply_issue = ""
         cmd = f"SET P:{primary_pid['p']} I:{primary_pid['i']} D:{primary_pid['d']}"
-        self.bridge.send_command(cmd)
-        self.current_pid = primary_pid
+        primary_sent = self.bridge.send_command(cmd)
+        if primary_sent is False:
+            self.last_apply_issue = (
+                f"Failed to apply hardware PID: {self.bridge.last_error or 'unknown write error'}"
+            )
+            return
+
+        self.current_pid = dict(primary_pid)
         if secondary_pid is not None:
             cmd2 = f"SET2 P:{secondary_pid['p']} I:{secondary_pid['i']} D:{secondary_pid['d']}"
-            self.bridge.send_command(cmd2)
+            secondary_sent = self.bridge.send_command(cmd2)
+            if secondary_sent is False:
+                self.last_apply_issue = (
+                    "Primary PID was applied, but controller 2 update failed: "
+                    f"{self.bridge.last_error or 'unknown write error'}"
+                )
+                return
+            self.current_secondary_pid = dict(secondary_pid)
 
     def get_current_pid(self) -> Tuple[Dict[str, float], Optional[Dict[str, float]]]:
-        return self.current_pid, None
+        secondary = (
+            dict(self.current_secondary_pid)
+            if self.current_secondary_pid is not None
+            else None
+        )
+        return dict(self.current_pid), secondary
 
     def get_setpoint(self) -> float:
         return 0.0 # Handled by hardware

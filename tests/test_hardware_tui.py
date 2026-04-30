@@ -1,4 +1,5 @@
 import sys
+import time
 import unittest
 from pathlib import Path
 from queue import Queue
@@ -559,15 +560,15 @@ class HardwareTuiLoopTests(unittest.TestCase):
                     {
                         "BUFFER_SIZE": 3,
                         "MAX_TUNING_ROUNDS": 1,
-                        "HARDWARE_SAMPLE_TIMEOUT_SEC": 0.01,
                     },
                     clear=False,
                 ):
-                    result = tuner._run_hardware_tuning_loop(
-                        "COM9",
-                        event_sink=event_sink,
-                        emit_console=False,
-                    )
+                    with patch.object(tuner.HardwareEnv, "SAMPLE_TIMEOUT_SEC", 0.01):
+                        result = tuner._run_hardware_tuning_loop(
+                            "COM9",
+                            event_sink=event_sink,
+                            emit_console=False,
+                        )
 
         events = drain_event_queue(event_queue)
         self.assertEqual(result["completed_reason"], "error")
@@ -618,15 +619,15 @@ class HardwareTuiLoopTests(unittest.TestCase):
                     {
                         "BUFFER_SIZE": 3,
                         "MAX_TUNING_ROUNDS": 1,
-                        "HARDWARE_SAMPLE_TIMEOUT_SEC": 0.01,
                     },
                     clear=False,
                 ):
-                    result = tuner._run_hardware_tuning_loop(
-                        "COM9",
-                        event_sink=event_sink,
-                        emit_console=False,
-                    )
+                    with patch.object(tuner.HardwareEnv, "SAMPLE_TIMEOUT_SEC", 0.01):
+                        result = tuner._run_hardware_tuning_loop(
+                            "COM9",
+                            event_sink=event_sink,
+                            emit_console=False,
+                        )
 
         events = drain_event_queue(event_queue)
         self.assertEqual(result["completed_reason"], "error")
@@ -692,6 +693,113 @@ class HardwareTuiLoopTests(unittest.TestCase):
 
         self.assertEqual(result.get("completed_reason"), "error")
         self.assertIn("plain boom", str(result.get("error", "")))
+
+    def test_hardware_loop_reports_error_when_pid_apply_fails(self):
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+
+        class ApplyFailBridge:
+            def __init__(self, _port, _baudrate, emit_console=True):
+                self.serial_port = _port
+                self.emit_console = emit_console
+                self.last_error = ""
+                self._lines = iter(
+                    [
+                        _make_csv_line(0, 100.0),
+                        _make_csv_line(1, 120.0),
+                        _make_csv_line(2, 150.0),
+                    ]
+                )
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+            def read_line(self):
+                line = next(self._lines, None)
+                if line is None:
+                    return ""
+                return line
+
+            def parse_data(self, line):
+                parts = line.split(",")
+                return {
+                    "timestamp": float(parts[0]),
+                    "setpoint": float(parts[1]),
+                    "input": float(parts[2]),
+                    "pwm": float(parts[3]),
+                    "error": float(parts[4]),
+                    "p": float(parts[5]),
+                    "i": float(parts[6]),
+                    "d": float(parts[7]),
+                }
+
+            def send_command(self, cmd):
+                if cmd == "STATUS":
+                    return True
+                self.last_error = "simulated write failure"
+                return False
+
+        class FakeTuner:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def analyze(self, *_args, **_kwargs):
+                return {
+                    "analysis_summary": "Apply a small change.",
+                    "tuning_action": "ADJUST_PID",
+                    "p": 1.2,
+                    "i": 0.1,
+                    "d": 0.05,
+                    "status": "TUNING",
+                }
+
+        with patch.object(tuner, "SerialBridge", ApplyFailBridge):
+            with patch.object(tuner, "LLMTuner", FakeTuner):
+                with patch.dict(
+                    tuner.CONFIG,
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
+                    clear=False,
+                ):
+                    result = tuner._run_hardware_tuning_loop(
+                        "COM9",
+                        event_sink=event_sink,
+                        emit_console=False,
+                    )
+
+        events = drain_event_queue(event_queue)
+        self.assertEqual(result["completed_reason"], "error")
+        self.assertEqual(result["final_pid"], {"p": 1.0, "i": 0.1, "d": 0.05})
+        self.assertTrue(
+            any(
+                "Failed to apply hardware PID" in str(event.get("detail", ""))
+                for event in events
+                if event.get("type") == EVENT_LIFECYCLE
+            )
+        )
+
+    def test_hardware_env_uses_fixed_sampling_thresholds(self):
+        class EmptyBridge:
+            def read_line(self):
+                return ""
+
+            def parse_data(self, _line):
+                return None
+
+        env = tuner.HardwareEnv(EmptyBridge(), {"p": 1.0, "i": 0.1, "d": 0.05})
+        self.assertEqual(env.SAMPLE_TIMEOUT_SEC, 20.0)
+        self.assertEqual(env.MIN_SAMPLES_PER_ROUND, 50)
+
+        start = time.time()
+        with patch.object(tuner.HardwareEnv, "SAMPLE_TIMEOUT_SEC", 0.0):
+            samples = env.collect_samples()
+        elapsed = time.time() - start
+
+        self.assertEqual(samples, [])
+        self.assertLess(elapsed, 0.5)
+        self.assertIn("No serial data was received", env.last_collect_issue)
 
     def test_main_pauses_on_error_result(self):
         with patch.object(

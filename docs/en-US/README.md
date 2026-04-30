@@ -208,6 +208,8 @@ If your Simulink model is not the simplest "single standard PID Controller block
 | Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`, plus optional `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | Start with the minimum six fields, then add compatibility fields only when needed |
 | Proxy | Only if you need one | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | Leave empty to disable |
 
+> Hardware mode also includes built-in sampling guardrails such as a serial sampling timeout and a minimum valid-sample threshold. These are fixed safety defaults and are not exposed as `config.json` user settings right now.
+
 ### When should I fill `MATLAB_ROOT`?
 
 See the [MATLAB/Simulink Tuning Guide](docs/en-US/MATLAB_GUIDE.md).
