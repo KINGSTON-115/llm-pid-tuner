@@ -248,6 +248,8 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 | Simulink | 只在 MATLAB/Simulink 模式下需要 | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`，以及按需填写 `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | 最小 6 项先跑通，复杂模型再逐步补充兼容字段 |
 | 代理 | 只有需要代理时才填 | `HTTP_PROXY` `HTTPS_PROXY` `ALL_PROXY` `NO_PROXY` | 留空就是不启用 |
 
+> 硬件模式还带有内建的采样保护阈值（采样超时与最少有效样本数）。这些属于固定安全策略，目前不作为 `config.json` 的用户配置项开放。
+
 ### `MATLAB_ROOT` 什么时候要填
 
 见 [MATLAB/Simulink 调参指南](docs/zh-CN/MATLAB_GUIDE.md)。

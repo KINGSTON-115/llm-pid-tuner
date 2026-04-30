@@ -47,6 +47,7 @@ class CsvEventExporter:
             self._session_id = ""
             self._mode = ""
             self._round_index = 0
+            self._reset_round_tracking_unlocked()
 
     def handle_event(
         self, event_type: str, payload: Dict[str, Any], *, csv_path: str
@@ -58,6 +59,7 @@ class CsvEventExporter:
                 self._session_id = ""
                 self._mode = ""
                 self._round_index = 0
+                self._reset_round_tracking_unlocked()
                 return
 
             if event_type == "lifecycle":
@@ -135,6 +137,7 @@ class CsvEventExporter:
             return
         self._session_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         self._round_index = 0
+        self._reset_round_tracking_unlocked()
         if force_new:
             self._mode = ""
 
@@ -172,6 +175,10 @@ class CsvEventExporter:
         self._handle = None
         self._writer = None
         self._path = None
+
+    def _reset_round_tracking_unlocked(self) -> None:
+        self._last_round_index = None
+        self._last_setpoint = None
 
     @staticmethod
     def _extract_round_index(detail: str) -> int | None:

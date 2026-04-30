@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 from core.env import BaseTuningEnvironment
 from llm.client import LLMTuner
@@ -18,6 +19,7 @@ def _console(emit_console: bool, message: str, end: str = "\n") -> None:
         print(message, end=end, flush=True)
         # Also append to a log file
         try:
+            Path("logs").mkdir(parents=True, exist_ok=True)
             with open("logs/console_log.txt", "a", encoding="utf-8") as f:
                 f.write(message + end)
         except Exception:
@@ -162,6 +164,17 @@ def run_tuning_engine(
                 apply_rollback(session, evaluation.rollback_pid, rollback_secondary_pid=evaluation.rollback_secondary_pid)
                 publish_rollback(event_sink, round_index, evaluation, evaluation.rollback_pid, rollback_message)
                 env.apply_pid(evaluation.rollback_pid, evaluation.rollback_secondary_pid)
+                actual_primary, actual_secondary = env.get_current_pid()
+                session.buffer.current_pid = dict(actual_primary)
+                session.buffer.secondary_pid = (
+                    dict(actual_secondary) if actual_secondary is not None else None
+                )
+                rollback_apply_issue = str(getattr(env, "last_apply_issue", "") or "").strip()
+                if rollback_apply_issue:
+                    session.completed_reason = "error"
+                    _console(emit_console, f"\n[ERROR] {rollback_apply_issue}")
+                    _emit_lifecycle(event_sink, start_time, "error", rollback_apply_issue)
+                    break
                 _console(emit_console, f"[CMD] Applied rollback PID.")
                 continue
 
@@ -275,9 +288,23 @@ def run_tuning_engine(
                     _console(emit_console, f"[Guardrail] Controller 2: {'; '.join(sec_notes)}")
 
             env.apply_pid(safe_primary, safe_secondary)
+            actual_primary, actual_secondary = env.get_current_pid()
+            session.buffer.current_pid = dict(actual_primary)
+            session.buffer.secondary_pid = (
+                dict(actual_secondary) if actual_secondary is not None else None
+            )
+            apply_issue = str(getattr(env, "last_apply_issue", "") or "").strip()
+            if apply_issue:
+                session.completed_reason = "error"
+                _console(emit_console, f"\n[ERROR] {apply_issue}")
+                _emit_lifecycle(event_sink, start_time, "error", apply_issue)
+                break
             _console(emit_console, f"[CMD] Applied new PID parameters.")
             
-        if session.round_num >= CONFIG["MAX_TUNING_ROUNDS"]:
+        if (
+            session.round_num >= CONFIG["MAX_TUNING_ROUNDS"]
+            and session.completed_reason == "max_rounds_reached"
+        ):
             session.completed_reason = "max_rounds_reached"
             _console(emit_console, "\n[INFO] Reached maximum tuning rounds.")
             _emit_lifecycle(event_sink, start_time, "completed", "Reached maximum tuning rounds.")
