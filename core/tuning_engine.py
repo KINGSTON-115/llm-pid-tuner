@@ -196,14 +196,18 @@ def run_tuning_engine(
             _emit_lifecycle(event_sink, start_time, "llm_request", f"Requesting PID for round {evaluation.round_index}.")
             
             if llm_mode == "generic" and hasattr(env, "bridge"):
-                from sim.prompt_context import build_hardware_prompt_context
+                from sim.prompt_context import (
+                    build_hardware_prompt_context,
+                    _merge_prompt_context,
+                )
                 bridge = env.bridge
                 # Determine secondary pid presence via buffer state
                 sec_pid = session.buffer.secondary_pid
-                prompt_context = build_hardware_prompt_context(
+                hardware_context = build_hardware_prompt_context(
                     getattr(bridge, "serial_port", "unknown"),
                     sec_pid
                 )
+                prompt_context = _merge_prompt_context(prompt_context, hardware_context)
                 
             if llm_mode == "simulink" and hasattr(env, "bridge"):
                 from sim.prompt_context import build_simulink_prompt_context

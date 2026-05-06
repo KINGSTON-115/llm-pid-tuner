@@ -147,6 +147,10 @@ class HardwareTuiLoopTests(unittest.TestCase):
         event_sink = QueueEventSink(event_queue)
         controller = SimulationController()
         sent_commands: list[str] = []
+        preference_context = {
+            "user_preference_summary": "Keep overshoot below 5%.",
+            "user_goal_priority": "low_overshoot",
+        }
         captured = {}
 
         class FakeBridge:
@@ -241,6 +245,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                         event_sink=event_sink,
                         controller=controller,
                         emit_console=False,
+                        prompt_context_overrides=preference_context,
                     )
 
         events = drain_event_queue(event_queue)
@@ -255,6 +260,14 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertTrue(any(cmd.startswith("SET P:") for cmd in sent_commands))
         self.assertEqual(captured["tuning_mode"], "generic")
         self.assertEqual(captured["prompt_context"]["serial_port"], "COM9")
+        self.assertEqual(
+            captured["prompt_context"]["user_preference_summary"],
+            preference_context["user_preference_summary"],
+        )
+        self.assertEqual(
+            captured["prompt_context"]["user_goal_priority"],
+            "low_overshoot",
+        )
 
     def test_hardware_loop_sends_set2_when_llm_returns_dual_controller_result(self):
         sent_commands: list[str] = []
@@ -678,6 +691,34 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertEqual(result, {"mode": "plain"})
         tui.assert_not_called()
         plain.assert_called_once_with("COM9", initial_pid=None)
+
+    def test_run_hardware_tuner_forwards_pre_tuning_preferences(self):
+        preference_context = {
+            "user_preference_summary": "Prioritize stability before speed.",
+            "user_goal_priority": "stability",
+        }
+        with patch.object(tuner, "initialize_runtime_config"):
+            with patch.object(tuner, "resolve_serial_port", return_value="COM9"):
+                with patch.object(tuner, "choose_hardware_ui_mode", return_value=False):
+                    with patch.object(
+                        tuner,
+                        "collect_pre_tuning_preferences",
+                        return_value=preference_context,
+                    ) as collect_preferences:
+                        with patch.object(
+                            tuner,
+                            "_run_hardware_tuning_plain",
+                            return_value={"mode": "plain"},
+                        ) as plain:
+                            result = tuner.run_hardware_tuner(force_plain=False)
+
+        self.assertEqual(result, {"mode": "plain"})
+        collect_preferences.assert_called_once_with("Hardware")
+        plain.assert_called_once_with(
+            "COM9",
+            initial_pid=None,
+            prompt_context_overrides=preference_context,
+        )
 
     def test_run_hardware_tuner_plain_failure_returns_error_result(self):
         with patch.object(tuner, "initialize_runtime_config"):
