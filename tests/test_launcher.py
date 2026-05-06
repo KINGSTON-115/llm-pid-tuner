@@ -77,6 +77,28 @@ class LauncherDispatchTests(unittest.TestCase):
         run_tuner.assert_called_once_with([])
         run_simulation.assert_not_called()
 
+    def test_main_pauses_on_nonzero_system_exit(self):
+        with patch.object(launcher, "initialize_runtime_config"):
+            with patch.object(launcher, "dispatch", side_effect=SystemExit(1)):
+                with patch.object(launcher, "can_prompt", return_value=True):
+                    with patch.object(launcher, "safe_pause") as pause:
+                        with self.assertRaises(SystemExit) as raised:
+                            launcher.main([])
+
+        self.assertEqual(raised.exception.code, 1)
+        pause.assert_called_once_with("Press Enter to exit...")
+
+    def test_main_does_not_pause_on_successful_system_exit(self):
+        with patch.object(launcher, "initialize_runtime_config"):
+            with patch.object(launcher, "dispatch", side_effect=SystemExit(0)):
+                with patch.object(launcher, "can_prompt", return_value=True):
+                    with patch.object(launcher, "safe_pause") as pause:
+                        with self.assertRaises(SystemExit) as raised:
+                            launcher.main([])
+
+        self.assertEqual(raised.exception.code, 0)
+        pause.assert_not_called()
+
 
 class TunerArgTests(unittest.TestCase):
     def test_cli_serial_port_wins_over_config_prompt(self):
