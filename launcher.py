@@ -169,6 +169,15 @@ def main(argv: list[str] | None = None) -> None:
         except Exception:
             pass
         sys.exit(0)
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            if isinstance(exc.code, str):
+                print(f"[ERROR] {exc.code}")
+            else:
+                print(f"[ERROR] Launcher exited with status {exc.code}.")
+            if can_prompt():
+                safe_pause("Press Enter to exit...")
+        raise
     except Exception as exc:
         print(f"[ERROR] Launcher failed: {exc}")
         if can_prompt():
