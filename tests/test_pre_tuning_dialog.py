@@ -9,7 +9,10 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.i18n import get_language, set_language
-from sim.pre_tuning_dialog import collect_pre_tuning_preferences
+from sim.pre_tuning_dialog import (
+    PreTuningDialogError,
+    collect_pre_tuning_preferences,
+)
 
 
 class PreTuningDialogTests(unittest.TestCase):
@@ -87,24 +90,37 @@ class PreTuningDialogTests(unittest.TestCase):
         self.assertEqual(context["user_soft_preferences"], ["Reach the target quickly"])
         self.assertEqual(get_language(), "en")
 
-    def test_collect_preferences_falls_back_to_raw_request_when_summary_fails(self):
+    def test_collect_preferences_exits_when_summary_fails(self):
         set_language("en")
         with patch("sim.pre_tuning_dialog._can_prompt", return_value=True):
             with patch("builtins.input", side_effect=["2", "Keep it stable first", "No oscillation", ""]):
                 with patch(
                     "sim.pre_tuning_dialog._summarize_user_request",
+                    side_effect=PreTuningDialogError("model unavailable"),
+                ):
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        with self.assertRaises(SystemExit) as raised:
+                            collect_pre_tuning_preferences("Python Simulation")
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("model unavailable", output.getvalue())
+
+    def test_collect_preferences_exits_when_summary_returns_empty_result(self):
+        set_language("en")
+        with patch("sim.pre_tuning_dialog._can_prompt", return_value=True):
+            with patch("builtins.input", side_effect=["2", "Keep it stable first", ""]):
+                with patch(
+                    "sim.pre_tuning_dialog._summarize_user_request",
                     return_value=None,
                 ):
-                    with redirect_stdout(io.StringIO()):
-                        context = collect_pre_tuning_preferences("Python Simulation")
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        with self.assertRaises(SystemExit) as raised:
+                            collect_pre_tuning_preferences("Python Simulation")
 
-        self.assertIsNotNone(context)
-        assert context is not None
-        self.assertEqual(context["user_dialog_language"], "en")
-        self.assertEqual(context["user_goal_priority"], "balanced")
-        self.assertEqual(context["user_tuning_aggressiveness"], "normal")
-        self.assertIn("Keep it stable first", context["user_preference_summary"])
-        self.assertIn("No oscillation", context["user_preference_raw_request"])
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("empty or invalid LLM response", output.getvalue())
 
 
 if __name__ == "__main__":

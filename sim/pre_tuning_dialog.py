@@ -27,6 +27,7 @@ _TEXT = {
         "input_prompt": "> ",
         "thinking": "[Guide] 正在整理你的偏好...",
         "summary": "[Guide] 已整理偏好：{summary}",
+        "llm_error": "[ERROR] 预调参对话需要大模型可用，但当前模型请求失败：{error}",
         "empty_skip": "[Guide] 未提供额外偏好，继续使用默认调参策略。",
         "fallback_summary": "用户要求：{user_text}",
         "priority_note": "显式用户偏好优先级高于默认调参启发式。",
@@ -40,11 +41,16 @@ _TEXT = {
         "input_prompt": "> ",
         "thinking": "[Guide] Summarizing your preferences...",
         "summary": "[Guide] Preference summary: {summary}",
+        "llm_error": "[ERROR] The pre-tuning conversation needs the configured LLM, but the model request failed: {error}",
         "empty_skip": "[Guide] No extra preference provided. Continuing with the default tuning strategy.",
         "fallback_summary": "User request: {user_text}",
         "priority_note": "Treat explicit user preferences as stronger constraints than the default tuning heuristic.",
     },
 }
+
+
+class PreTuningDialogError(RuntimeError):
+    """Raised when the pre-tuning LLM request cannot produce usable context."""
 
 
 def _can_prompt() -> bool:
@@ -180,22 +186,36 @@ def _build_prompt_context_from_result(
     return context
 
 
-def _summarize_user_request(language: str, user_text: str) -> Dict[str, Any] | None:
+def _summarize_user_request(language: str, user_text: str) -> Dict[str, Any]:
+    llm_messages: List[str] = []
+
+    def collect_llm_message(_label: str, message: str) -> None:
+        cleaned = str(message or "").strip()
+        if cleaned:
+            llm_messages.append(cleaned)
+
     tuner = LLMTuner(
         api_key=CONFIG["LLM_API_KEY"],
         base_url=CONFIG["LLM_API_BASE_URL"],
         model=CONFIG["LLM_MODEL_NAME"],
         provider=CONFIG["LLM_PROVIDER"],
         stream_callback=None,
-        log_callback=None,
+        log_callback=collect_llm_message,
         emit_console=False,
         timeout=CONFIG.get("LLM_REQUEST_TIMEOUT", 60),
         debug_output=CONFIG.get("LLM_DEBUG_OUTPUT", False),
     )
-    return tuner.request_json(
+    result = tuner.request_json(
         system_prompt=get_pre_tuning_dialog_system_prompt(language),
         user_prompt=build_pre_tuning_dialog_user_prompt(user_text, language),
     )
+    if result:
+        return result
+
+    detail = llm_messages[-1] if llm_messages else "empty or invalid LLM response"
+    provider = CONFIG.get("LLM_PROVIDER", "unknown")
+    model = CONFIG.get("LLM_MODEL_NAME", "unknown")
+    raise PreTuningDialogError(f"{detail} (provider={provider}, model={model})")
 
 
 def collect_pre_tuning_preferences(mode_label: str) -> Dict[str, Any] | None:
@@ -209,7 +229,22 @@ def collect_pre_tuning_preferences(mode_label: str) -> Dict[str, Any] | None:
         return None
 
     print(_text(language, "thinking"))
-    result = _summarize_user_request(language, user_text)
+    try:
+        result = _summarize_user_request(language, user_text)
+    except PreTuningDialogError as exc:
+        print(_text(language, "llm_error", error=str(exc)))
+        raise SystemExit(1) from exc
+
+    if not result:
+        print(
+            _text(
+                language,
+                "llm_error",
+                error="empty or invalid LLM response",
+            )
+        )
+        raise SystemExit(1)
+
     context = _build_prompt_context_from_result(
         language=language,
         user_text=user_text,
@@ -221,4 +256,5 @@ def collect_pre_tuning_preferences(mode_label: str) -> Dict[str, Any] | None:
 
 __all__ = [
     "collect_pre_tuning_preferences",
+    "PreTuningDialogError",
 ]
