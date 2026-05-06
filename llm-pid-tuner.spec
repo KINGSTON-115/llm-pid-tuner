@@ -8,7 +8,16 @@ conda_env = sys.prefix
 dll_path = os.path.join(conda_env, "Library", "bin")
 binaries = []
 if os.path.exists(dll_path):
-    for dll in ["ffi.dll", "ffi-7.dll", "ffi-8.dll", "libbz2.dll", "liblzma.dll"]:
+    for dll in [
+        "ffi.dll",
+        "ffi-7.dll",
+        "ffi-8.dll",
+        "libbz2.dll",
+        "liblzma.dll",
+        "libcrypto-3-x64.dll",
+        "libssl-3-x64.dll",
+        "libexpat.dll",
+    ]:
         dll_file = os.path.join(dll_path, dll)
         if os.path.exists(dll_file):
             binaries.append((dll_file, "."))

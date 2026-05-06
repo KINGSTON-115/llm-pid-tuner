@@ -24,7 +24,9 @@ from hw.bridge import SerialBridge, safe_pause, select_serial_port
 from llm.client import LLMTuner
 from core.tuning_engine import run_tuning_engine
 from core.adapters import HardwareEnv
-from sim.prompt_context import build_hardware_prompt_context
+from core.i18n import get_language
+from sim.pre_tuning_dialog import collect_pre_tuning_preferences
+from sim.prompt_context import build_hardware_prompt_context, _merge_prompt_context
 from sim.runtime import (
     QueueEventSink,
     SimulationController,
@@ -108,6 +110,7 @@ def _run_hardware_tuning_loop(
     controller: Optional[SimulationController] = None,
     emit_console: bool = True,
     initial_pid: Optional[Dict[str, float]] = None,
+    prompt_context_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     bridge = SerialBridge(serial_port, CONFIG["BAUD_RATE"], emit_console=False)
     start_time = time.time()
@@ -192,7 +195,10 @@ def _run_hardware_tuning_loop(
         )
 
         env = HardwareEnv(bridge, initial_pid or {"p": 0.0, "i": 0.0, "d": 0.0}, controller=controller)
-        env.prompt_context = build_hardware_prompt_context(serial_port, None)
+        env.prompt_context = _merge_prompt_context(
+            build_hardware_prompt_context(serial_port, None),
+            prompt_context_overrides,
+        )
 
         return run_tuning_engine(
             env=env,
@@ -232,6 +238,7 @@ def _run_hardware_tuning_loop(
 def _run_hardware_tuning_with_tui(
     serial_port: str,
     initial_pid: Optional[Dict[str, float]] = None,
+    prompt_context_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     from sim.tui import SimulationTUIApp
 
@@ -239,7 +246,7 @@ def _run_hardware_tuning_with_tui(
     controller = SimulationController()
     event_sink = QueueEventSink(event_queue)
     result_box: Dict[str, Any] = {}
-    language = choose_tui_language()
+    language = get_language()
 
     def make_worker(pid: Optional[Dict[str, float]]) -> Callable[[], None]:
         def worker() -> None:
@@ -249,6 +256,7 @@ def _run_hardware_tuning_with_tui(
                 controller=app.controller,
                 emit_console=False,
                 initial_pid=pid,
+                prompt_context_overrides=prompt_context_overrides,
             )
             result_box["result"] = result
             app._last_result = result
@@ -275,6 +283,7 @@ def _run_hardware_tuning_with_tui(
 def _run_hardware_tuning_plain(
     serial_port: str,
     initial_pid: Optional[Dict[str, float]] = None,
+    prompt_context_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     print("=" * 60)
     print("  LLM PID Tuner PRO - 增强版自动调参系统")
@@ -284,6 +293,7 @@ def _run_hardware_tuning_plain(
         serial_port,
         emit_console=True,
         initial_pid=initial_pid,
+        prompt_context_overrides=prompt_context_overrides,
     )
 
 
@@ -300,15 +310,20 @@ def run_hardware_tuner(
         return {"completed_reason": "no_serial_port"}
 
     use_tui = choose_hardware_ui_mode(force_plain)
+    prompt_context_overrides = collect_pre_tuning_preferences("Hardware")
+    runner_kwargs: Dict[str, Any] = {"initial_pid": initial_pid}
+    if prompt_context_overrides is not None:
+        runner_kwargs["prompt_context_overrides"] = prompt_context_overrides
+
     if use_tui:
         try:
-            return _run_hardware_tuning_with_tui(serial_port, initial_pid=initial_pid)
+            return _run_hardware_tuning_with_tui(serial_port, **runner_kwargs)
         except Exception as exc:
             print(f"[WARN] Failed to start the TUI ({exc}); falling back to plain output.")
             if bool(CONFIG.get("LLM_DEBUG_OUTPUT")):
                 traceback.print_exc()
     try:
-        return _run_hardware_tuning_plain(serial_port, initial_pid=initial_pid)
+        return _run_hardware_tuning_plain(serial_port, **runner_kwargs)
     except Exception as exc:
         print(f"[ERROR] Hardware tuning failed: {exc}")
         if bool(CONFIG.get("LLM_DEBUG_OUTPUT")):
