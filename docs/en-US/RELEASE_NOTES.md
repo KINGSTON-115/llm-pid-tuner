@@ -18,6 +18,7 @@ This release is not about adding flashy features. It is about making the project
 - The runtime remembers the best stable result seen so far
 - It rolls back if a later suggestion clearly performs worse
 - It stops early when the system is already “good enough”
+- After meeting the `GOOD_ENOUGH_*` thresholds, the runtime keeps the current PID values for observation and stops after `REQUIRED_STABLE_ROUNDS` consecutive stable evaluations; the default is 3, and plain/TUI modes behave consistently
 
 ### 3. Better LLM endpoint compatibility
 

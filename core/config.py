@@ -83,7 +83,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "GOOD_ENOUGH_AVG_ERROR"         : 0.1,
     "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.05,
     "GOOD_ENOUGH_OVERSHOOT"         : 1.0,
-    "REQUIRED_STABLE_ROUNDS"        : 10,
+    "REQUIRED_STABLE_ROUNDS"        : 3,
     "MATLAB_MODEL_PATH"             : "",
     "MATLAB_PID_BLOCK_PATH"         : "",
     "MATLAB_ROOT"                   : "",

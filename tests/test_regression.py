@@ -22,7 +22,7 @@ from core.tuning_session import (
 )
 from llm.client import JSONStreamFormatter, LLMTuner
 from llm.prompts import build_user_prompt, get_system_prompt, normalize_tuning_mode
-from pid_safety import adapt_simulink_pid_limits, get_pid_limits
+from pid_safety import adapt_simulink_pid_limits, get_pid_limits, is_good_enough
 from sim.model import CONTROL_INTERVAL, INITIAL_TEMP, SETPOINT, HeatingSimulator
 
 
@@ -349,6 +349,23 @@ class PromptSelectionTests(unittest.TestCase):
 
 
 class TuningSessionHistoryTests(unittest.TestCase):
+    def test_is_good_enough_accepts_zero_error_and_zero_overshoot(self):
+        self.assertTrue(
+            is_good_enough(
+                {
+                    "avg_error": 0.0,
+                    "steady_state_error": 0.0,
+                    "overshoot": 0.0,
+                    "status": "STABLE",
+                },
+                {
+                    "avg_error_threshold": 1.0,
+                    "steady_state_error_threshold": 0.5,
+                    "overshoot_threshold": 2.0,
+                },
+            )
+        )
+
     def test_finalize_decision_records_pid_that_generated_metrics(self):
         state = create_tuning_session(
             initial_pid={"p": 1.0, "i": 0.0, "d": 0.0},

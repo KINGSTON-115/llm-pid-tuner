@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from core.env import BaseTuningEnvironment
 from llm.client import LLMTuner
-from core.tuning_session import create_tuning_session, evaluate_completed_round, finalize_decision, record_rollback_round, apply_rollback, build_tuning_result
+from core.tuning_session import create_tuning_session, evaluate_completed_round, finalize_decision, record_rollback_round, apply_rollback, build_tuning_result, record_observation_round
 from core.tuning_loop import publish_round_metrics, publish_decision, flatten_controller_result, publish_rollback
 from core.config import CONFIG
 from sim.runtime import EVENT_SAMPLE, QueueEventSink, publish_event
@@ -189,6 +189,17 @@ def run_tuning_engine(
                 _console(emit_console, "\n[SUCCESS] Converged with low error.")
                 _emit_lifecycle(event_sink, start_time, "completed", "Converged with low error.")
                 break
+
+            if evaluation.good_enough and not disable_early_exit:
+                record_observation_round(session, evaluation)
+                message = (
+                    f"Round {round_index} met good-enough criteria "
+                    f"({evaluation.stable_rounds}/{CONFIG['REQUIRED_STABLE_ROUNDS']} stable rounds); "
+                    "holding PID and observing the next round."
+                )
+                _console(emit_console, f"[Observe] {message}")
+                _emit_lifecycle(event_sink, start_time, "observing", message)
+                continue
 
             prompt_data = session.buffer.to_prompt_data()
             history_text = session.history.to_prompt_text()

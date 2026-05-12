@@ -3,7 +3,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -81,6 +81,41 @@ class PrepareMatlabRootTests(unittest.TestCase):
         with self.assertRaises(ImportError) as ctx:
             matlab_runtime.prepare_matlab_root("/definitely/nonexistent/matlab/root")
         self.assertIn("MATLAB_ROOT", str(ctx.exception))
+
+    def test_configured_root_updates_pythonpath_for_external_engine(self):
+        original_sys_path = list(sys.path)
+        original_pythonpath = os.environ.get("PYTHONPATH")
+        temp_root = None
+        try:
+            import tempfile
+
+            temp_root = Path(tempfile.mkdtemp())
+            root = temp_root / "MATLAB" / "R2025b"
+            dist_dir = root / "extern" / "engines" / "python" / "dist"
+            engine_dir = dist_dir / "matlab" / "engine" / "win64"
+            extern_bin_dir = root / "extern" / "bin" / "win64"
+            bin_dir = root / "bin" / "win64"
+            for path in (engine_dir, extern_bin_dir, bin_dir):
+                path.mkdir(parents=True, exist_ok=True)
+
+            with patch.object(sys, "platform", "win32"):
+                with patch("sim.matlab_runtime.os.add_dll_directory", Mock(), create=True):
+                    matlab_runtime.prepare_matlab_root(str(root))
+
+            pythonpath_parts = os.environ["PYTHONPATH"].split(os.pathsep)
+            self.assertIn(str(dist_dir), pythonpath_parts)
+            self.assertIn(str(engine_dir), pythonpath_parts)
+            self.assertIn(str(extern_bin_dir), pythonpath_parts)
+        finally:
+            import shutil
+
+            sys.path[:] = original_sys_path
+            if original_pythonpath is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = original_pythonpath
+            if temp_root is not None:
+                shutil.rmtree(temp_root, ignore_errors=True)
 
 
 class PurgeStaleMatlabModulesTests(unittest.TestCase):

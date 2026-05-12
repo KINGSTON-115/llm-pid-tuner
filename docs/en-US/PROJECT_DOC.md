@@ -132,7 +132,8 @@ The overall flow is:
 8. Suggestions pass through the guardrails and validation in `pid_safety.py`
 9. The program sends the new PID back to the device and enters the next round
 10. If results deteriorate, roll back to the best historical result
-11. If results are already good enough, stop early
+11. If results are already good enough, keep the current PID values and enter observation rounds
+12. Stop early after `REQUIRED_STABLE_ROUNDS` consecutive stable evaluations, which defaults to 3
 
 ## 4. Configuration Sources and Priority
 
@@ -191,7 +192,7 @@ LLM suggestions are valuable, but model output can be unstable. That is why the 
 
 In real control applications, the system often already meets the requirement. Continuing to minimize error can introduce more risk than benefit.
 
-This is why early stopping and stable-round counting are built into the runtime.
+This is why early stopping and stable-round counting are built into the runtime. The current behavior is not "one good round and immediately stop": the runtime first checks `GOOD_ENOUGH_AVG_ERROR`, `GOOD_ENOUGH_STEADY_STATE_ERROR`, and `GOOD_ENOUGH_OVERSHOOT`; once a round is good enough, it keeps the current PID values and observes subsequent rounds instead of requesting a new LLM suggestion. It stops after `REQUIRED_STABLE_ROUNDS` consecutive stable evaluations, which defaults to 3. If the response gets worse during observation, the stable counter resets and normal LLM tuning resumes.
 
 ## 7. Packaging Notes
 

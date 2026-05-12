@@ -434,6 +434,10 @@ LLM 仍然采用标准的三阶段调参顺序：
 
 `MATLAB_SIM_STEP_TIME` 控制每轮仿真时长（仿真秒数）。适当减小可加快迭代速度，但需保证每轮能采集到足够反映系统响应（上升、稳态）的完整数据。一般建议设为系统响应时间常数的 3～5 倍。
 
+### Q：Simulink 调参什么时候会自动停止？
+
+Simulink plain 模式和 TUI 模式使用同一套停止逻辑。某轮评测满足 `GOOD_ENOUGH_AVG_ERROR`、`GOOD_ENOUGH_STEADY_STATE_ERROR` 和 `GOOD_ENOUGH_OVERSHOOT` 后，程序会保持当前 PID 参数继续观察，不再请求 LLM 生成新参数。连续 `REQUIRED_STABLE_ROUNDS` 轮评测稳定后停止，默认是 3 轮；如果观察中响应变差，会清零稳定计数并恢复正常调参。
+
 ### Q：调参结束后 PID 参数保存到哪里了？
 
 程序在调参完成（或用户中断）时，会把当前最优 PID 参数写回 `.slx` 文件并保存。下次在 MATLAB 中打开该模型，控制器块中的参数即为调参结果。

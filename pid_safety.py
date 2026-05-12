@@ -312,9 +312,9 @@ def is_good_enough(metrics: Dict[str, float], rules: Dict[str, float] | None = N
     """判断系统是否已经达到“用户可接受”的稳定状态。"""
     rules              = rules or DEFAULT_CONVERGENCE_RULES
     status             = str(metrics.get("status", "UNKNOWN")).upper()
-    avg_error          = float(metrics.get("avg_error", float("inf")) or float("inf"))
-    steady_state_error = float(metrics.get("steady_state_error", float("inf")) or float("inf"))
-    overshoot          = float(metrics.get("overshoot", float("inf")) or float("inf"))
+    avg_error          = _to_float(metrics.get("avg_error", float("inf")), float("inf"))
+    steady_state_error = _to_float(metrics.get("steady_state_error", float("inf")), float("inf"))
+    overshoot          = _to_float(metrics.get("overshoot", float("inf")), float("inf"))
 
     return (
         status == "STABLE"
