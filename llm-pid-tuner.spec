@@ -7,6 +7,17 @@ import sys
 conda_env = sys.prefix
 dll_path = os.path.join(conda_env, "Library", "bin")
 binaries = []
+for dll in [
+    "python3.dll",
+    "python310.dll",
+    "msvcp140.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+]:
+    dll_file = os.path.join(conda_env, dll)
+    if os.path.exists(dll_file):
+        binaries.append((dll_file, "."))
+
 if os.path.exists(dll_path):
     for dll in [
         "ffi.dll",

@@ -488,6 +488,7 @@ def _run_simulink_simulation(
     event_sink: Optional[QueueEventSink] = None,
     controller: Optional[SimulationController] = None,
     emit_console: bool = True,
+    disable_early_exit: bool = False,
 ) -> Dict[str, Any] | None:
     def _emit_terminal_error(message: str) -> None:
         _console(emit_console, f"[ERROR] {message}")
@@ -572,7 +573,7 @@ def _run_simulink_simulation(
             controller=controller,
             emit_console=emit_console,
             doctor_checks=doctor_checks,
-            disable_early_exit=True,
+            disable_early_exit=disable_early_exit,
         )
     except KeyboardInterrupt:
         _console(emit_console, "\n[INFO] 用户中断 (Ctrl+C)。正在保存并退出...")

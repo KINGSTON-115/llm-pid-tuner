@@ -5,9 +5,20 @@ import contextlib
 import io
 import os
 import sys
+import traceback
 
 
 _DLL_DIRECTORY_HANDLES: list[object] = []
+
+
+def _candidate_python_runtime_dirs() -> list[str]:
+    dirs = [
+        os.path.dirname(sys.executable),
+        os.path.dirname(getattr(sys, "_base_executable", "") or ""),
+        getattr(sys, "_MEIPASS", ""),
+        os.path.dirname(os.path.abspath(__file__)),
+    ]
+    return [path for path in dirs if path and os.path.exists(path)]
 
 
 def _runtime_layout() -> tuple[str, str]:
@@ -47,6 +58,16 @@ def _prepend_unique_env_path(var_name: str, new_path: str) -> None:
         return
 
     os.environ[var_name] = new_path
+
+
+def _matlab_engine_debug_details(exc: Exception) -> str:
+    message = f"{type(exc).__name__}: {exc}"
+    debug_enabled = str(os.environ.get("LLM_DEBUG_OUTPUT", "")).strip().lower()
+    if debug_enabled in {"1", "true", "yes", "on"}:
+        return message + "\n" + "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ).rstrip()
+    return message
 
 
 def _register_dll_directory(path: str) -> str | None:
@@ -126,9 +147,16 @@ def prepare_matlab_root(matlab_root: str) -> None:
 
     os.environ["MWE_INSTALL"] = root_path
     os.environ["MATLAB_ROOT"] = root_path
+    for runtime_python_dir in _candidate_python_runtime_dirs():
+        _prepend_unique_env_path(path_var, runtime_python_dir)
+        _register_dll_directory(runtime_python_dir)
+
     _prepend_unique_path(sys.path, dist_dir)
     _prepend_unique_path(sys.path, engine_dir)
     _prepend_unique_path(sys.path, extern_bin_dir)
+    _prepend_unique_env_path("PYTHONPATH", dist_dir)
+    _prepend_unique_env_path("PYTHONPATH", engine_dir)
+    _prepend_unique_env_path("PYTHONPATH", extern_bin_dir)
 
     dll_search_dirs = (
         dist_dir,
@@ -157,11 +185,13 @@ def load_matlab_engine(matlab_root: str = ""):
         if matlab_root.strip():
             raise ImportError(
                 "[SimulinkBridge] Failed to initialize MATLAB Engine with the configured "
-                f"MATLAB_ROOT='{matlab_root.strip()}'."
+                f"MATLAB_ROOT='{matlab_root.strip()}'. "
+                f"Underlying error: {_matlab_engine_debug_details(exc)}"
             ) from exc
         raise ImportError(
             "[SimulinkBridge] Failed to initialize MATLAB Engine. "
-            "Set MATLAB_ROOT in config.json to your local MATLAB installation directory."
+            "Set MATLAB_ROOT in config.json to your local MATLAB installation directory. "
+            f"Underlying error: {_matlab_engine_debug_details(exc)}"
         ) from exc
 
 

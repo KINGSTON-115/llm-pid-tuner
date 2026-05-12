@@ -589,6 +589,42 @@ class SimulatorLoopTests(unittest.TestCase):
         self.assertEqual(captured["prompt_context"]["controller_1_path"], "demo/Outer PID")
         self.assertEqual(captured["prompt_context"]["controller_2_path"], "demo/Inner PID")
 
+    def test_simulink_tui_worker_keeps_early_exit_enabled(self):
+        captured = {}
+
+        class FakeTUIApp:
+            def __init__(
+                self,
+                event_queue,
+                controller,
+                worker_target,
+                event_sink=None,
+                mode_label="",
+                language="zh",
+                next_round_factory=None,
+            ):
+                self.controller = controller
+                self.worker_target = worker_target
+                self._last_result = {}
+
+            def run(self):
+                self.worker_target()
+
+        def fake_run_simulink_simulation(**kwargs):
+            captured.update(kwargs)
+            return {"completed_reason": "stable_rounds_reached"}
+
+        with patch("sim.tui.SimulationTUIApp", FakeTUIApp):
+            with patch.object(
+                simulator,
+                "_run_simulink_simulation",
+                side_effect=fake_run_simulink_simulation,
+            ):
+                result = simulator._run_simulink_simulation_with_tui()
+
+        self.assertEqual(result["completed_reason"], "stable_rounds_reached")
+        self.assertFalse(captured.get("disable_early_exit", False))
+
     def test_run_simulink_simulation_uses_resolved_bridge_configuration(self):
         captured = {}
 

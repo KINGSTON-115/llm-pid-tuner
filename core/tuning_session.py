@@ -39,6 +39,7 @@ class RoundEvaluation:
     metrics: Dict[str, Any]
     current_pid: Dict[str, float]
     stable_rounds: int
+    good_enough: bool = False
     best_result: Optional[Dict[str, Any]] = None
     best_result_updated: bool = False
     rollback_pid: Optional[Dict[str, float]] = None
@@ -90,11 +91,12 @@ def evaluate_completed_round(
     is_retry = state.last_round == round_index
     state.last_round = round_index
     state.last_metrics = dict(metrics)
+    good_enough = is_good_enough(metrics, state.good_enough_rules)
 
     if is_retry:
         # 重试时不累加 stable_rounds，保留上次结果，避免同一批数据重复计分
         pass
-    elif is_good_enough(metrics, state.good_enough_rules):
+    elif good_enough:
         state.stable_rounds += 1
     else:
         state.stable_rounds = 0
@@ -130,25 +132,42 @@ def evaluate_completed_round(
             rollback_secondary_pid = dict(best_secondary)
         if is_good_enough(state.best_result["metrics"], state.good_enough_rules):
             completed_reason = "rollback_to_best"
+    elif state.stable_rounds >= CONFIG["REQUIRED_STABLE_ROUNDS"]:
+        completed_reason = "stable_rounds_reached"
     elif (
-        metrics["avg_error"] < CONFIG["MIN_ERROR_THRESHOLD"]
+        not good_enough
+        and metrics["avg_error"] < CONFIG["MIN_ERROR_THRESHOLD"]
         and metrics["status"] == "STABLE"
     ):
         completed_reason = "low_error_converged"
-    elif state.stable_rounds >= CONFIG["REQUIRED_STABLE_ROUNDS"]:
-        completed_reason = "stable_rounds_reached"
 
     return RoundEvaluation(
         round_index=round_index,
         metrics=metrics,
         current_pid=dict(current_pid),
         stable_rounds=state.stable_rounds,
+        good_enough=good_enough,
         best_result=state.best_result,
         best_result_updated=best_result_updated,
         rollback_pid=rollback_pid,
         rollback_secondary_pid=rollback_secondary_pid,
         completed_reason=completed_reason,
     )
+
+
+def record_observation_round(
+    state: TuningSessionState,
+    evaluation: RoundEvaluation,
+) -> None:
+    state.history.add_record(
+        evaluation.round_index,
+        evaluation.current_pid,
+        evaluation.metrics,
+        "Good-enough round observed; PID held for stability verification.",
+        "Skipped LLM adjustment because the current response already met the good-enough criteria.",
+    )
+    state.round_num += 1
+    state.buffer.reset()
 
 
 def apply_rollback(

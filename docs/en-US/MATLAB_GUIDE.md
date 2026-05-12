@@ -451,6 +451,10 @@ That is the most stable setup.
 
 `MATLAB_SIM_STEP_TIME` controls how long each simulation round runs, in simulation seconds. Lowering it speeds up iteration, but each round still needs to be long enough to capture rise and settling behavior. A good starting point is roughly 3 to 5 times the system time constant.
 
+### Q: When does Simulink tuning stop automatically?
+
+Simulink plain mode and TUI mode use the same stopping logic. After an evaluation satisfies `GOOD_ENOUGH_AVG_ERROR`, `GOOD_ENOUGH_STEADY_STATE_ERROR`, and `GOOD_ENOUGH_OVERSHOOT`, the tool keeps the current PID values and observes the next rounds instead of asking the LLM for new parameters. It stops after `REQUIRED_STABLE_ROUNDS` consecutive stable evaluations, which defaults to 3; if the response gets worse during observation, the stable counter resets and normal tuning resumes.
+
 ### Q: Where are the tuned parameters saved?
 
 When tuning finishes, or when you stop it manually, the current best parameters are written back into the `.slx` file. The next time you open the model in MATLAB, the controller blocks contain the tuned values.
