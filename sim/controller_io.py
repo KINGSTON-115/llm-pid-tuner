@@ -130,7 +130,7 @@ class SimulinkControllerIO:
         separate_gain_paths: Dict[str, str],
         pid_block_path: str,
         pid_block_paths: List[str],
-    ) -> None:
+    ) -> bool:
         active_path = self.resolve_active_controller_path(
             gain_key=gain_key,
             separate_gain_paths=separate_gain_paths,
@@ -138,13 +138,13 @@ class SimulinkControllerIO:
             pid_block_paths=pid_block_paths,
         )
         if not active_path:
-            return
+            return False
 
         configured_separate_path = separate_gain_paths.get(gain_key)
         if configured_separate_path:
             separate_param = self.resolve_separate_gain_param_name(active_path)
             if not separate_param:
-                return
+                return False
             self._call_engine_method(
                 "set_param",
                 active_path,
@@ -152,11 +152,11 @@ class SimulinkControllerIO:
                 str(value),
                 nargout=0,
             )
-            return
+            return True
 
         param_name = self.resolve_controller_param_name_for_path(active_path, gain_key)
         if not param_name:
-            return
+            return False
         self._call_engine_method(
             "set_param",
             active_path,
@@ -164,6 +164,7 @@ class SimulinkControllerIO:
             str(value),
             nargout=0,
         )
+        return True
 
     def resolve_signal_candidates(
         self,

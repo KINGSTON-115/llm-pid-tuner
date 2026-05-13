@@ -1240,6 +1240,7 @@ class PanelStateTests(unittest.TestCase):
         summary = state.render_summary_text()
         self.assertIn("C2:", summary)
         self.assertIn("3.4000", summary)
+        self.assertLess(summary.index("C1:"), summary.index("C2:"))
 
     def test_sample_event_dual_then_single_keeps_secondary_sticky(self):
         """Once dual PID is seen, a later single-PID sample must not clobber it.

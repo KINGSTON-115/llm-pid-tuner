@@ -315,10 +315,11 @@ def is_good_enough(metrics: Dict[str, float], rules: Dict[str, float] | None = N
     avg_error          = _to_float(metrics.get("avg_error", float("inf")), float("inf"))
     steady_state_error = _to_float(metrics.get("steady_state_error", float("inf")), float("inf"))
     overshoot          = _to_float(metrics.get("overshoot", float("inf")), float("inf"))
+    require_avg_error  = bool(rules.get("require_avg_error_threshold", True))
 
     return (
         status == "STABLE"
-        and avg_error          <= rules["avg_error_threshold"]
+        and (not require_avg_error or avg_error <= rules["avg_error_threshold"])
         and steady_state_error <= rules["steady_state_error_threshold"]
         and overshoot          <= rules["overshoot_threshold"]
     )

@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Mapping
 
 from core.compat import slotted_dataclass
+from sim.simulink_paths import (
+    normalize_simulink_block_path,
+    normalize_simulink_block_paths,
+)
 
 
 @slotted_dataclass
@@ -91,19 +95,21 @@ def _collect_matlab_checks(
             )
         )
 
-    pid_block_path = str(config.get("MATLAB_PID_BLOCK_PATH", "") or "").strip()
-    pid_block_paths = config.get("MATLAB_PID_BLOCK_PATHS", [])
-    p_block_path = str(config.get("MATLAB_P_BLOCK_PATH", "") or "").strip()
-    i_block_path = str(config.get("MATLAB_I_BLOCK_PATH", "") or "").strip()
-    d_block_path = str(config.get("MATLAB_D_BLOCK_PATH", "") or "").strip()
+    pid_block_path = normalize_simulink_block_path(
+        config.get("MATLAB_PID_BLOCK_PATH", "")
+    )
+    pid_block_paths = normalize_simulink_block_paths(
+        config.get("MATLAB_PID_BLOCK_PATHS", [])
+    )
+    p_block_path = normalize_simulink_block_path(config.get("MATLAB_P_BLOCK_PATH", ""))
+    i_block_path = normalize_simulink_block_path(config.get("MATLAB_I_BLOCK_PATH", ""))
+    d_block_path = normalize_simulink_block_path(config.get("MATLAB_D_BLOCK_PATH", ""))
     detail = pid_block_path or tr_fn(
         "MATLAB_PID_BLOCK_PATH 为空",
         "MATLAB_PID_BLOCK_PATH is empty",
     )
-    if isinstance(pid_block_paths, list) and pid_block_paths:
-        detail += "; candidates=" + ", ".join(
-            str(item).strip() for item in pid_block_paths if str(item).strip()
-        )
+    if pid_block_paths:
+        detail += "; candidates=" + ", ".join(pid_block_paths)
     if p_block_path or i_block_path or d_block_path:
         detail += (
             f"; separate=P:{p_block_path or '-'} "

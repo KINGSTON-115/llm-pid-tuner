@@ -18,6 +18,7 @@ from sim.controller_io import (
     SimulinkControllerIO,
 )
 from sim.matlab_runtime import MatlabEngineSession, load_matlab_engine
+from sim.simulink_paths import normalize_simulink_block_path
 
 
 _MATLAB_ENGINE = None
@@ -53,9 +54,13 @@ class SimulinkBridge:
         self._matlab_engine = _load_matlab_engine(matlab_root)
         self.model_path = model_path
         self.setpoint = setpoint
-        self.pid_block_path = pid_block_path.strip()
+        self.pid_block_path = normalize_simulink_block_path(pid_block_path)
+        normalized_pid_block_paths = [
+            normalize_simulink_block_path(path)
+            for path in [self.pid_block_path, *(pid_block_paths or [])]
+        ]
         self.pid_block_paths = [
-            path for path in [self.pid_block_path, *(pid_block_paths or [])] if str(path).strip()
+            path for path in normalized_pid_block_paths if path
         ]
         self.output_signal = output_signal
         self.matlab_root = matlab_root
@@ -66,11 +71,11 @@ class SimulinkBridge:
             for item in (output_signal_candidates or [])
             if str(item).strip()
         ]
-        self.setpoint_block = setpoint_block.strip()
+        self.setpoint_block = normalize_simulink_block_path(setpoint_block)
         self.separate_gain_paths = {
-            "p": p_block_path.strip(),
-            "i": i_block_path.strip(),
-            "d": d_block_path.strip(),
+            "p": normalize_simulink_block_path(p_block_path),
+            "i": normalize_simulink_block_path(i_block_path),
+            "d": normalize_simulink_block_path(d_block_path),
         }
 
         self.kp: float = 1.0
@@ -109,6 +114,8 @@ class SimulinkBridge:
         self.controller_1_sample_time = ""
         self.controller_2_sample_time = ""
         self.control_domain = ""
+        self.last_apply_issue = ""
+        self._model_needs_update = False
 
     @property
     def has_secondary_pid(self) -> bool:
@@ -176,6 +183,12 @@ class SimulinkBridge:
             self.ki = self._read_controller_gain("i", self.ki)
             self.kd = self._read_controller_gain("d", self.kd)
             print(f"[Simulink] Initial PID: P={self.kp}, I={self.ki}, D={self.kd}")
+        if self.has_secondary_pid:
+            self._refresh_secondary_controller_gains()
+            print(
+                "[Simulink] Initial PID C2: "
+                f"P={self.secondary_kp}, I={self.secondary_ki}, D={self.secondary_kd}"
+            )
 
     def _find_all_blocks(self) -> List[str]:
         raw_blocks = self._with_suppressed_engine_output(
@@ -297,48 +310,141 @@ class SimulinkBridge:
             pid_block_paths=self.pid_block_paths,
         )
 
-    def _write_controller_gain(self, gain_key: str, value: float) -> None:
+    def _write_controller_gain(self, gain_key: str, value: float) -> bool:
         if self._eng is None:
-            return
+            return False
         controller_io = self._controller_io or self._create_controller_io()
-        controller_io.write_controller_gain(
+        wrote = controller_io.write_controller_gain(
             gain_key=gain_key,
             value=value,
             separate_gain_paths=self.separate_gain_paths,
             pid_block_path=self.pid_block_path,
             pid_block_paths=self.pid_block_paths,
         )
+        self._model_needs_update = self._model_needs_update or wrote
+        return wrote
+
+    def _refresh_secondary_controller_gains(self) -> None:
+        if not self.has_secondary_pid:
+            return
+        original_pid_block_path = self.pid_block_path
+        original_pid_block_paths = list(self.pid_block_paths)
+        original_separate_gain_paths = dict(self.separate_gain_paths)
+        try:
+            self.pid_block_path = self.secondary_pid_block_path
+            self.pid_block_paths = list(self.secondary_pid_block_paths)
+            self.separate_gain_paths = dict(self.secondary_separate_gain_paths)
+            self.secondary_kp = self._read_controller_gain("p", self.secondary_kp)
+            self.secondary_ki = self._read_controller_gain("i", self.secondary_ki)
+            self.secondary_kd = self._read_controller_gain("d", self.secondary_kd)
+        finally:
+            self.pid_block_path = original_pid_block_path
+            self.pid_block_paths = original_pid_block_paths
+            self.separate_gain_paths = original_separate_gain_paths
+
+    def _verify_controller_gain_write(
+        self,
+        gain_key: str,
+        requested_value: float,
+        *,
+        tolerance: float = 1e-9,
+    ) -> str | None:
+        actual_value = self._read_controller_gain(gain_key, float("nan"))
+        try:
+            requested = float(requested_value)
+            actual = float(actual_value)
+        except (TypeError, ValueError):
+            return (
+                f"{gain_key.upper()} write could not be verified: "
+                f"requested {requested_value!r}, read back {actual_value!r}."
+            )
+
+        if abs(actual - requested) <= tolerance * max(1.0, abs(requested)):
+            return None
+        return (
+            f"{gain_key.upper()} write did not stick: requested {requested:g}, "
+            f"read back {actual:g}."
+        )
+
+    def _write_verified_controller_pid(
+        self,
+        pid: Dict[str, float],
+        *,
+        allow_missing_zero: bool = True,
+    ) -> Dict[str, float]:
+        notes: List[str] = []
+        applied: Dict[str, float] = {}
+        for gain_key in ("p", "i", "d"):
+            value = float(pid[gain_key])
+            if not self._write_controller_gain(gain_key, value):
+                if allow_missing_zero and abs(value) <= 1e-12:
+                    applied[gain_key] = 0.0
+                    continue
+                notes.append(
+                    f"{gain_key.upper()} write skipped: no writable parameter was found for {self.pid_block_path or '<auto>'}."
+                )
+                continue
+            verify_note = self._verify_controller_gain_write(gain_key, value)
+            if verify_note:
+                notes.append(verify_note)
+                continue
+            applied[gain_key] = value
+
+        if notes:
+            raise RuntimeError(" ".join(notes))
+        return applied
+
+    def _apply_controller_update(self) -> None:
+        if self._eng is None or not self._model_name or not self._model_needs_update:
+            return
+        try:
+            self._call_engine_method(
+                "set_param",
+                self._model_name,
+                "SimulationCommand",
+                "update",
+                nargout=0,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"[SimulinkBridge] Failed to update model after PID write: {exc}"
+            ) from exc
+        self._model_needs_update = False
 
     def _save_model_after_pid_update(self) -> None:
         """Persist model changes without mutating MATLAB runtime state."""
         if self._eng is None or not self._model_name:
             return
+        save_attempts = (
+            (self._model_name,),
+            (self._model_name, self.model_path),
+            (self._model_name, self.model_path, "OverwriteIfChangedOnDisk", True),
+        )
+        last_exc: Exception | None = None
+        for args in save_attempts:
+            try:
+                self._call_engine_method("save_system", *args, nargout=0)
+                print(f"[Simulink] Saved PID to model: {self.model_path}")
+                return
+            except Exception as exc:
+                last_exc = exc
+        if last_exc is not None:
+            print(f"[WARN] Failed to save Simulink model: {last_exc}")
+
+    def _has_unsaved_model_changes(self) -> bool:
+        if self._eng is None or not self._model_name:
+            return False
         try:
-            # Primary path: save to the currently loaded model target.
-            self._call_engine_method(
-                "save_system",
-                self._model_name,
-                nargout=0,
-            )
-            print(f"[Simulink] Saved PID to model: {self.model_path}")
-            return
+            return str(
+                self._call_engine_method("get_param", self._model_name, "Dirty")
+            ).strip().lower() == "on"
         except Exception:
-            # Fallback path: explicit model file path for compatibility.
-            pass
-        try:
-            self._call_engine_method(
-                "save_system",
-                self._model_name,
-                self.model_path,
-                nargout=0,
-            )
-            print(f"[Simulink] Saved PID to model: {self.model_path}")
-        except Exception as exc:
-            print(f"[WARN] Failed to save Simulink model: {exc}")
+            return True
 
     def disconnect(self) -> None:
         if self._eng is not None:
-            self._save_model_after_pid_update()
+            if self._has_unsaved_model_changes():
+                self._save_model_after_pid_update()
             try:
                 self._call_engine_method(
                     "close_system",
@@ -357,10 +463,18 @@ class SimulinkBridge:
             print("[Simulink] Engine closed.")
 
     def set_pid(self, p: float, i: float, d: float, *, save_to_model: bool = True) -> None:
-        self.kp, self.ki, self.kd = p, i, d
-        self._write_controller_gain("p", p)
-        self._write_controller_gain("i", i)
-        self._write_controller_gain("d", d)
+        self.last_apply_issue = ""
+        requested = {"p": float(p), "i": float(i), "d": float(d)}
+        try:
+            applied = self._write_verified_controller_pid(requested)
+        except RuntimeError as exc:
+            self.last_apply_issue = str(exc)
+            raise RuntimeError(f"[SimulinkBridge] Failed to apply PID: {self.last_apply_issue}") from exc
+
+        self._apply_controller_update()
+        self.kp = applied["p"]
+        self.ki = applied["i"]
+        self.kd = applied["d"]
         if save_to_model:
             self._save_model_after_pid_update()
 
@@ -369,6 +483,7 @@ class SimulinkBridge:
         primary: Dict[str, float],
         secondary: Optional[Dict[str, float]] = None,
     ) -> List[str]:
+        self.last_apply_issue = ""
         self.set_pid(
             float(primary.get("p", self.kp)),
             float(primary.get("i", self.ki)),
@@ -378,12 +493,18 @@ class SimulinkBridge:
         if secondary is None:
             return []
         if not self.secondary_pid_block_path:
-            return [
+            self.last_apply_issue = (
                 "Controller 2 path is missing; skipped secondary update."
+            )
+            return [
+                self.last_apply_issue
             ]
         if self.secondary_pid_block_path == self.pid_block_path:
-            return [
+            self.last_apply_issue = (
                 "Controller 2 path equals Controller 1 path; skipped secondary update to avoid writing the same block twice."
+            )
+            return [
+                self.last_apply_issue
             ]
 
         original_pid_block_path = self.pid_block_path
@@ -422,38 +543,35 @@ class SimulinkBridge:
                     self.secondary_kp = current_secondary_pid["p"]
                     self.secondary_ki = current_secondary_pid["i"]
                     self.secondary_kd = current_secondary_pid["d"]
-                    return secondary_guardrail_notes
-
-                secondary_limits = adapt_simulink_pid_limits(
-                    get_pid_limits("simulink"),
-                    control_domain=self.control_domain,
-                    controller_1_sample_time=self.controller_1_sample_time,
-                    controller_2_sample_time=self.controller_2_sample_time,
-                    model_fixed_step=self.model_fixed_step,
-                )
-                safe_secondary_pid, secondary_guardrail_notes = apply_pid_guardrails(
-                    current_secondary_pid,
-                    secondary,
-                    limits=secondary_limits,
-                )
-
-                for gain_key in ("p", "i", "d"):
-                    self._write_controller_gain(
-                        gain_key,
-                        safe_secondary_pid[gain_key],
+                else:
+                    secondary_limits = adapt_simulink_pid_limits(
+                        get_pid_limits("simulink"),
+                        control_domain=self.control_domain,
+                        controller_1_sample_time=self.controller_1_sample_time,
+                        controller_2_sample_time=self.controller_2_sample_time,
+                        model_fixed_step=self.model_fixed_step,
                     )
-                self.secondary_kp = safe_secondary_pid["p"]
-                self.secondary_ki = safe_secondary_pid["i"]
-                self.secondary_kd = safe_secondary_pid["d"]
+                    safe_secondary_pid, secondary_guardrail_notes = apply_pid_guardrails(
+                        current_secondary_pid,
+                        secondary,
+                        limits=secondary_limits,
+                    )
+
+                    self._write_verified_controller_pid(safe_secondary_pid)
+                    self.secondary_kp = safe_secondary_pid["p"]
+                    self.secondary_ki = safe_secondary_pid["i"]
+                    self.secondary_kd = safe_secondary_pid["d"]
             except Exception:
                 secondary_guardrail_notes = [
                     "Controller 2 update skipped due to incompatible block configuration."
                 ]
+                self.last_apply_issue = secondary_guardrail_notes[0]
         finally:
             self.pid_block_path = original_pid_block_path
             self.pid_block_paths = original_pid_block_paths
             self.separate_gain_paths = original_separate_gain_paths
 
+        self._apply_controller_update()
         # Save once after both controllers are updated.
         self._save_model_after_pid_update()
         return secondary_guardrail_notes
@@ -742,18 +860,25 @@ class SimulinkBridge:
         for index, (current_time, output) in enumerate(zip(time_values, output_values)):
             error = self.setpoint - float(output)
             pwm_value = pwm_values[index] if index < len(pwm_values) else 0.0
-            self._last_data.append(
-                {
-                    "timestamp": float(current_time) * 1000.0,
-                    "setpoint": self.setpoint,
-                    "input": float(output),
-                    "pwm": float(pwm_value),
-                    "error": error,
-                    "p": self.kp,
-                    "i": self.ki,
-                    "d": self.kd,
-                }
-            )
+            sample = {
+                "timestamp": float(current_time) * 1000.0,
+                "setpoint": self.setpoint,
+                "input": float(output),
+                "pwm": float(pwm_value),
+                "error": error,
+                "p": self.kp,
+                "i": self.ki,
+                "d": self.kd,
+            }
+            if self.has_secondary_pid:
+                sample.update(
+                    {
+                        "p2": self.secondary_kp,
+                        "i2": self.secondary_ki,
+                        "d2": self.secondary_kd,
+                    }
+                )
+            self._last_data.append(sample)
 
     def get_data(self) -> List[dict]:
         return self._last_data

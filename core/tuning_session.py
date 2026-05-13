@@ -45,6 +45,7 @@ class RoundEvaluation:
     rollback_pid: Optional[Dict[str, float]] = None
     rollback_secondary_pid: Optional[Dict[str, float]] = None
     completed_reason: Optional[str] = None
+    good_enough_detail: str = ""
 
 
 @slotted_dataclass
@@ -64,6 +65,7 @@ def create_tuning_session(
     initial_pid: Optional[Dict[str, float]] = None,
     setpoint: Optional[float] = None,
     max_history: int = 5,
+    require_avg_error_threshold: bool = True,
 ) -> TuningSessionState:
     buffer = AdvancedDataBuffer(max_size=CONFIG["BUFFER_SIZE"])
     if initial_pid is not None:
@@ -78,6 +80,7 @@ def create_tuning_session(
             "avg_error_threshold": CONFIG["GOOD_ENOUGH_AVG_ERROR"],
             "steady_state_error_threshold": CONFIG["GOOD_ENOUGH_STEADY_STATE_ERROR"],
             "overshoot_threshold": CONFIG["GOOD_ENOUGH_OVERSHOOT"],
+            "require_avg_error_threshold": require_avg_error_threshold,
         },
     )
 
@@ -92,6 +95,33 @@ def evaluate_completed_round(
     state.last_round = round_index
     state.last_metrics = dict(metrics)
     good_enough = is_good_enough(metrics, state.good_enough_rules)
+    good_enough_detail = ""
+    if not good_enough:
+        failed_rules: list[str] = []
+        if str(metrics.get("status", "UNKNOWN")).upper() != "STABLE":
+            failed_rules.append(f"status={metrics.get('status', 'UNKNOWN')}")
+        if (
+            state.good_enough_rules.get("require_avg_error_threshold", True)
+            and metrics["avg_error"] > state.good_enough_rules["avg_error_threshold"]
+        ):
+            failed_rules.append(
+                "avg_error "
+                f"{metrics['avg_error']:.3f}>{state.good_enough_rules['avg_error_threshold']:.3f}"
+            )
+        if (
+            metrics["steady_state_error"]
+            > state.good_enough_rules["steady_state_error_threshold"]
+        ):
+            failed_rules.append(
+                "steady_state_error "
+                f"{metrics['steady_state_error']:.3f}>{state.good_enough_rules['steady_state_error_threshold']:.3f}"
+            )
+        if metrics["overshoot"] > state.good_enough_rules["overshoot_threshold"]:
+            failed_rules.append(
+                "overshoot "
+                f"{metrics['overshoot']:.3f}%>{state.good_enough_rules['overshoot_threshold']:.3f}%"
+            )
+        good_enough_detail = "; ".join(failed_rules)
 
     if is_retry:
         # 重试时不累加 stable_rounds，保留上次结果，避免同一批数据重复计分
@@ -152,6 +182,7 @@ def evaluate_completed_round(
         rollback_pid=rollback_pid,
         rollback_secondary_pid=rollback_secondary_pid,
         completed_reason=completed_reason,
+        good_enough_detail=good_enough_detail,
     )
 
 

@@ -71,7 +71,11 @@ def run_tuning_engine(
         start_time = time.time()
 
     primary_pid, secondary_pid = env.get_current_pid()
-    session = create_tuning_session(initial_pid=primary_pid, setpoint=env.get_setpoint())
+    session = create_tuning_session(
+        initial_pid=primary_pid,
+        setpoint=env.get_setpoint(),
+        require_avg_error_threshold=(llm_mode != "simulink"),
+    )
     session.buffer.current_pid = dict(primary_pid)
     session.buffer.secondary_pid = dict(secondary_pid) if secondary_pid else None
     
@@ -200,6 +204,17 @@ def run_tuning_engine(
                 _console(emit_console, f"[Observe] {message}")
                 _emit_lifecycle(event_sink, start_time, "observing", message)
                 continue
+
+            if (
+                str(evaluation.metrics.get("status", "")).upper() == "STABLE"
+                and evaluation.good_enough_detail
+            ):
+                message = (
+                    "Stable but still tuning because good-enough criteria were not met: "
+                    f"{evaluation.good_enough_detail}."
+                )
+                _console(emit_console, f"[Observe] {message}")
+                _emit_lifecycle(event_sink, start_time, "observing_pending", message)
 
             prompt_data = session.buffer.to_prompt_data()
             history_text = session.history.to_prompt_text()

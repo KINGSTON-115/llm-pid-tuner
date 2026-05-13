@@ -165,6 +165,51 @@ class TuningEngineObservationTests(unittest.TestCase):
         self.assertEqual(result["rounds_completed"], 3)
         self.assertEqual(result["completed_reason"], "max_rounds_reached")
 
+    def test_simulink_good_enough_uses_tail_error_without_avg_error_gate(self):
+        samples = [
+            {
+                "timestamp": 0.0,
+                "setpoint": 200.0,
+                "input": 0.0,
+                "pwm": 0.0,
+                "error": 200.0,
+                "p": 35.0,
+                "i": 3.8,
+                "d": 0.0,
+            },
+            {
+                "timestamp": 15000.0,
+                "setpoint": 200.0,
+                "input": 199.85,
+                "pwm": 0.0,
+                "error": 0.15,
+                "p": 35.0,
+                "i": 3.8,
+                "d": 0.0,
+            },
+        ]
+        tuner = CountingTuner()
+        config = {
+            "BUFFER_SIZE": 2,
+            "MAX_TUNING_ROUNDS": 2,
+            "MIN_ERROR_THRESHOLD": 0.0,
+            "REQUIRED_STABLE_ROUNDS": 1,
+            "GOOD_ENOUGH_AVG_ERROR": 0.1,
+            "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.2,
+            "GOOD_ENOUGH_OVERSHOOT": 1.0,
+        }
+
+        with patch.dict("core.tuning_engine.CONFIG", config, clear=False):
+            result = run_tuning_engine(
+                FakeEnv([samples]),
+                tuner,
+                "simulink",
+                emit_console=False,
+            )
+
+        self.assertEqual(tuner.calls, 0)
+        self.assertEqual(result["completed_reason"], "stable_rounds_reached")
+
 
 if __name__ == "__main__":
     unittest.main()

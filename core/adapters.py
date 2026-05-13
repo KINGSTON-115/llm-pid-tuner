@@ -59,6 +59,7 @@ class SimulinkEnv(BaseTuningEnvironment):
         self._setpoint = setpoint
         self.controller = controller
         self.prompt_context = {}
+        self.last_apply_issue = ""
 
     def _bridge_gain(self, *names: str, default: float) -> float:
         for name in names:
@@ -99,7 +100,13 @@ class SimulinkEnv(BaseTuningEnvironment):
         return samples
 
     def apply_pid(self, primary_pid: Dict[str, float], secondary_pid: Optional[Dict[str, float]] = None) -> None:
-        self.bridge.set_pid_pair(primary_pid, secondary_pid)
+        self.last_apply_issue = ""
+        try:
+            self.bridge.set_pid_pair(primary_pid, secondary_pid)
+        except Exception as exc:
+            self.last_apply_issue = str(exc)
+            return
+        self.last_apply_issue = str(getattr(self.bridge, "last_apply_issue", "") or "")
 
     def get_current_pid(self) -> Tuple[Dict[str, float], Optional[Dict[str, float]]]:
         primary = {

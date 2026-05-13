@@ -72,6 +72,20 @@ class LoadSimulinkRuntimeConfigTests(unittest.TestCase):
         settings = load_simulink_runtime_config(config)
         self.assertEqual(settings.pid_block_paths, ["a/PID", "b/PID"])
 
+    def test_windows_style_block_paths_are_normalized_for_simulink(self):
+        config = _minimal_valid_config()
+        config["MATLAB_PID_BLOCK_PATH"] = r"model\Outer PID"
+        config["MATLAB_PID_BLOCK_PATH_2"] = r"model\Inner PID"
+        config["MATLAB_SETPOINT_BLOCK"] = r"model\Setpoint"
+        config["MATLAB_PID_BLOCK_PATHS"] = [r"model\Candidate PID"]
+
+        settings = load_simulink_runtime_config(config)
+
+        self.assertEqual(settings.pid_block_path, "model/Outer PID")
+        self.assertEqual(settings.pid_block_path_2, "model/Inner PID")
+        self.assertEqual(settings.setpoint_block, "model/Setpoint")
+        self.assertEqual(settings.pid_block_paths, ["model/Candidate PID"])
+
 
 class ValidateSimulinkRuntimeConfigTests(unittest.TestCase):
     def test_valid_config_returns_none(self):

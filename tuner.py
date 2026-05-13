@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 from queue import Queue
-import sys
 import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional
@@ -36,13 +35,6 @@ from sim.runtime import (
     make_llm_tuner_callbacks,
     now_elapsed,
 )
-
-
-def _build_set_command(prefix: str, pid: Dict[str, float]) -> str:
-    return (
-        f"{prefix} P:{pid['p']} "
-        f"I:{pid['i']} D:{pid['d']}"
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,19 +66,6 @@ def resolve_serial_port(serial_port_arg: Optional[str]) -> str | None:
             return serial_port
 
     return select_serial_port()
-
-
-def choose_tui_language(default: str = "zh") -> str:
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return default
-
-    print("Choose interface language / 选择界面语言")
-    print("[1] 中文")
-    print("[2] English")
-    choice = input("Press Enter for 中文 / 回车默认中文: ").strip().lower()
-    if choice in {"2", "en", "english"}:
-        return "en"
-    return default
 
 
 def choose_hardware_ui_mode(force_plain: bool) -> bool:
