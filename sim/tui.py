@@ -409,7 +409,7 @@ class PanelState:
         ]
         if self.secondary_pid is not None:
             lines.insert(
-                9,
+                12,
                 f"  [dim]C2:[/dim] P [bold]{self.secondary_pid['p']:.4f}[/bold]  "
                 f"I [bold]{self.secondary_pid['i']:.4f}[/bold]  "
                 f"D [bold]{self.secondary_pid['d']:.4f}[/bold]",

@@ -11,7 +11,6 @@ import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from core.buffer import AdvancedDataBuffer
 from core.adapters import PythonSimEnv, SimulinkEnv
 from core.tuning_engine import run_tuning_engine
 from core.config import CONFIG, initialize_runtime_config
@@ -30,11 +29,9 @@ from sim.prompt_context import (
     build_python_sim_prompt_context,
     default_prompt_context_for_mode,
     _merge_prompt_context,
-    refresh_prompt_context_for_mode,
 )
 from sim.runtime import (
     EVENT_LIFECYCLE,
-    EVENT_SAMPLE,
     QueueEventSink,
     SimulationController,
     emit_console_message as _console,
@@ -42,7 +39,6 @@ from sim.runtime import (
     make_llm_tuner_callbacks,
     now_elapsed,
     publish_event,
-    wait_while_paused,
 )
 from sim.simulink_setup import (
     build_simulink_initial_prompt_context,
@@ -154,72 +150,6 @@ def _run_simulator_warm_start(
         elapsed_sec=0.0,
     )
     return safe_pid
-
-
-def _emit_sample_event(
-    event_sink: Optional[QueueEventSink], sim: Any, data: Dict[str, Any]
-) -> None:
-    """Publish EVENT_SAMPLE, including secondary PID fields when the sim
-    exposes them (dual-controller Simulink setups)."""
-    payload: Dict[str, Any] = {
-        "timestamp": float(data.get("timestamp", 0.0)),
-        "setpoint": float(data.get("setpoint", 0.0)),
-        "input": float(data.get("input", 0.0)),
-        "pwm": float(data.get("pwm", 0.0)),
-        "error": float(data.get("error", 0.0)),
-        "p": float(data.get("p", 0.0)),
-        "i": float(data.get("i", 0.0)),
-        "d": float(data.get("d", 0.0)),
-    }
-    if getattr(sim, "has_secondary_pid", False):
-        payload["p2"] = float(getattr(sim, "secondary_kp", 0.0))
-        payload["i2"] = float(getattr(sim, "secondary_ki", 0.0))
-        payload["d2"] = float(getattr(sim, "secondary_kd", 0.0))
-    publish_event(event_sink, EVENT_SAMPLE, **payload)
-
-
-def _collect_data(
-    sim: Any,
-    buffer: AdvancedDataBuffer,
-    event_sink: Optional[QueueEventSink] = None,
-    controller: Optional[SimulationController] = None,
-) -> Tuple[int, bool]:
-    steps = 0
-    max_simulink_run_steps = 200
-    simulink_run_count = 0
-
-    while not buffer.is_full():
-        if not wait_while_paused(controller):
-            return steps, False
-        if controller is not None and controller.should_stop:
-            return steps, False
-
-        if hasattr(sim, "compute_pid"):
-            sim.compute_pid()
-            sim.update()
-            data = sim.get_data()
-            buffer.add(data)
-            _emit_sample_event(event_sink, sim, data)
-            steps += 1
-            continue
-
-        simulink_run_count += 1
-        if simulink_run_count > max_simulink_run_steps:
-            raise RuntimeError(
-                "Simulink data collection timed out before filling the buffer."
-            )
-
-        sim.run_step()
-        for data in sim.get_data():
-            if controller is not None and controller.should_stop:
-                return steps, False
-            buffer.add(data)
-            _emit_sample_event(event_sink, sim, data)
-            steps += 1
-            if buffer.is_full():
-                break
-
-    return steps, True
 
 
 def _create_python_simulator(

@@ -81,7 +81,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "LLM_DEBUG_OUTPUT"              : False,
     "CSV_EXPORT_PATH"               : "",
     "GOOD_ENOUGH_AVG_ERROR"         : 0.1,
-    "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.05,
+    "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.2,
     "GOOD_ENOUGH_OVERSHOOT"         : 1.0,
     "REQUIRED_STABLE_ROUNDS"        : 3,
     "MATLAB_MODEL_PATH"             : "",

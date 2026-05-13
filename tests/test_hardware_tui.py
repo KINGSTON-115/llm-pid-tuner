@@ -3,6 +3,7 @@ import time
 import unittest
 from pathlib import Path
 from queue import Queue
+from typing import Dict
 from unittest.mock import patch
 
 
@@ -25,6 +26,37 @@ def _make_csv_line(timestamp: int, temp: float, pwm: float = 200.0) -> str:
     setpoint = 200.0
     error = setpoint - temp
     return f"{timestamp},{setpoint},{temp},{pwm},{error},1.0,0.1,0.05"
+
+
+def _parse_csv_line(line: str) -> Dict[str, float]:
+    parts = line.split(",")
+    data = {
+        "timestamp": float(parts[0]),
+        "setpoint": float(parts[1]),
+        "input": float(parts[2]),
+        "pwm": float(parts[3]),
+        "error": float(parts[4]),
+        "p": float(parts[5]),
+        "i": float(parts[6]),
+        "d": float(parts[7]),
+    }
+    if len(parts) >= 11:
+        data.update(
+            {
+                "p2": float(parts[8]),
+                "i2": float(parts[9]),
+                "d2": float(parts[10]),
+            }
+        )
+    return data
+
+
+class _NoopTuner:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def analyze(self, *_args, **_kwargs):
+        return None
 
 
 class HardwareUiModeTests(unittest.TestCase):
@@ -181,17 +213,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 return line
 
             def parse_data(self, line):
-                parts = line.split(",")
-                return {
-                    "timestamp": float(parts[0]),
-                    "setpoint": float(parts[1]),
-                    "input": float(parts[2]),
-                    "pwm": float(parts[3]),
-                    "error": float(parts[4]),
-                    "p": float(parts[5]),
-                    "i": float(parts[6]),
-                    "d": float(parts[7]),
-                }
+                return _parse_csv_line(line)
 
             def send_command(self, cmd):
                 sent_commands.append(cmd)
@@ -300,20 +322,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 return line
 
             def parse_data(self, line):
-                parts = line.split(",")
-                return {
-                    "timestamp": float(parts[0]),
-                    "setpoint": float(parts[1]),
-                    "input": float(parts[2]),
-                    "pwm": float(parts[3]),
-                    "error": float(parts[4]),
-                    "p": float(parts[5]),
-                    "i": float(parts[6]),
-                    "d": float(parts[7]),
-                    "p2": float(parts[8]),
-                    "i2": float(parts[9]),
-                    "d2": float(parts[10]),
-                }
+                return _parse_csv_line(line)
 
             def send_command(self, cmd):
                 sent_commands.append(cmd)
@@ -386,20 +395,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 return line
 
             def parse_data(self, line):
-                parts = line.split(",")
-                return {
-                    "timestamp": float(parts[0]),
-                    "setpoint": float(parts[1]),
-                    "input": float(parts[2]),
-                    "pwm": float(parts[3]),
-                    "error": float(parts[4]),
-                    "p": float(parts[5]),
-                    "i": float(parts[6]),
-                    "d": float(parts[7]),
-                    "p2": float(parts[8]),
-                    "i2": float(parts[9]),
-                    "d2": float(parts[10]),
-                }
+                return _parse_csv_line(line)
 
             def send_command(self, cmd):
                 sent_commands.append(cmd)
@@ -468,17 +464,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 return line
 
             def parse_data(self, line):
-                parts = line.split(",")
-                return {
-                    "timestamp": float(parts[0]),
-                    "setpoint": float(parts[1]),
-                    "input": float(parts[2]),
-                    "pwm": float(parts[3]),
-                    "error": float(parts[4]),
-                    "p": float(parts[5]),
-                    "i": float(parts[6]),
-                    "d": float(parts[7]),
-                }
+                return _parse_csv_line(line)
 
             def send_command(self, cmd):
                 sent_commands.append(cmd)
@@ -559,15 +545,8 @@ class HardwareTuiLoopTests(unittest.TestCase):
             def send_command(self, _cmd):
                 return None
 
-        class FakeTuner:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def analyze(self, *_args, **_kwargs):
-                return None
-
         with patch.object(tuner, "SerialBridge", InvalidDataBridge):
-            with patch.object(tuner, "LLMTuner", FakeTuner):
+            with patch.object(tuner, "LLMTuner", _NoopTuner):
                 with patch.dict(
                     tuner.CONFIG,
                     {
@@ -618,15 +597,8 @@ class HardwareTuiLoopTests(unittest.TestCase):
             def send_command(self, _cmd):
                 return None
 
-        class FakeTuner:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def analyze(self, *_args, **_kwargs):
-                return None
-
         with patch.object(tuner, "SerialBridge", EmptyDataBridge):
-            with patch.object(tuner, "LLMTuner", FakeTuner):
+            with patch.object(tuner, "LLMTuner", _NoopTuner):
                 with patch.dict(
                     tuner.CONFIG,
                     {
@@ -765,17 +737,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 return line
 
             def parse_data(self, line):
-                parts = line.split(",")
-                return {
-                    "timestamp": float(parts[0]),
-                    "setpoint": float(parts[1]),
-                    "input": float(parts[2]),
-                    "pwm": float(parts[3]),
-                    "error": float(parts[4]),
-                    "p": float(parts[5]),
-                    "i": float(parts[6]),
-                    "d": float(parts[7]),
-                }
+                return _parse_csv_line(line)
 
             def send_command(self, cmd):
                 if cmd == "STATUS":

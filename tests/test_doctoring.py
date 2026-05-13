@@ -78,6 +78,23 @@ class CollectMatlabChecksTests(unittest.TestCase):
         self.assertEqual(names["MATLAB output signal"], "PASS")
         self.assertEqual(names["PID block path"], "PASS")
 
+    def test_matlab_pid_paths_are_reported_with_simulink_separators(self):
+        config = {
+            "MATLAB_MODEL_PATH": "m.slx",
+            "MATLAB_OUTPUT_SIGNAL": "out",
+            "MATLAB_PID_BLOCK_PATH": r"m\Outer PID",
+            "MATLAB_PID_BLOCK_PATHS": [r"m\Candidate PID"],
+        }
+
+        checks = _collect_matlab_checks(
+            config, tr_fn=_identity_tr, path_exists=lambda p: True
+        )
+        pid_check = next(c for c in checks if c.name == "PID block path")
+
+        self.assertIn("m/Outer PID", pid_check.detail)
+        self.assertIn("m/Candidate PID", pid_check.detail)
+        self.assertNotIn(r"m\Outer PID", pid_check.detail)
+
     def test_missing_output_signal_fails(self):
         config = {"MATLAB_MODEL_PATH": "m.slx"}
         checks = _collect_matlab_checks(

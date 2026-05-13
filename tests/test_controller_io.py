@@ -95,6 +95,20 @@ class SimulinkControllerIOTests(unittest.TestCase):
 
         self.assertEqual(set_param_calls, [("demo/P", "Gain", "2.5")])
 
+    def test_write_controller_gain_reports_missing_writable_parameter(self):
+        controller_io, set_param_calls = self._make_controller_io()
+
+        wrote = controller_io.write_controller_gain(
+            gain_key="p",
+            value=2.5,
+            separate_gain_paths={"p": "", "i": "", "d": ""},
+            pid_block_path="demo/PID",
+            pid_block_paths=["demo/PID"],
+        )
+
+        self.assertFalse(wrote)
+        self.assertEqual(set_param_calls, [])
+
     def test_resolve_named_signal_reads_logsout_dataset(self):
         controller_io, _set_param_calls = self._make_controller_io()
         sim_out = {

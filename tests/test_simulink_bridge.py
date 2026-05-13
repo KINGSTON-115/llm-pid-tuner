@@ -22,6 +22,10 @@ class _FakeEngine:
 
     def set_param(self, *_args, **_kwargs):
         self.set_param_calls.append(_args)
+        if len(_args) >= 3:
+            block_path, parameter_name, value = _args[:3]
+            if block_path in self.blocks and parameter_name in self.blocks[block_path]:
+                self.blocks[block_path][parameter_name] = value
         return None
 
     def sim(self, *_args, **_kwargs):
@@ -238,6 +242,26 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         self.assertEqual(bridge.get_data()[0]["timestamp"], 0.0)
         self.assertEqual(bridge.get_data()[1]["input"], 120.0)
 
+    def test_run_step_emits_secondary_pid_fields_when_dual_loop_configured(self):
+        sim_output = {
+            "y_out": {
+                "Time": [[0.0], [1.0]],
+                "Data": [[100.0], [120.0]],
+            }
+        }
+        bridge = self._make_bridge(sim_output)
+        bridge.secondary_pid_block_path = "demo/Inner PID"
+        bridge.secondary_kp = 2.0
+        bridge.secondary_ki = 0.2
+        bridge.secondary_kd = 0.06
+
+        bridge.run_step()
+
+        self.assertEqual(bridge.get_data()[0]["p2"], 2.0)
+        self.assertEqual(bridge.get_data()[0]["i2"], 0.2)
+        self.assertEqual(bridge.get_data()[0]["d2"], 0.06)
+        self.assertEqual(bridge.get_data()[1]["p2"], 2.0)
+
     def test_run_step_reads_nested_out_timeseries(self):
         sim_output = {
             "out": {
@@ -388,6 +412,84 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         self.assertIn(("demo/PID Controller", "Kp", "2.5"), bridge._eng.set_param_calls)
         self.assertIn(("demo/PID Controller", "Ki", "0.4"), bridge._eng.set_param_calls)
         self.assertIn(("demo/PID Controller", "Kd", "0.2"), bridge._eng.set_param_calls)
+        self.assertIn(("demo", "SimulationCommand", "update"), bridge._eng.set_param_calls)
+        self.assertEqual(bridge.kp, 2.5)
+        self.assertEqual(bridge.ki, 0.4)
+        self.assertEqual(bridge.kd, 0.2)
+
+    def test_constructor_normalizes_windows_style_block_paths(self):
+        bridge = self._make_bridge({})
+        fake_engine_module = type(
+            "_FakeMatlabEngineModule",
+            (),
+            {"start_matlab": staticmethod(lambda: None)},
+        )
+        with patch(
+            "sim.simulink_bridge._load_matlab_engine",
+            return_value=fake_engine_module,
+        ):
+            normalized = SimulinkBridge(
+                model_path="C:/models/demo.slx",
+                setpoint=200.0,
+                pid_block_path=r"demo\PID Controller",
+                output_signal="y_out",
+                matlab_root="C:/Program Files/MATLAB/R2022b",
+                sim_step_time=10.0,
+                setpoint_block=r"demo\Setpoint",
+                pid_block_paths=[r"demo\Backup PID"],
+                p_block_path=r"demo\P",
+            )
+
+        self.assertEqual(normalized.pid_block_path, "demo/PID Controller")
+        self.assertEqual(normalized.pid_block_paths, ["demo/PID Controller", "demo/Backup PID"])
+        self.assertEqual(normalized.setpoint_block, "demo/Setpoint")
+        self.assertEqual(normalized.separate_gain_paths["p"], "demo/P")
+
+    def test_set_pid_fails_when_write_does_not_read_back(self):
+        bridge = self._make_bridge({})
+        bridge._eng.blocks = {
+            "demo/PID Controller": {
+                "Kp": "1.0",
+                "Ki": "0.1",
+                "Kd": "0.05",
+            },
+        }
+        bridge.pid_block_path = "demo/PID Controller"
+
+        with patch.object(bridge, "_read_controller_gain", return_value=1.0):
+            with self.assertRaisesRegex(RuntimeError, "write did not stick"):
+                bridge.set_pid(2.5, 0.4, 0.2)
+
+        self.assertEqual(bridge.kp, 1.0)
+
+    def test_set_pid_keeps_model_update_pending_when_update_fails(self):
+        class _UpdateFailEngine(_FakeEngine):
+            def set_param(self, *args, **kwargs):  # type: ignore[override]
+                super().set_param(*args, **kwargs)
+                if len(args) >= 3 and args[:3] == (
+                    "demo",
+                    "SimulationCommand",
+                    "update",
+                ):
+                    raise RuntimeError("update failed")
+                return None
+
+        bridge = self._make_bridge({})
+        bridge._eng = _UpdateFailEngine({})
+        bridge._eng.blocks = {
+            "demo/PID Controller": {
+                "Kp": "1.0",
+                "Ki": "0.1",
+                "Kd": "0.05",
+            },
+        }
+        bridge.pid_block_path = "demo/PID Controller"
+
+        with self.assertRaisesRegex(RuntimeError, "Failed to update model"):
+            bridge.set_pid(2.5, 0.4, 0.2)
+
+        self.assertTrue(bridge._model_needs_update)
+        self.assertEqual(bridge.kp, 1.0)
 
     def test_connect_reads_kp_ki_kd_parameter_names(self):
         bridge = self._make_bridge({})
@@ -407,6 +509,24 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
         self.assertEqual(bridge.kp, 3.0)
         self.assertEqual(bridge.ki, 0.2)
         self.assertEqual(bridge.kd, 0.1)
+
+    def test_refresh_secondary_controller_gains_reads_configured_secondary(self):
+        bridge = self._make_bridge({})
+        bridge._eng.blocks = {
+            "demo/Outer PID": {"Kp": "1.0", "Ki": "0.1", "Kd": "0.05"},
+            "demo/Inner PID": {"Kp": "2.0", "Ki": "0.2", "Kd": "0.06"},
+        }
+        bridge.pid_block_path = "demo/Outer PID"
+        bridge.pid_block_paths = ["demo/Outer PID"]
+        bridge.secondary_pid_block_path = "demo/Inner PID"
+        bridge.secondary_pid_block_paths = ["demo/Inner PID"]
+
+        bridge._refresh_secondary_controller_gains()
+
+        self.assertEqual(bridge.secondary_kp, 2.0)
+        self.assertEqual(bridge.secondary_ki, 0.2)
+        self.assertEqual(bridge.secondary_kd, 0.06)
+        self.assertEqual(bridge.pid_block_path, "demo/Outer PID")
 
     def test_set_pid_supports_proportional_integral_derivative_gain_names(self):
         bridge = self._make_bridge({})

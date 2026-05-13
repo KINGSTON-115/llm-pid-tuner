@@ -4,6 +4,10 @@ from typing import Any, Mapping
 
 from core.compat import slotted_dataclass
 from sim.prompt_context import build_simulink_prompt_context, _first_nonempty_text
+from sim.simulink_paths import (
+    normalize_simulink_block_path,
+    normalize_simulink_block_paths,
+)
 
 
 @slotted_dataclass
@@ -42,22 +46,36 @@ def load_simulink_runtime_config(config: Mapping[str, Any]) -> SimulinkRuntimeCo
 
     return SimulinkRuntimeConfig(
         model_path=str(config.get("MATLAB_MODEL_PATH", "") or "").strip(),
-        pid_block_path=str(config.get("MATLAB_PID_BLOCK_PATH", "") or "").strip(),
+        pid_block_path=normalize_simulink_block_path(
+            config.get("MATLAB_PID_BLOCK_PATH", "")
+        ),
         matlab_root=str(config.get("MATLAB_ROOT", "") or "").strip(),
         output_signal=str(config.get("MATLAB_OUTPUT_SIGNAL", "") or "").strip(),
         control_signal=str(config.get("MATLAB_CONTROL_SIGNAL", "") or "").strip(),
-        setpoint_block=str(config.get("MATLAB_SETPOINT_BLOCK", "") or "").strip(),
+        setpoint_block=normalize_simulink_block_path(
+            config.get("MATLAB_SETPOINT_BLOCK", "")
+        ),
         output_signal_candidates=_normalized_string_list(
             config.get("MATLAB_OUTPUT_SIGNAL_CANDIDATES", [])
         ),
-        pid_block_paths=_normalized_string_list(config.get("MATLAB_PID_BLOCK_PATHS", [])),
-        p_block_path=str(config.get("MATLAB_P_BLOCK_PATH", "") or "").strip(),
-        i_block_path=str(config.get("MATLAB_I_BLOCK_PATH", "") or "").strip(),
-        d_block_path=str(config.get("MATLAB_D_BLOCK_PATH", "") or "").strip(),
-        pid_block_path_2=str(config.get("MATLAB_PID_BLOCK_PATH_2", "") or "").strip(),
-        p_block_path_2=str(config.get("MATLAB_P_BLOCK_PATH_2", "") or "").strip(),
-        i_block_path_2=str(config.get("MATLAB_I_BLOCK_PATH_2", "") or "").strip(),
-        d_block_path_2=str(config.get("MATLAB_D_BLOCK_PATH_2", "") or "").strip(),
+        pid_block_paths=normalize_simulink_block_paths(
+            config.get("MATLAB_PID_BLOCK_PATHS", [])
+        ),
+        p_block_path=normalize_simulink_block_path(config.get("MATLAB_P_BLOCK_PATH", "")),
+        i_block_path=normalize_simulink_block_path(config.get("MATLAB_I_BLOCK_PATH", "")),
+        d_block_path=normalize_simulink_block_path(config.get("MATLAB_D_BLOCK_PATH", "")),
+        pid_block_path_2=normalize_simulink_block_path(
+            config.get("MATLAB_PID_BLOCK_PATH_2", "")
+        ),
+        p_block_path_2=normalize_simulink_block_path(
+            config.get("MATLAB_P_BLOCK_PATH_2", "")
+        ),
+        i_block_path_2=normalize_simulink_block_path(
+            config.get("MATLAB_I_BLOCK_PATH_2", "")
+        ),
+        d_block_path_2=normalize_simulink_block_path(
+            config.get("MATLAB_D_BLOCK_PATH_2", "")
+        ),
         sim_step_time=sim_step_time,
         setpoint=setpoint,
     )
