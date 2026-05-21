@@ -37,6 +37,12 @@ from sim.runtime import (
 DEFAULT_DOCTOR_CHECKS = [DoctorCheck("api", "PASS", "ok")]
 
 
+def static_text(widget) -> str:
+    if hasattr(widget, "content"):
+        return str(widget.content)
+    return str(widget.renderable)
+
+
 class QueueEventSinkTests(unittest.TestCase):
     def test_collects_expected_event_shapes(self):
         event_queue = Queue()
@@ -1318,7 +1324,7 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("p")
             await pilot.press("r")
 
-            help_text = str(app.query_one("#help", Static).content)
+            help_text = static_text(app.query_one("#help", Static))
             self.assertTrue(app.state.paused)
             self.assertEqual(len(app.state.event_history), 0)
             self.assertEqual(app.state.latest_action, "-")
@@ -1361,7 +1367,7 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
             app._poll_events()
 
             status = app.query_one("#status", Static)
-            self.assertIn("C2", str(status.content))
+            self.assertIn("C2", static_text(status))
 
     async def test_reset_view_ignores_queued_pre_reset_events(self):
         from sim.tui import SimulationTUIApp
@@ -1479,7 +1485,7 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
                     break
                 await pilot.pause()
 
-            help_text = str(app.query_one("#help", Static).content)
+            help_text = static_text(app.query_one("#help", Static))
             self.assertTrue(controller.should_stop)
             self.assertTrue(worker_finished.is_set())
             self.assertIn("s", help_text)
@@ -1554,7 +1560,7 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
                     break
                 await pilot.pause()
 
-            help_text = str(app.query_one("#help", Static).content)
+            help_text = static_text(app.query_one("#help", Static))
             self.assertTrue(worker_started.is_set())
             self.assertEqual(
                 next_round_calls,

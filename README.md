@@ -99,6 +99,12 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 如果你不想自己适配协议，**最省事的办法就是直接从 `firmware.cpp` 开始。**
 
+如果你要对接本仓库里这三套已经验证过的工程，建议在 `config.json` 里明确指定 `HARDWARE_PROFILE`：
+
+- `generic_serial_csv`：默认 CSV 串口数据，适合 `firmware.cpp` 和演示模式
+- `stm32f407_openmv`：STM32F407 + OpenMV 瞄准链路，支持 `Status:` 文本、`T:x,y` 和 `N`
+- `mspm0_datavision`：MSPM0 DataVision 采样链路，当前按遥测优先处理，不默认写回参数
+
 ### 第 3 步：第一次运行 exe
 
 双击运行 `llm-pid-tuner.exe`。
@@ -116,6 +122,7 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 {
   "SERIAL_PORT": "AUTO",
   "BAUD_RATE": 115200,
+  "HARDWARE_PROFILE": "generic_serial_csv",
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
   "LLM_MODEL_NAME": "gpt-4o",
@@ -198,6 +205,7 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 {
   "SERIAL_PORT": "AUTO",
   "BAUD_RATE": 115200,
+  "HARDWARE_PROFILE": "generic_serial_csv",
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
   "LLM_MODEL_NAME": "gpt-4o",

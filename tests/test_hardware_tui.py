@@ -259,7 +259,11 @@ class HardwareTuiLoopTests(unittest.TestCase):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
+                    {
+                        "BUFFER_SIZE": 3,
+                        "MAX_TUNING_ROUNDS": 1,
+                        "HARDWARE_PROFILE": "stm32f407_openmv",
+                    },
                     clear=False,
                 ):
                     result = tuner._run_hardware_tuning_loop(
@@ -290,6 +294,12 @@ class HardwareTuiLoopTests(unittest.TestCase):
             captured["prompt_context"]["user_goal_priority"],
             "low_overshoot",
         )
+        self.assertEqual(
+            captured["prompt_context"]["hardware_profile"],
+            "stm32f407_openmv",
+        )
+        self.assertEqual(captured["prompt_context"]["board_family"], "stm32f407")
+        self.assertEqual(captured["prompt_context"]["controller_count"], 2)
 
     def test_hardware_loop_sends_set2_when_llm_returns_dual_controller_result(self):
         sent_commands: list[str] = []

@@ -66,6 +66,7 @@ def ensure_utf8_console() -> None:
 DEFAULT_CONFIG: Dict[str, Any] = {
     "SERIAL_PORT"                   : "AUTO",
     "BAUD_RATE"                     : 115200,
+    "HARDWARE_PROFILE"              : "generic_serial_csv",
     "LLM_API_KEY"                   : "your-api-key-here",
     "LLM_API_BASE_URL"              : "https://api.openai.com/v1",
     "LLM_MODEL_NAME"                : "gpt-4o",
