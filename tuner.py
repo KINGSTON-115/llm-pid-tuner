@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from core.config import CONFIG, initialize_runtime_config
 from hw.bridge import SerialBridge, safe_pause, select_serial_port
+from hw.profiles import DEFAULT_HARDWARE_PROFILE, normalize_hardware_profile
 from llm.client import LLMTuner
 from core.tuning_engine import run_tuning_engine
 from core.adapters import HardwareEnv
@@ -92,6 +93,9 @@ def _run_hardware_tuning_loop(
     prompt_context_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     bridge = SerialBridge(serial_port, CONFIG["BAUD_RATE"], emit_console=False)
+    bridge.hardware_profile = normalize_hardware_profile(
+        CONFIG.get("HARDWARE_PROFILE", DEFAULT_HARDWARE_PROFILE)
+    )
     start_time = time.time()
     current_stream_round = [0]
     llm_log_callback, llm_stream_callback = make_llm_tuner_callbacks(
@@ -145,7 +149,10 @@ def _run_hardware_tuning_loop(
 
     try:
         _console(emit_console, "[CMD] Sending: STATUS")
-        status_sent = bridge.send_command("STATUS")
+        if hasattr(bridge, "send_profile_command"):
+            status_sent = bridge.send_profile_command("STATUS")
+        else:
+            status_sent = bridge.send_command("STATUS")
         _emit_log(event_sink, start_time, "cmd", "STATUS")
         if status_sent is False:
             warn = f"[WARN] STATUS send failed: {bridge.last_error or 'unknown write error'}"
@@ -155,14 +162,20 @@ def _run_hardware_tuning_loop(
             _console(emit_console, "[CMD] Sent: STATUS")
         if initial_pid:
             cmd = f"SET P:{initial_pid['p']} I:{initial_pid['i']} D:{initial_pid['d']}"
-            cmd_sent = bridge.send_command(cmd)
-            _emit_log(event_sink, start_time, "cmd", cmd)
-            if cmd_sent is False:
-                warn = f"[WARN] Initial PID send failed: {bridge.last_error or 'unknown write error'}"
-                _console(emit_console, warn)
-                _emit_log(event_sink, start_time, "warn", warn)
+            if normalize_hardware_profile(getattr(bridge, "hardware_profile", DEFAULT_HARDWARE_PROFILE)) == "mspm0_datavision":
+                _console(emit_console, "[INFO] MSPM0 telemetry-only profile; skipping initial PID write-back.")
             else:
-                _console(emit_console, f"[CMD] Initial PID: {cmd}")
+                if hasattr(bridge, "send_profile_command"):
+                    cmd_sent = bridge.send_profile_command("SET", primary_pid=initial_pid)
+                else:
+                    cmd_sent = bridge.send_command(cmd)
+                _emit_log(event_sink, start_time, "cmd", cmd)
+                if cmd_sent is False:
+                    warn = f"[WARN] Initial PID send failed: {bridge.last_error or 'unknown write error'}"
+                    _console(emit_console, warn)
+                    _emit_log(event_sink, start_time, "warn", warn)
+                else:
+                    _console(emit_console, f"[CMD] Initial PID: {cmd}")
         time.sleep(1)
 
         _console(emit_console, "[INFO] 开始采集数据...")
@@ -175,7 +188,11 @@ def _run_hardware_tuning_loop(
 
         env = HardwareEnv(bridge, initial_pid or {"p": 0.0, "i": 0.0, "d": 0.0}, controller=controller)
         env.prompt_context = _merge_prompt_context(
-            build_hardware_prompt_context(serial_port, None),
+            build_hardware_prompt_context(
+                serial_port,
+                None,
+                hardware_profile=getattr(bridge, "hardware_profile", DEFAULT_HARDWARE_PROFILE),
+            ),
             prompt_context_overrides,
         )
 

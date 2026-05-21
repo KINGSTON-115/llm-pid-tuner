@@ -226,12 +226,16 @@ def run_tuning_engine(
                     build_hardware_prompt_context,
                     _merge_prompt_context,
                 )
+                from hw.profiles import DEFAULT_HARDWARE_PROFILE, normalize_hardware_profile
                 bridge = env.bridge
                 # Determine secondary pid presence via buffer state
                 sec_pid = session.buffer.secondary_pid
                 hardware_context = build_hardware_prompt_context(
                     getattr(bridge, "serial_port", "unknown"),
-                    sec_pid
+                    sec_pid,
+                    hardware_profile=normalize_hardware_profile(
+                        getattr(bridge, "hardware_profile", DEFAULT_HARDWARE_PROFILE)
+                    ),
                 )
                 prompt_context = _merge_prompt_context(prompt_context, hardware_context)
                 

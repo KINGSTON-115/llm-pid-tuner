@@ -2,6 +2,11 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 from core.env import BaseTuningEnvironment
 from core.config import CONFIG
+from hw.profiles import (
+    DEFAULT_HARDWARE_PROFILE,
+    get_hardware_sample_format_hint,
+    normalize_hardware_profile,
+)
 
 class PythonSimEnv(BaseTuningEnvironment):
     def __init__(self, sim: Any, setpoint: float, controller: Any = None):
@@ -166,6 +171,10 @@ class HardwareEnv(BaseTuningEnvironment):
         last_invalid_line = ""
         self.last_collect_issue = ""
         self.last_collect_warning = ""
+        hardware_profile = normalize_hardware_profile(
+            getattr(self.bridge, "hardware_profile", DEFAULT_HARDWARE_PROFILE)
+        )
+        expected_formats = get_hardware_sample_format_hint(hardware_profile)
 
         while len(samples) < target_size:
             if self.controller and hasattr(self.controller, "wait_while_paused") and not self.controller.wait_while_paused():
@@ -174,7 +183,6 @@ class HardwareEnv(BaseTuningEnvironment):
                 return samples
 
             if (time.time() - started_at) >= timeout_sec:
-                expected = "timestamp_ms,setpoint,input,pwm,error,p,i,d"
                 if len(samples) >= int(self.MIN_SAMPLES_PER_ROUND):
                     self.last_collect_warning = (
                         f"Hardware sampling timed out after {timeout_sec:.1f}s: "
@@ -192,7 +200,7 @@ class HardwareEnv(BaseTuningEnvironment):
                     detail = f" Last raw line: '{last_invalid_line[:160]}'." if last_invalid_line else ""
                     self.last_collect_issue = (
                         f"No valid hardware samples were parsed within {timeout_sec:.1f}s. "
-                        f"Expected CSV: {expected}.{detail}"
+                        f"Expected {expected_formats}.{detail}"
                     )
                 else:
                     self.last_collect_issue = (
@@ -225,6 +233,38 @@ class HardwareEnv(BaseTuningEnvironment):
 
     def apply_pid(self, primary_pid: Dict[str, float], secondary_pid: Optional[Dict[str, float]] = None) -> None:
         self.last_apply_issue = ""
+        hardware_profile = normalize_hardware_profile(
+            getattr(self.bridge, "hardware_profile", DEFAULT_HARDWARE_PROFILE)
+        )
+
+        if hardware_profile == "mspm0_datavision":
+            self.current_pid = dict(primary_pid)
+            if secondary_pid is not None:
+                self.current_secondary_pid = dict(secondary_pid)
+            return
+
+        if hasattr(self.bridge, "send_profile_command"):
+            primary_sent = self.bridge.send_profile_command("SET", primary_pid=primary_pid)
+            if primary_sent is False:
+                self.last_apply_issue = (
+                    f"Failed to apply hardware PID: {self.bridge.last_error or 'unknown write error'}"
+                )
+                return
+            self.current_pid = dict(primary_pid)
+            if secondary_pid is not None:
+                secondary_sent = self.bridge.send_profile_command(
+                    "SET2",
+                    secondary_pid=secondary_pid,
+                )
+                if secondary_sent is False:
+                    self.last_apply_issue = (
+                        "Primary PID was applied, but controller 2 update failed: "
+                        f"{self.bridge.last_error or 'unknown write error'}"
+                    )
+                    return
+                self.current_secondary_pid = dict(secondary_pid)
+            return
+
         cmd = f"SET P:{primary_pid['p']} I:{primary_pid['i']} D:{primary_pid['d']}"
         primary_sent = self.bridge.send_command(cmd)
         if primary_sent is False:

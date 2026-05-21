@@ -2,22 +2,39 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from hw.profiles import (
+    DEFAULT_HARDWARE_PROFILE,
+    get_hardware_board_family,
+    get_hardware_profile_note,
+    is_dual_controller_profile,
+    normalize_hardware_profile,
+)
+
 def build_hardware_prompt_context(
     serial_port: str,
     secondary_pid: Optional[Dict[str, float]] = None,
+    *,
+    hardware_profile: str = DEFAULT_HARDWARE_PROFILE,
 ) -> Dict[str, Any]:
+    normalized_profile = normalize_hardware_profile(hardware_profile)
+    dual_controller = is_dual_controller_profile(normalized_profile)
     context = {
         "source": "serial_hardware",
         "serial_port": serial_port,
+        "hardware_profile": normalized_profile,
+        "board_family": get_hardware_board_family(normalized_profile),
+        "hardware_profile_note": get_hardware_profile_note(normalized_profile),
         "controller_output_signal": "PWM",
         "pwm_signal_available": True,
         "tuning_style": "conservative_hardware_safe",
         "per_round_guardrail_hint": "Keep P within about 3x the current value, and keep I/D within about 4x. Prefer smaller moves near stability.",
     }
-    if secondary_pid is not None:
-        context["controller_count"] = 2
+    controller_count = 2 if dual_controller or secondary_pid is not None else 1
+    context["controller_count"] = controller_count
+    if controller_count > 1:
         context["controller_structure"] = "dual_controller"
         context["controller_2_label"] = "controller_2"
+    if secondary_pid is not None:
         context["controller_2_pid"] = dict(secondary_pid)
     return context
 
