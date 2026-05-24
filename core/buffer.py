@@ -122,11 +122,42 @@ class AdvancedDataBuffer:
         )
         lines.append("")
         lines.append(f"## 时间序列数据摘要 (采样 {len(sampled_data)} 点):")
-        lines.append("SimTime(ms), Input, PWM, Error")
+        dual_axis_keys = (
+            "target_x",
+            "target_y",
+            "offset_x",
+            "offset_y",
+            "servo_x",
+            "servo_y",
+        )
+        include_dual_axis = any(
+            any(key in d for key in dual_axis_keys) for d in sampled_data
+        )
+        if include_dual_axis:
+            lines.append(
+                "SimTime(ms), Input, PWM, Error, TargetX, TargetY, OffsetX, OffsetY, ServoX, ServoY"
+            )
+        else:
+            lines.append("SimTime(ms), Input, PWM, Error")
 
         for d in sampled_data:
-            lines.append(
-                f"{d.get('timestamp', 0):.0f}, {d.get('input', 0):.2f}, {d.get('pwm', 0):.1f}, {d.get('error', 0):.2f}"
+            base_values = (
+                f"{d.get('timestamp', 0):.0f}, "
+                f"{d.get('input', 0):.2f}, "
+                f"{d.get('pwm', 0):.1f}, "
+                f"{d.get('error', 0):.2f}"
             )
+            if include_dual_axis:
+                lines.append(
+                    f"{base_values}, "
+                    f"{d.get('target_x', '')}, "
+                    f"{d.get('target_y', '')}, "
+                    f"{d.get('offset_x', '')}, "
+                    f"{d.get('offset_y', '')}, "
+                    f"{d.get('servo_x', '')}, "
+                    f"{d.get('servo_y', '')}"
+                )
+            else:
+                lines.append(base_values)
 
         return "\n".join(lines)

@@ -667,6 +667,35 @@ class BufferTests(unittest.TestCase):
         self.assertIn("0.4", text)
         self.assertIn("0.08", text)
 
+    def test_to_prompt_data_includes_dual_axis_hardware_fields_when_present(self):
+        buf = AdvancedDataBuffer(max_size=5)
+        buf.add(
+            {
+                "timestamp": 1,
+                "setpoint": 123.0,
+                "input": 750.0,
+                "pwm": 6.0,
+                "error": -627.0,
+                "target_x": 123,
+                "target_y": 456,
+                "offset_x": 43,
+                "offset_y": 396,
+                "servo_x": 750.0,
+                "servo_y": 480.0,
+            }
+        )
+
+        text = buf.to_prompt_data()
+
+        self.assertIn("TargetX", text)
+        self.assertIn("TargetY", text)
+        self.assertIn("OffsetX", text)
+        self.assertIn("OffsetY", text)
+        self.assertIn("ServoX", text)
+        self.assertIn("ServoY", text)
+        self.assertIn("123", text)
+        self.assertIn("456", text)
+
 
 class SimulatorStepTests(unittest.TestCase):
     def test_constants_reasonable(self):

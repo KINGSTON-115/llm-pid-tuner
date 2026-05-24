@@ -91,6 +91,34 @@ class DemoSerialBridgeTests(unittest.TestCase):
         self.assertEqual(data["servo_y"], 480)
         self.assertEqual(data["pwm"], 6.0)
 
+    def test_stm32_status_snapshot_accumulates_line_by_line(self):
+        bridge = SerialBridge(DEMO_SERIAL_PORT, 115200, emit_console=False)
+        bridge.hardware_profile = "stm32f407_openmv"
+
+        lines = [
+            "Status:",
+            "pid.x = 0.310 0.110 0.000",
+            "pid.y = 0.280 0.110 0.000",
+            "target = (123,456)",
+            "servo.x = 750",
+            "servo.y = 480",
+            "servo.delta = 6",
+        ]
+
+        partial = [bridge.parse_data(line) for line in lines[:-1]]
+        data = bridge.parse_data(lines[-1])
+
+        self.assertEqual(partial, [None, None, None, None, None, None])
+        self.assertIsNotNone(data)
+        self.assertEqual(data["sample_kind"], "status_snapshot")
+        self.assertAlmostEqual(data["p"], 0.31, places=3)
+        self.assertAlmostEqual(data["p2"], 0.28, places=3)
+        self.assertAlmostEqual(data["setpoint"], 123.0, places=3)
+        self.assertAlmostEqual(data["input"], 750.0, places=3)
+        self.assertEqual(data["target_y"], 456)
+        self.assertEqual(data["servo_y"], 480)
+        self.assertEqual(data["pwm"], 6.0)
+
     def test_openmv_target_messages_are_normalized(self):
         bridge = SerialBridge(DEMO_SERIAL_PORT, 115200, emit_console=False)
         bridge.hardware_profile = "stm32f407_openmv"
@@ -131,6 +159,51 @@ class DemoSerialBridgeTests(unittest.TestCase):
         self.assertAlmostEqual(data["setpoint"], 1500.0, places=3)
         self.assertAlmostEqual(data["input"], 1450.0, places=3)
         self.assertAlmostEqual(data["error"], 50.0, places=3)
+
+    def test_datavision_oversized_frame_is_dropped_and_resyncs(self):
+        bridge = SerialBridge(DEMO_SERIAL_PORT, 115200, emit_console=False)
+        valid_frame = _make_datavision_frame(0x02, 0x01, 1450.0)
+        oversized_frame = (
+            struct.pack("<I", 0x59485A53)
+            + b"\x01"
+            + struct.pack("<I", 129)
+            + b"\x02"
+            + b"\x00\x00\x00\x00"
+        )
+        bridge._datavision_buffer.extend(oversized_frame + valid_frame)
+
+        self.assertIsNone(bridge._extract_datavision_frame())
+        self.assertEqual(bridge._extract_datavision_frame(), valid_frame)
+
+    def test_csv_rejects_invalid_required_numeric_fields(self):
+        bridge = SerialBridge(DEMO_SERIAL_PORT, 115200, emit_console=False)
+
+        for index in range(5):
+            fields = ["1", "100", "90", "40", "10"]
+            fields[index] = "not-a-number"
+
+            with self.subTest(field=index):
+                self.assertIsNone(bridge.parse_data(",".join(fields)))
+
+    def test_csv_rejects_invalid_present_optional_pid_fields(self):
+        bridge = SerialBridge(DEMO_SERIAL_PORT, 115200, emit_console=False)
+
+        for index in range(5, 11):
+            fields = ["1", "100", "90", "40", "10", "1.0", "0.1", "0.05", "2.0", "0.2", "0.1"]
+            fields[index] = "not-a-number"
+
+            with self.subTest(field=index):
+                self.assertIsNone(bridge.parse_data(",".join(fields)))
+
+    def test_csv_preserves_defaults_for_missing_optional_pid_fields(self):
+        bridge = SerialBridge(DEMO_SERIAL_PORT, 115200, emit_console=False)
+
+        data = bridge.parse_data("1,100,90,40,10")
+
+        self.assertIsNotNone(data)
+        self.assertAlmostEqual(data["p"], 1.0, places=3)
+        self.assertAlmostEqual(data["i"], 0.1, places=3)
+        self.assertAlmostEqual(data["d"], 0.05, places=3)
 
     def test_stm32_profile_commands_emit_config_syntax(self):
         bridge = SerialBridge(DEMO_SERIAL_PORT, 115200, emit_console=False)

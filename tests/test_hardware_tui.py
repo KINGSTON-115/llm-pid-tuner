@@ -793,6 +793,29 @@ class HardwareTuiLoopTests(unittest.TestCase):
             )
         )
 
+    def test_mspm0_apply_pid_reports_read_only_without_changing_cached_pid(self):
+        class Mspm0Bridge:
+            hardware_profile = "mspm0_datavision"
+            last_error = ""
+
+            def send_profile_command(self, *_args, **_kwargs):
+                raise AssertionError("MSPM0 telemetry-only profile must not write PID")
+
+            def disconnect(self):
+                return None
+
+        env = tuner.HardwareEnv(
+            Mspm0Bridge(),
+            {"p": 1.0, "i": 0.1, "d": 0.05},
+        )
+
+        env.apply_pid({"p": 2.0, "i": 0.2, "d": 0.1})
+        current_pid, secondary_pid = env.get_current_pid()
+
+        self.assertEqual(current_pid, {"p": 1.0, "i": 0.1, "d": 0.05})
+        self.assertIsNone(secondary_pid)
+        self.assertIn("read-only", env.last_apply_issue)
+
     def test_hardware_env_uses_fixed_sampling_thresholds(self):
         class EmptyBridge:
             def read_line(self):

@@ -35,6 +35,7 @@ DEMO_SERIAL_PORT_ALIASES = {
 }
 
 _DATAVISION_FRAME_HEADER = struct.pack("<I", 0x59485A53)
+_DATAVISION_MAX_FRAME_LEN = 128
 _OPENMV_COMPACT_RE = re.compile(r"^T:(-?\d+),(-?\d+)$", re.IGNORECASE)
 _OPENMV_TARGET_RE = re.compile(
     r"^TARGET:(-?\d+),(-?\d+),CENTER:(-?\d+),(-?\d+),OFFSET:(-?\d+),(-?\d+)$",
@@ -77,6 +78,16 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return int(default)
+
+
+def _parse_required_float(value: str) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
 
 
 class _DemoSerialDevice:
@@ -165,6 +176,7 @@ class SerialBridge:
         self._sample_index = 0
         self._datavision_buffer = bytearray()
         self._datavision_pending: Dict[int, Dict[str, float]] = {}
+        self._stm32_status_snapshot: Optional[Dict[str, Any]] = None
 
     def connect(self) -> bool:
         try:
@@ -231,7 +243,7 @@ class SerialBridge:
             return None
 
         frame_len = int(struct.unpack_from("<I", buffer, 5)[0])
-        if frame_len < 11:
+        if frame_len < 11 or frame_len > _DATAVISION_MAX_FRAME_LEN:
             del buffer[:1]
             return None
 
@@ -337,25 +349,39 @@ class SerialBridge:
             return None
 
         try:
+            values = [_parse_required_float(part) for part in parts[:5]]
+            if any(value is None for value in values):
+                return None
+
             sample = self._make_base_sample("csv")
             sample.update(
                 {
-                    "timestamp": _safe_float(parts[0]),
-                    "setpoint": _safe_float(parts[1]),
-                    "input": _safe_float(parts[2]),
-                    "pwm": _safe_float(parts[3]),
-                    "error": _safe_float(parts[4]),
-                    "p": _safe_float(parts[5], sample["p"]) if len(parts) > 5 else sample["p"],
-                    "i": _safe_float(parts[6], sample["i"]) if len(parts) > 6 else sample["i"],
-                    "d": _safe_float(parts[7], sample["d"]) if len(parts) > 7 else sample["d"],
+                    "timestamp": values[0],
+                    "setpoint": values[1],
+                    "input": values[2],
+                    "pwm": values[3],
+                    "error": values[4],
                 }
             )
+            for part_index, sample_key in ((5, "p"), (6, "i"), (7, "d")):
+                if len(parts) > part_index:
+                    value = _parse_required_float(parts[part_index])
+                    if value is None:
+                        return None
+                    sample[sample_key] = value
             if len(parts) > 10:
+                secondary_values = [
+                    _parse_required_float(parts[8]),
+                    _parse_required_float(parts[9]),
+                    _parse_required_float(parts[10]),
+                ]
+                if any(value is None for value in secondary_values):
+                    return None
                 sample.update(
                     {
-                        "p2": _safe_float(parts[8]),
-                        "i2": _safe_float(parts[9]),
-                        "d2": _safe_float(parts[10]),
+                        "p2": secondary_values[0],
+                        "i2": secondary_values[1],
+                        "d2": secondary_values[2],
                     }
                 )
             self._sample_index += 1
@@ -480,26 +506,46 @@ class SerialBridge:
         sample.setdefault("source_protocol", "stm32_status")
         return sample
 
+    def _merge_stm32_snapshot_line(self, sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        snapshot = self._stm32_status_snapshot
+        if snapshot is None:
+            snapshot = self._make_base_sample("status_snapshot")
+            self._stm32_status_snapshot = snapshot
+
+        snapshot.update(sample)
+        required_keys = {"target_x", "target_y", "servo_x", "servo_y", "servo_delta"}
+        if not required_keys.issubset(snapshot):
+            return None
+
+        complete = self._finalize_stm32_snapshot(dict(snapshot))
+        self._stm32_status_snapshot = None
+        self._sample_index += 1
+        self._update_pid_cache(complete)
+        return complete
+
     def _parse_stm32_sample(self, text: str) -> Optional[Dict[str, Any]]:
         profile = normalize_hardware_profile(self.hardware_profile)
         if profile != "stm32f407_openmv":
             return None
 
         stripped = text.strip()
-        if not stripped or stripped.lower() in {"status:", "current config:"}:
+        if not stripped:
+            return None
+        if stripped.lower() in {"status:", "current config:"}:
+            self._stm32_status_snapshot = self._make_base_sample("status_snapshot")
             return None
 
         sample: Optional[Dict[str, Any]] = None
 
         target_match = _STM32_TARGET_RE.match(stripped)
         if target_match:
-            sample = sample or self._make_base_sample("status_snapshot")
+            sample = sample or {}
             sample["target_x"] = int(target_match.group(1))
             sample["target_y"] = int(target_match.group(2))
 
         servo_match = _STM32_SERVO_RE.match(stripped)
         if servo_match:
-            sample = sample or self._make_base_sample("status_snapshot")
+            sample = sample or {}
             axis = servo_match.group(1).lower()
             value = _safe_float(servo_match.group(2))
             if axis == "x":
@@ -511,7 +557,7 @@ class SerialBridge:
 
         pid_pair_match = _STM32_PID_PAIR_RE.match(stripped)
         if pid_pair_match:
-            sample = sample or self._make_base_sample("status_snapshot")
+            sample = sample or {}
             axis = pid_pair_match.group(1).lower()
             gains = {
                 "p": _safe_float(pid_pair_match.group(2)),
@@ -525,7 +571,7 @@ class SerialBridge:
 
         pid_gain_match = _STM32_PID_GAIN_RE.match(stripped)
         if pid_gain_match:
-            sample = sample or self._make_base_sample("status_snapshot")
+            sample = sample or {}
             axis = pid_gain_match.group(1).lower()
             gain_name = pid_gain_match.group(2).lower()
             value = _safe_float(pid_gain_match.group(3))
@@ -537,12 +583,12 @@ class SerialBridge:
 
         rect_match = _STM32_RECT_RE.match(stripped)
         if rect_match:
-            sample = sample or self._make_base_sample("status_snapshot")
+            sample = sample or {}
             sample["rect_detected"] = bool(int(rect_match.group(1)))
 
         imu_match = _STM32_IMU_RE.match(stripped)
         if imu_match:
-            sample = sample or self._make_base_sample("status_snapshot")
+            sample = sample or {}
             sample[f"imu_{imu_match.group(1).lower()}"] = _safe_float(imu_match.group(2))
 
         if sample is None:
@@ -550,11 +596,7 @@ class SerialBridge:
 
         sample["source_protocol"] = "stm32_status"
         sample["sample_kind"] = "status_snapshot"
-        if "target_x" in sample or "servo_x" in sample or "target_y" in sample or "servo_y" in sample:
-            sample = self._finalize_stm32_snapshot(sample)
-        self._sample_index += 1
-        self._update_pid_cache(sample)
-        return sample
+        return self._merge_stm32_snapshot_line(sample)
 
     def _parse_multiline_text(self, text: str) -> Optional[Dict[str, Any]]:
         combined: Dict[str, Any] = {}

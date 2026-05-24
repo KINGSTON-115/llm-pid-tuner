@@ -238,9 +238,10 @@ class HardwareEnv(BaseTuningEnvironment):
         )
 
         if hardware_profile == "mspm0_datavision":
-            self.current_pid = dict(primary_pid)
-            if secondary_pid is not None:
-                self.current_secondary_pid = dict(secondary_pid)
+            self.last_apply_issue = (
+                "MSPM0 DataVision profile is read-only: PID write-back is disabled "
+                "until a command protocol is confirmed."
+            )
             return
 
         if hasattr(self.bridge, "send_profile_command"):
