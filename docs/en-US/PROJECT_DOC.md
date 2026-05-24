@@ -169,6 +169,14 @@ Field descriptions:
 
 If your hardware protocol differs, the recommended approach is to align your firmware with `firmware.cpp` rather than patching the host-side code.
 
+Hardware mode can also select a built-in protocol adapter through `HARDWARE_PROFILE`:
+
+- `generic_serial_csv`: the default profile, using the CSV protocol above.
+- `stm32f407_openmv`: STM32F407 + OpenMV text telemetry, including `Status:` snapshots, `T:x,y`, and `N`.
+- `mspm0_datavision`: MSPM0 DataVision binary telemetry frames. This profile is read-only for now and does not send PID values back to hardware until a write-back protocol is confirmed.
+
+If you do not need a special hardware protocol, keep `HARDWARE_PROFILE=generic_serial_csv`; the existing workflow stays unchanged.
+
 ## 6. Key Design Principles
 
 ### 6.1 Prefer usability over aggression

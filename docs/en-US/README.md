@@ -68,6 +68,14 @@ Expected CSV format:
 timestamp_ms,setpoint,input,pwm,error,p,i,d
 ```
 
+If you use one of the built-in hardware profile adapters, set `HARDWARE_PROFILE` explicitly in `config.json`:
+
+- `generic_serial_csv`: default CSV serial telemetry, suitable for `firmware.cpp` and demo mode
+- `stm32f407_openmv`: STM32F407 + OpenMV aiming/targeting telemetry, including `Status:` snapshots, `T:x,y`, and `N`
+- `mspm0_datavision`: MSPM0 DataVision telemetry, currently read-only and does not write PID values back to hardware
+
+If you omit this field, the app uses `generic_serial_csv`.
+
 ### 3. Run the exe once
 
 Double-click `llm-pid-tuner.exe`.
@@ -86,6 +94,7 @@ At minimum, start with the hardware-mode fields below:
 {
   "SERIAL_PORT": "AUTO",
   "BAUD_RATE": 115200,
+  "HARDWARE_PROFILE": "generic_serial_csv",
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
   "LLM_MODEL_NAME": "gpt-4o",
@@ -158,6 +167,7 @@ If you prefer starting from a template, check `config.example.json`.
 {
   "SERIAL_PORT": "AUTO",
   "BAUD_RATE": 115200,
+  "HARDWARE_PROFILE": "generic_serial_csv",
   "LLM_API_KEY": "sk-your-key",
   "LLM_API_BASE_URL": "https://api.openai.com/v1",
   "LLM_MODEL_NAME": "gpt-4o",
@@ -204,7 +214,7 @@ If your Simulink model is not the simplest "single standard PID Controller block
 
 | Group | When needed | Fields | Notes |
 | :---- | :---------- | :----- | :---- |
-| Serial hardware | Real hardware tuning | `SERIAL_PORT` `BAUD_RATE` | Start with `SERIAL_PORT: "AUTO"` and match the firmware baud rate |
+| Serial hardware | Real hardware tuning | `SERIAL_PORT` `BAUD_RATE` `HARDWARE_PROFILE` | Start with `SERIAL_PORT: "AUTO"` and match the firmware baud rate. Keep `HARDWARE_PROFILE=generic_serial_csv` for regular CSV firmware |
 | LLM basics | Required in every mode | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | This is the core set needed for any tuning run |
 | Tuning behavior | Optional | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` `PID_MAX_INCREASE_RATIO` `GOOD_ENOUGH_AVG_ERROR` `GOOD_ENOUGH_STEADY_STATE_ERROR` `GOOD_ENOUGH_OVERSHOOT` `REQUIRED_STABLE_ROUNDS` | Leave defaults unless you are tuning strategy or debugging. `PID_MAX_INCREASE_RATIO` limits the maximum multiplier for one adjustment. `GOOD_ENOUGH_*` defines the "good enough" thresholds, and `REQUIRED_STABLE_ROUNDS` is the number of consecutive stable evaluations before stopping. The default is 3. |
 | Simulink | MATLAB/Simulink mode only | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`, plus optional `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | Start with the minimum six fields, then add compatibility fields only when needed |
