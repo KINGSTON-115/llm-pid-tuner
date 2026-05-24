@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sim.prompt_context import (
     _first_nonempty_text,
+    build_hardware_prompt_context,
     build_python_sim_prompt_context,
     build_simulink_prompt_context,
     default_prompt_context_for_mode,
@@ -38,6 +39,32 @@ class BuildPythonSimContextTests(unittest.TestCase):
         self.assertEqual(ctx["source"], "built_in_python_heating_simulator")
         self.assertTrue(ctx["pwm_signal_available"])
         self.assertIn("per_round_guardrail_hint", ctx)
+
+
+class BuildHardwareContextTests(unittest.TestCase):
+    def test_stm32_profile_sets_board_family_and_dual_controller_note(self):
+        ctx = build_hardware_prompt_context(
+            "COM9",
+            None,
+            hardware_profile="stm32f407_openmv",
+        )
+
+        self.assertEqual(ctx["hardware_profile"], "stm32f407_openmv")
+        self.assertEqual(ctx["board_family"], "stm32f407")
+        self.assertEqual(ctx["controller_count"], 2)
+        self.assertIn("OpenMV", ctx["hardware_profile_note"])
+        self.assertIn("dual", ctx["hardware_profile_note"])
+
+    def test_mspm0_profile_marks_telemetry_first_note(self):
+        ctx = build_hardware_prompt_context(
+            "COM8",
+            None,
+            hardware_profile="mspm0_datavision",
+        )
+
+        self.assertEqual(ctx["hardware_profile"], "mspm0_datavision")
+        self.assertEqual(ctx["board_family"], "mspm0")
+        self.assertIn("telemetry", ctx["hardware_profile_note"])
 
 
 class BuildSimulinkContextTests(unittest.TestCase):

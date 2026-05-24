@@ -31,6 +31,7 @@ class ConfigLoadTests(unittest.TestCase):
         required_keys = [
             "SERIAL_PORT",
             "BAUD_RATE",
+            "HARDWARE_PROFILE",
             "LLM_API_KEY",
             "LLM_API_BASE_URL",
             "LLM_MODEL_NAME",
@@ -335,6 +336,25 @@ class PromptSelectionTests(unittest.TestCase):
         self.assertIn("controller_1、controller_2、status", prompt)
         self.assertNotIn("tuning_action、p、i、d、status", prompt)
         self.assertIn("双控制器调参策略", prompt)
+
+    def test_hardware_user_prompt_carries_profile_metadata(self):
+        prompt = build_user_prompt(
+            "## Current Status\n- Current PID: P=1.0, I=0.1, D=0.05",
+            "No tuning history yet.",
+            tuning_mode="hardware",
+            prompt_context={
+                "serial_port": "COM9",
+                "hardware_profile": "stm32f407_openmv",
+                "board_family": "stm32f407",
+                "hardware_profile_note": "STM32F407 status console with OpenMV target stream.",
+                "controller_count": 2,
+            },
+        )
+
+        self.assertIn("hardware profile: stm32f407_openmv", prompt)
+        self.assertIn("board family: stm32f407", prompt)
+        self.assertIn("OpenMV target stream", prompt)
+        self.assertIn("controller_1、controller_2、status", prompt)
 
     def test_simulink_user_prompt_uses_consistent_five_percent_target(self):
         prompt = build_user_prompt(
@@ -646,6 +666,35 @@ class BufferTests(unittest.TestCase):
         self.assertIn("2.5", text)
         self.assertIn("0.4", text)
         self.assertIn("0.08", text)
+
+    def test_to_prompt_data_includes_dual_axis_hardware_fields_when_present(self):
+        buf = AdvancedDataBuffer(max_size=5)
+        buf.add(
+            {
+                "timestamp": 1,
+                "setpoint": 123.0,
+                "input": 750.0,
+                "pwm": 6.0,
+                "error": -627.0,
+                "target_x": 123,
+                "target_y": 456,
+                "offset_x": 43,
+                "offset_y": 396,
+                "servo_x": 750.0,
+                "servo_y": 480.0,
+            }
+        )
+
+        text = buf.to_prompt_data()
+
+        self.assertIn("TargetX", text)
+        self.assertIn("TargetY", text)
+        self.assertIn("OffsetX", text)
+        self.assertIn("OffsetY", text)
+        self.assertIn("ServoX", text)
+        self.assertIn("ServoY", text)
+        self.assertIn("123", text)
+        self.assertIn("456", text)
 
 
 class SimulatorStepTests(unittest.TestCase):

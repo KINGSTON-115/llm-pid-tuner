@@ -259,7 +259,11 @@ class HardwareTuiLoopTests(unittest.TestCase):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
+                    {
+                        "BUFFER_SIZE": 3,
+                        "MAX_TUNING_ROUNDS": 1,
+                        "HARDWARE_PROFILE": "stm32f407_openmv",
+                    },
                     clear=False,
                 ):
                     result = tuner._run_hardware_tuning_loop(
@@ -290,6 +294,12 @@ class HardwareTuiLoopTests(unittest.TestCase):
             captured["prompt_context"]["user_goal_priority"],
             "low_overshoot",
         )
+        self.assertEqual(
+            captured["prompt_context"]["hardware_profile"],
+            "stm32f407_openmv",
+        )
+        self.assertEqual(captured["prompt_context"]["board_family"], "stm32f407")
+        self.assertEqual(captured["prompt_context"]["controller_count"], 2)
 
     def test_hardware_loop_sends_set2_when_llm_returns_dual_controller_result(self):
         sent_commands: list[str] = []
@@ -782,6 +792,29 @@ class HardwareTuiLoopTests(unittest.TestCase):
                 if event.get("type") == EVENT_LIFECYCLE
             )
         )
+
+    def test_mspm0_apply_pid_reports_read_only_without_changing_cached_pid(self):
+        class Mspm0Bridge:
+            hardware_profile = "mspm0_datavision"
+            last_error = ""
+
+            def send_profile_command(self, *_args, **_kwargs):
+                raise AssertionError("MSPM0 telemetry-only profile must not write PID")
+
+            def disconnect(self):
+                return None
+
+        env = tuner.HardwareEnv(
+            Mspm0Bridge(),
+            {"p": 1.0, "i": 0.1, "d": 0.05},
+        )
+
+        env.apply_pid({"p": 2.0, "i": 0.2, "d": 0.1})
+        current_pid, secondary_pid = env.get_current_pid()
+
+        self.assertEqual(current_pid, {"p": 1.0, "i": 0.1, "d": 0.05})
+        self.assertIsNone(secondary_pid)
+        self.assertIn("read-only", env.last_apply_issue)
 
     def test_hardware_env_uses_fixed_sampling_thresholds(self):
         class EmptyBridge:
