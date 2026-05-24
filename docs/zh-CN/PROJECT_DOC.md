@@ -171,6 +171,14 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 如果你的硬件协议和这个不一致，优先建议从 `firmware.cpp` 同步，而不是在上位机里临时打补丁。
 
+硬件模式还支持通过 `HARDWARE_PROFILE` 选择内置协议适配器：
+
+- `generic_serial_csv`：默认值，继续使用上面的 CSV 协议。
+- `stm32f407_openmv`：适配 STM32F407 + OpenMV 文本遥测，包括 `Status:` 快照、`T:x,y` 和 `N`。
+- `mspm0_datavision`：适配 MSPM0 DataVision 二进制遥测帧。当前为只读遥测模式，在确认写回协议前不会向硬件发送 PID 参数。
+
+如果没有特殊硬件协议需求，请保持 `HARDWARE_PROFILE=generic_serial_csv`，这样原有使用方式不变。
+
 ## 6. 关键设计取向
 
 ### 6.1 优先可用，而不是盲目激进

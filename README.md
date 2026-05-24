@@ -99,11 +99,11 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 如果你不想自己适配协议，**最省事的办法就是直接从 `firmware.cpp` 开始。**
 
-如果你要对接本仓库里这三套已经验证过的工程，建议在 `config.json` 里明确指定 `HARDWARE_PROFILE`：
+如果你要对接这些已知协议格式，可以在 `config.json` 里明确指定 `HARDWARE_PROFILE`：
 
 - `generic_serial_csv`：默认 CSV 串口数据，适合 `firmware.cpp` 和演示模式
 - `stm32f407_openmv`：STM32F407 + OpenMV 瞄准链路，支持 `Status:` 文本、`T:x,y` 和 `N`
-- `mspm0_datavision`：MSPM0 DataVision 采样链路，当前按遥测优先处理，不默认写回参数
+- `mspm0_datavision`：MSPM0 DataVision 采样链路，当前是只读遥测模式，不向硬件写回 PID 参数
 
 ### 第 3 步：第一次运行 exe
 
@@ -252,7 +252,7 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 | 分类 | 什么时候需要 | 字段 | 说明 |
 | :--- | :--- | :--- | :--- |
-| 硬件串口 | 真实硬件调参 | `SERIAL_PORT` `BAUD_RATE` | `SERIAL_PORT` 不确定先填 `AUTO`，`BAUD_RATE` 要和固件一致 |
+| 硬件串口 | 真实硬件调参 | `SERIAL_PORT` `BAUD_RATE` `HARDWARE_PROFILE` | `SERIAL_PORT` 不确定先填 `AUTO`，`BAUD_RATE` 要和固件一致；普通 CSV 固件保持 `HARDWARE_PROFILE=generic_serial_csv` |
 | LLM 基础 | 所有模式都需要 | `LLM_API_KEY` `LLM_API_BASE_URL` `LLM_MODEL_NAME` `LLM_PROVIDER` | 这是最核心的一组配置，不填就无法调参 |
 | 调参行为 | 想微调策略时再改 | `BUFFER_SIZE` `MIN_ERROR_THRESHOLD` `MAX_TUNING_ROUNDS` `LLM_REQUEST_TIMEOUT` `LLM_DEBUG_OUTPUT` `PID_MAX_INCREASE_RATIO` `GOOD_ENOUGH_AVG_ERROR` `GOOD_ENOUGH_STEADY_STATE_ERROR` `GOOD_ENOUGH_OVERSHOOT` `REQUIRED_STABLE_ROUNDS` | 新手建议先保持默认，只有在采样不够、网络慢或需要排查日志时再动。`PID_MAX_INCREASE_RATIO` 用于限制单次参数调整的最大倍数；`GOOD_ENOUGH_*` 定义“已经够好”的阈值；`REQUIRED_STABLE_ROUNDS` 是连续稳定轮数，默认 3 轮。 |
 | Simulink | 只在 MATLAB/Simulink 模式下需要 | `MATLAB_MODEL_PATH` `MATLAB_PID_BLOCK_PATH` `MATLAB_ROOT` `MATLAB_OUTPUT_SIGNAL` `MATLAB_SIM_STEP_TIME` `MATLAB_SETPOINT`，以及按需填写 `MATLAB_CONTROL_SIGNAL` `MATLAB_SETPOINT_BLOCK` `MATLAB_PID_BLOCK_PATHS` `MATLAB_PID_BLOCK_PATH_2` `MATLAB_P/I/D_BLOCK_PATH(_2)` | 最小 6 项先跑通，复杂模型再逐步补充兼容字段 |
