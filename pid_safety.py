@@ -18,9 +18,9 @@ from typing import Any, Dict, List, Mapping, Tuple
 PID_KEYS = ("p", "i", "d")
 
 DEFAULT_PID_LIMITS: Dict[str, Dict[str, float]] = {
-    "p": {"min": 0.0, "max": 100.0, "max_increase_ratio": 3.0},
-    "i": {"min": 0.0, "max":  30.0, "max_increase_ratio": 4.0},
-    "d": {"min": 0.0, "max":  20.0, "max_increase_ratio": 4.0},
+    "p": {"min": 0.0, "max": 1000.0, "max_increase_ratio": 3.0},
+    "i": {"min": 0.0, "max":  250.0, "max_increase_ratio": 4.0},
+    "d": {"min": 0.0, "max":  250.0, "max_increase_ratio": 4.0},
 }
 
 PYTHON_SIM_PID_LIMITS: Dict[str, Dict[str, float]] = {

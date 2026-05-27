@@ -26,6 +26,16 @@ from pid_safety import adapt_simulink_pid_limits, get_pid_limits, is_good_enough
 from sim.model import CONTROL_INTERVAL, INITIAL_TEMP, SETPOINT, HeatingSimulator
 
 
+class PIDSafetyLimitTests(unittest.TestCase):
+    def test_default_hardware_pid_limits_allow_larger_integral_gain(self):
+        limits = get_pid_limits()
+
+        self.assertEqual(limits["p"]["max"], 1000.0)
+        self.assertEqual(limits["i"]["max"], 250.0)
+        self.assertEqual(limits["d"]["max"], 250.0)
+        self.assertEqual(limits["i"]["max_increase_ratio"], 4.0)
+
+
 class ConfigLoadTests(unittest.TestCase):
     def test_defaults_present(self):
         required_keys = [
