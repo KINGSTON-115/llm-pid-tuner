@@ -54,6 +54,27 @@ def _emit_sample_event(event_sink: Optional[QueueEventSink], data: Dict[str, flo
         ),
     )
 
+def _pid_limits_for_prompt(pid_limits: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, float]]:
+    global_ratio_limit = float(CONFIG.get("PID_MAX_INCREASE_RATIO", 0.0) or 0.0)
+    prompt_limits: Dict[str, Dict[str, float]] = {}
+    for key, value in pid_limits.items():
+        item = dict(value)
+        max_increase_ratio = max(1.0, float(item.get("max_increase_ratio", 1.0)))
+        if global_ratio_limit > 1.0:
+            max_increase_ratio = min(max_increase_ratio, global_ratio_limit)
+        item["max_increase_ratio"] = max_increase_ratio
+        prompt_limits[key] = item
+    return prompt_limits
+
+def _attach_pid_guardrail_context(
+    prompt_context: Optional[Dict[str, Any]],
+    pid_limits: Dict[str, Dict[str, float]],
+) -> Dict[str, Any]:
+    context = dict(prompt_context or {})
+    context["pid_limits"] = _pid_limits_for_prompt(pid_limits)
+    context["pid_limits_are_runtime_enforced"] = True
+    return context
+
 def run_tuning_engine(
     env: BaseTuningEnvironment,
     tuner: LLMTuner,
@@ -92,6 +113,8 @@ def run_tuning_engine(
         )
     else:
         pid_limits = base_pid_limits
+
+    prompt_context = _attach_pid_guardrail_context(prompt_context, pid_limits)
 
     try:
         while session.round_num < CONFIG["MAX_TUNING_ROUNDS"]:
@@ -238,6 +261,7 @@ def run_tuning_engine(
                     ),
                 )
                 prompt_context = _merge_prompt_context(prompt_context, hardware_context)
+                prompt_context = _attach_pid_guardrail_context(prompt_context, pid_limits)
                 
             if llm_mode == "simulink" and hasattr(env, "bridge"):
                 from sim.prompt_context import build_simulink_prompt_context
@@ -277,6 +301,7 @@ def run_tuning_engine(
                     "controller_2_sample_time": getattr(bridge, "controller_2_sample_time", ""),
                     "controller_count": 2 if getattr(bridge, "secondary_pid_block_path", "") else 1,
                 })
+                prompt_context = _attach_pid_guardrail_context(prompt_context, pid_limits)
             
             result = tuner.analyze(
                 prompt_data,

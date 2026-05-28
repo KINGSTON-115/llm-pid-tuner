@@ -31,5 +31,22 @@
     "MATLAB_PID_BLOCK_PATH_2": "",
     "MATLAB_SIM_STEP_TIME": 15.0,
     "MATLAB_SETPOINT": 200.0,
+    "PID_LIMITS": {
+        "default": {
+            "p": {"min": 0.0, "max": 1000.0, "max_increase_ratio": 3.0},
+            "i": {"min": 0.0, "max": 250.0, "max_increase_ratio": 4.0},
+            "d": {"min": 0.0, "max": 250.0, "max_increase_ratio": 4.0}
+        },
+        "python_sim": {
+            "p": {"min": 0.0, "max": 5000.0, "max_increase_ratio": 3.0},
+            "i": {"min": 0.0, "max": 500.0, "max_increase_ratio": 4.0},
+            "d": {"min": 0.0, "max": 500.0, "max_increase_ratio": 4.0}
+        },
+        "simulink": {
+            "p": {"min": 0.0, "max": 5000.0, "max_increase_ratio": 5.0},
+            "i": {"min": 0.0, "max": 500.0, "max_increase_ratio": 6.0},
+            "d": {"min": 0.0, "max": 500.0, "max_increase_ratio": 6.0}
+        }
+    },
     "PID_MAX_INCREASE_RATIO": 0.0
 }

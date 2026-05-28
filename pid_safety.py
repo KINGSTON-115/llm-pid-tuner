@@ -57,9 +57,47 @@ def get_pid_limits(mode: str | None = None) -> Dict[str, Dict[str, float]]:
     elif normalized == "simulink":
         source = SIMULINK_PID_LIMITS
     else:
+        normalized = "default"
         source = DEFAULT_PID_LIMITS
 
-    return {key: dict(value) for key, value in source.items()}
+    limits = {key: dict(value) for key, value in source.items()}
+
+    try:
+        from core.config import CONFIG
+        configured_limits = CONFIG.get("PID_LIMITS", {})
+    except Exception:
+        configured_limits = {}
+
+    if isinstance(configured_limits, Mapping):
+        mode_limits = configured_limits.get(normalized)
+        if isinstance(mode_limits, Mapping):
+            limits = _merge_pid_limits(limits, mode_limits)
+
+    return limits
+
+
+def _merge_pid_limits(
+    defaults: Mapping[str, Mapping[str, float]],
+    overrides: Mapping[str, Any],
+) -> Dict[str, Dict[str, float]]:
+    merged = {key: dict(value) for key, value in defaults.items()}
+    for gain_key in PID_KEYS:
+        raw_gain_limits = overrides.get(gain_key)
+        if not isinstance(raw_gain_limits, Mapping):
+            continue
+        gain_limits = merged[gain_key]
+        for field in ("min", "max", "max_increase_ratio"):
+            if field not in raw_gain_limits:
+                continue
+            value = _to_float(raw_gain_limits.get(field), gain_limits[field])
+            if field == "max":
+                value = max(gain_limits["min"], value)
+            elif field == "max_increase_ratio":
+                value = max(1.0, value)
+            gain_limits[field] = value
+        if gain_limits["max"] < gain_limits["min"]:
+            gain_limits["max"] = gain_limits["min"]
+    return merged
 
 
 def _parse_positive_sample_time(value: Any) -> float | None:

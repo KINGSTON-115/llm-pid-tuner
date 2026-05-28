@@ -259,7 +259,7 @@ class LLMTuner:
         tuning_mode: str = "generic",
         prompt_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
-        system_prompt = get_system_prompt(tuning_mode)
+        system_prompt = get_system_prompt(tuning_mode, prompt_context=prompt_context)
         user_prompt = build_user_prompt(
             prompt_data,
             history_text,

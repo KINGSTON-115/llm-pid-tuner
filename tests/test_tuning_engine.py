@@ -45,9 +45,11 @@ class FakeEnv:
 class CountingTuner:
     def __init__(self):
         self.calls = 0
+        self.prompt_contexts = []
 
     def analyze(self, *_args, **_kwargs):
         self.calls += 1
+        self.prompt_contexts.append(dict(_kwargs.get("prompt_context") or {}))
         return {
             "analysis_summary": "Adjust after a non-good-enough round.",
             "tuning_action": "ADJUST_PID",
@@ -209,6 +211,29 @@ class TuningEngineObservationTests(unittest.TestCase):
 
         self.assertEqual(tuner.calls, 0)
         self.assertEqual(result["completed_reason"], "stable_rounds_reached")
+
+    def test_runtime_pid_limits_are_passed_to_llm_context(self):
+        custom_limits = {
+            "python_sim": {
+                "p": {"min": 0.0, "max": 9.0, "max_increase_ratio": 2.5},
+                "i": {"min": 0.0, "max": 8.0, "max_increase_ratio": 2.0},
+                "d": {"min": 0.0, "max": 7.0, "max_increase_ratio": 1.5},
+            }
+        }
+        _result, tuner, _events = self._run(
+            [slow_samples()],
+            MAX_TUNING_ROUNDS=1,
+            PID_LIMITS=custom_limits,
+            PID_MAX_INCREASE_RATIO=2.0,
+        )
+
+        self.assertEqual(tuner.calls, 1)
+        pid_limits = tuner.prompt_contexts[0]["pid_limits"]
+        self.assertEqual(pid_limits["p"]["max"], 9.0)
+        self.assertEqual(pid_limits["i"]["max"], 8.0)
+        self.assertEqual(pid_limits["d"]["max"], 7.0)
+        self.assertEqual(pid_limits["p"]["max_increase_ratio"], 2.0)
+        self.assertTrue(tuner.prompt_contexts[0]["pid_limits_are_runtime_enforced"])
 
 
 if __name__ == "__main__":
