@@ -22,8 +22,59 @@ from core.tuning_session import (
 )
 from llm.client import JSONStreamFormatter, LLMTuner
 from llm.prompts import build_user_prompt, get_system_prompt, normalize_tuning_mode
-from pid_safety import adapt_simulink_pid_limits, get_pid_limits, is_good_enough
+from pid_safety import apply_pid_guardrails, adapt_simulink_pid_limits, get_pid_limits, is_good_enough
 from sim.model import CONTROL_INTERVAL, INITIAL_TEMP, SETPOINT, HeatingSimulator
+
+
+class PIDSafetyLimitTests(unittest.TestCase):
+    def test_default_hardware_pid_limits_allow_larger_integral_gain(self):
+        limits = get_pid_limits()
+
+        self.assertEqual(limits["p"]["max"], 1000.0)
+        self.assertEqual(limits["i"]["max"], 250.0)
+        self.assertEqual(limits["d"]["max"], 250.0)
+        self.assertEqual(limits["i"]["max_increase_ratio"], 4.0)
+
+    def test_pid_limits_can_be_overridden_from_config(self):
+        configured_limits = {
+            "default": {
+                "p": {"max": 42.0},
+                "i": {"min": 0.1, "max": 12.0, "max_increase_ratio": 2.0},
+            }
+        }
+
+        with patch.dict(core_config.CONFIG, {"PID_LIMITS": configured_limits}, clear=False):
+            limits = get_pid_limits()
+            safe_pid, _notes = apply_pid_guardrails(
+                {"p": 10.0, "i": 1.0, "d": 1.0},
+                {"p": 100.0, "i": 100.0, "d": 100.0},
+                limits=limits,
+            )
+
+        self.assertEqual(limits["p"]["max"], 42.0)
+        self.assertEqual(limits["i"]["min"], 0.1)
+        self.assertEqual(limits["i"]["max"], 12.0)
+        self.assertEqual(limits["i"]["max_increase_ratio"], 2.0)
+        self.assertEqual(limits["d"]["max"], 250.0)
+        self.assertEqual(safe_pid["p"], 30.0)
+        self.assertEqual(safe_pid["i"], 2.0)
+
+    def test_system_prompt_includes_runtime_pid_limits(self):
+        prompt = get_system_prompt(
+            "hardware",
+            prompt_context={
+                "pid_limits": {
+                    "p": {"min": 0.0, "max": 42.0, "max_increase_ratio": 2.0},
+                    "i": {"min": 0.0, "max": 12.0, "max_increase_ratio": 2.0},
+                    "d": {"min": 0.0, "max": 8.0, "max_increase_ratio": 1.5},
+                }
+            },
+        )
+
+        self.assertIn("PID Guardrails", prompt)
+        self.assertIn("P: min=0", prompt)
+        self.assertIn("max=42", prompt)
+        self.assertIn("max increase per round=2x", prompt)
 
 
 class ConfigLoadTests(unittest.TestCase):
@@ -53,6 +104,7 @@ class ConfigLoadTests(unittest.TestCase):
             "MATLAB_SETPOINT_BLOCK",
             "MATLAB_SIM_STEP_TIME",
             "MATLAB_SETPOINT",
+            "PID_LIMITS",
         ]
         for key in required_keys:
             self.assertIn(key, CONFIG, f"CONFIG missing key {key}")

@@ -123,10 +123,48 @@ def normalize_tuning_mode(mode: str | None) -> str:
     return _MODE_ALIASES.get(normalized, "generic")
 
 
-def get_system_prompt(mode: str | None = None) -> str:
+def get_system_prompt(
+    mode: str | None = None,
+    prompt_context: Mapping[str, Any] | None = None,
+) -> str:
     resolved_mode = normalize_tuning_mode(mode)
     mode_notes = _MODE_NOTES.get(resolved_mode, _MODE_NOTES["generic"])
-    return f"{_BASE_SYSTEM_PROMPT}\n\n{mode_notes}"
+    guardrail_section = _build_pid_guardrail_section(prompt_context)
+    sections = [_BASE_SYSTEM_PROMPT, mode_notes]
+    if guardrail_section:
+        sections.append(guardrail_section)
+    return "\n\n".join(sections)
+
+
+def _build_pid_guardrail_section(
+    prompt_context: Mapping[str, Any] | None,
+) -> str:
+    if not prompt_context:
+        return ""
+
+    limits = prompt_context.get("pid_limits")
+    if not isinstance(limits, Mapping):
+        return ""
+
+    lines = [
+        "## PID Guardrails",
+        "- The application enforces these PID bounds before sending values to the plant.",
+        "- Choose PID values inside these bounds; do not rely on the application to clip unsafe output.",
+    ]
+    for key in ("p", "i", "d"):
+        raw_gain_limits = limits.get(key)
+        if not isinstance(raw_gain_limits, Mapping):
+            continue
+        min_value = raw_gain_limits.get("min")
+        max_value = raw_gain_limits.get("max")
+        ratio = raw_gain_limits.get("max_increase_ratio")
+        lines.append(
+            f"- {key.upper()}: min={_stringify_context_value(min_value)}, "
+            f"max={_stringify_context_value(max_value)}, "
+            f"max increase per round={_stringify_context_value(ratio)}x"
+        )
+
+    return "\n".join(lines) if len(lines) > 3 else ""
 
 
 _PRE_TUNING_DIALOG_PROMPTS = {
