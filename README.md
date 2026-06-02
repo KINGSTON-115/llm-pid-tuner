@@ -6,7 +6,7 @@
 > 📺 [B站教程视频](https://b23.tv/WVUuIFb) - 详细视频教程手把手教你使用
 > 📺 [YouTube 教程视频](https://youtu.be/Giruc9kN53Y)
 
-中文 | [English](./docs/en-US/README.md)
+中文 | [English](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md)
 
 [![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
 
@@ -17,9 +17,9 @@
 
 如果你想看 **最新功能、最新教程、最新 Simulink 配置说明**，请直接参考 `dev` 分支文档：
 
-- [最新总览（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/README.md) | [最新总览（英文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md)
-- [最新 Simulink 指南（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/MATLAB_GUIDE.md) | [最新 Simulink 指南（英文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/MATLAB_GUIDE.md)
-- [最新项目说明（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/PROJECT_DOC.md) | [最新项目说明（英文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/PROJECT_DOC.md)
+- [最新总览（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/README.md) | [最新总览（ENGLISH）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md)
+- [最新 Simulink 指南（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/MATLAB_GUIDE.md) | [最新 Simulink 指南（ENGLISH）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/MATLAB_GUIDE.md)
+- [最新项目说明（中文）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/zh-CN/PROJECT_DOC.md) | [最新项目说明（ENGLISH）](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/PROJECT_DOC.md)
 
 如果你只想使用 **当前稳定版 main**，继续阅读本页即可。
 
