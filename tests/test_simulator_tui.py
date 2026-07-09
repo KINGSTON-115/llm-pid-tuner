@@ -7,6 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from queue import Queue
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -18,7 +19,7 @@ if TEXTUAL_AVAILABLE:
     from textual.widgets import RichLog, Static
 
 import simulator
-from core.adapters import SimulinkEnv
+from core.adapters import PythonSimEnv, SimulinkEnv
 from doctor import DoctorCheck
 from sim.model import HeatingSimulator, SETPOINT
 from sim.prompt_context import build_simulink_prompt_context
@@ -121,6 +122,14 @@ class SimulationControllerTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(resumed, [True])
 
+    def test_setpoint_request_is_consumed_once(self):
+        controller = SimulationController()
+
+        controller.request_setpoint(240.0)
+
+        self.assertEqual(controller.consume_setpoint_request(), 240.0)
+        self.assertIsNone(controller.consume_setpoint_request())
+
 
 class SimulinkEnvTests(unittest.TestCase):
     def test_get_current_pid_reads_secondary_bridge_gains_from_secondary_attrs(self):
@@ -138,6 +147,65 @@ class SimulinkEnvTests(unittest.TestCase):
 
         self.assertEqual(primary, {"p": 1.0, "i": 0.1, "d": 0.05})
         self.assertEqual(secondary, {"p": 2.0, "i": 0.2, "d": 0.06})
+
+    def test_collect_samples_applies_requested_setpoint_before_run_step(self):
+        controller = SimulationController()
+        controller.request_setpoint(260.0)
+
+        class FakeBridge:
+            kp = 1.0
+            ki = 0.1
+            kd = 0.05
+            target_steps = 1
+
+            def __init__(self):
+                self.setpoint = 200.0
+                self._last_data = []
+
+            def set_setpoint(self, setpoint):
+                self.setpoint = float(setpoint)
+
+            def run_step(self):
+                self._last_data = [
+                    {
+                        "timestamp": 0.0,
+                        "setpoint": self.setpoint,
+                        "input": 180.0,
+                        "pwm": 0.0,
+                        "error": self.setpoint - 180.0,
+                        "p": self.kp,
+                        "i": self.ki,
+                        "d": self.kd,
+                    }
+                ]
+
+            def get_data(self):
+                return list(self._last_data)
+
+        env = SimulinkEnv(FakeBridge(), 200.0, controller=controller)
+
+        samples = env.collect_samples()
+
+        self.assertEqual(env.get_setpoint(), 260.0)
+        self.assertEqual(samples[0]["setpoint"], 260.0)
+        self.assertIn("260", env.last_setpoint_message)
+
+
+class PythonSimEnvTests(unittest.TestCase):
+    def test_collect_samples_applies_requested_setpoint(self):
+        controller = SimulationController()
+        controller.request_setpoint(240.0)
+        sim = HeatingSimulator(setpoint=200.0, random_seed=3)
+        sim.target_steps = 3
+        env = PythonSimEnv(sim, 200.0, controller=controller)
+
+        samples = env.collect_samples()
+
+        self.assertEqual(env.get_setpoint(), 240.0)
+        self.assertTrue(samples)
+        self.assertEqual(samples[0]["setpoint"], 240.0)
+        self.assertFalse(sim.dynamic_setpoint_enabled)
+        self.assertIn("240", env.last_setpoint_message)
 
 
 class SimulatorLoopTests(unittest.TestCase):
@@ -1569,6 +1637,40 @@ class TextualDashboardTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.state.tuning_done)
             self.assertFalse(app._history_browsing_enabled)
             self.assertIn("q", help_text)
+
+    async def test_change_setpoint_action_queues_controller_request(self):
+        from sim.tui import SimulationTUIApp
+
+        event_queue = Queue()
+        event_sink = QueueEventSink(event_queue)
+        controller = SimulationController()
+        app = SimulationTUIApp(
+            event_queue=event_queue,
+            controller=controller,
+            worker_target=None,
+            event_sink=event_sink,
+            mode_label="Python",
+        )
+        callbacks = []
+        app._worker_thread = SimpleNamespace(is_alive=lambda: True)
+        app._refresh_all = lambda: None
+
+        def fake_push_screen(_screen, callback=None):
+            callbacks.append(callback)
+
+        app.push_screen = fake_push_screen
+
+        app.action_change_setpoint()
+        callbacks[0](245.0)
+
+        self.assertEqual(controller.consume_setpoint_request(), 245.0)
+        self.assertEqual(app.state.current_setpoint, 245.0)
+        self.assertTrue(
+            any(
+                event.get("phase") == "setpoint_requested"
+                for event in app.state.event_history
+            )
+        )
 
 
 if __name__ == "__main__":

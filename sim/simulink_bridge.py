@@ -677,6 +677,10 @@ class SimulinkBridge:
         self.setpoint_block = block_path
         print(f"[Simulink] Synced setpoint {self.setpoint} to {block_path} ({parameter_name}).")
 
+    def set_setpoint(self, setpoint: float) -> None:
+        self.setpoint = float(setpoint)
+        self._apply_model_setpoint()
+
     def _to_float_scalar(self, value: object) -> float:
         session = self._ensure_session()
         if session is not None:

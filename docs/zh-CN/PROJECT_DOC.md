@@ -179,6 +179,8 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 如果没有特殊硬件协议需求，请保持 `HARDWARE_PROFILE=generic_serial_csv`，这样原有使用方式不变。
 
+TUI 运行时支持按 `t` 修改目标值。对默认 `generic_serial_csv` 协议，上位机会发送 `SETPOINT:<value>`，示例 `firmware.cpp` 会据此更新目标值；只读 profile 不会执行 setpoint 写回。
+
 ## 6. 关键设计取向
 
 ### 6.1 优先可用，而不是盲目激进

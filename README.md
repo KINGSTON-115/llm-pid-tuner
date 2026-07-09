@@ -105,6 +105,8 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 - `stm32f407_openmv`：STM32F407 + OpenMV 瞄准链路，支持 `Status:` 文本、`T:x,y` 和 `N`
 - `mspm0_datavision`：MSPM0 DataVision 采样链路，当前是只读遥测模式，不向硬件写回 PID 参数
 
+在 TUI 调参过程中可以按 `t` 输入新的目标值，观察当前 PID 参数面对目标变化时的响应。默认 `generic_serial_csv` / `firmware.cpp` 路径会通过串口发送 `SETPOINT:<value>`；`mspm0_datavision` 仍保持只读。
+
 ### 第 3 步：第一次运行 exe
 
 双击运行 `llm-pid-tuner.exe`。
@@ -186,6 +188,8 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 - 当系统“已经够好”时，会尽量提前停止，避免过调
 
 当一轮评测同时满足 `GOOD_ENOUGH_AVG_ERROR`、`GOOD_ENOUGH_STEADY_STATE_ERROR` 和 `GOOD_ENOUGH_OVERSHOOT` 时，程序会保持当前 PID 参数进入观察轮，而不是继续请求 LLM 改参数。连续 `REQUIRED_STABLE_ROUNDS` 轮评测都稳定后停止，默认是 3 轮；如果观察过程中响应变差，稳定计数会清零并恢复正常调参。
+
+TUI 模式下可以按 `t` 修改运行时目标值，用来测试当前参数对目标值变化的跟踪效果。
 
 你最终需要做的事通常只有一件：**把收敛后的 PID 参数写回你的固件。**
 

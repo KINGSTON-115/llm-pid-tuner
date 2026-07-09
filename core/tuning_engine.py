@@ -31,6 +31,39 @@ def _emit_lifecycle(event_sink: Optional[QueueEventSink], start_time: float, pha
 def _emit_log(event_sink: Optional[QueueEventSink], start_time: float, level: str, message: str) -> None:
     publish_event(event_sink, "log", timestamp=time.time() - start_time, level=level, message=message)
 
+def _emit_setpoint_feedback(
+    env: BaseTuningEnvironment,
+    event_sink: Optional[QueueEventSink],
+    start_time: float,
+    emit_console: bool,
+) -> None:
+    message = str(getattr(env, "last_setpoint_message", "") or "").strip()
+    issue = str(getattr(env, "last_setpoint_issue", "") or "").strip()
+    if message:
+        _console(emit_console, f"[Setpoint] {message}")
+        publish_event(
+            event_sink,
+            "lifecycle",
+            timestamp=time.time() - start_time,
+            phase="setpoint",
+            detail=message,
+            message=message,
+            elapsed_sec=time.time() - start_time,
+        )
+        setattr(env, "last_setpoint_message", "")
+    if issue:
+        _console(emit_console, f"[WARN] {issue}")
+        publish_event(
+            event_sink,
+            "lifecycle",
+            timestamp=time.time() - start_time,
+            phase="setpoint_warning",
+            detail=issue,
+            message=issue,
+            elapsed_sec=time.time() - start_time,
+        )
+        setattr(env, "last_setpoint_issue", "")
+
 def _emit_sample_event(event_sink: Optional[QueueEventSink], data: Dict[str, float]) -> None:
     publish_event(
         event_sink,
@@ -138,6 +171,7 @@ def run_tuning_engine(
             
             session.buffer.reset()
             samples = env.collect_samples()
+            _emit_setpoint_feedback(env, event_sink, start_time, emit_console)
             collect_warning = str(getattr(env, "last_collect_warning", "") or "").strip()
             if collect_warning:
                 _console(emit_console, f"[WARN] {collect_warning}")

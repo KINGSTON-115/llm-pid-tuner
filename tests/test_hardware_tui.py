@@ -10,6 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import tuner
+from hw.profiles import build_profile_commands
 from sim.runtime import (
     EVENT_DECISION,
     EVENT_LIFECYCLE,
@@ -815,6 +816,58 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertEqual(current_pid, {"p": 1.0, "i": 0.1, "d": 0.05})
         self.assertIsNone(secondary_pid)
         self.assertIn("read-only", env.last_apply_issue)
+
+    def test_generic_profile_builds_setpoint_command(self):
+        self.assertEqual(
+            build_profile_commands("generic_serial_csv", "SETPOINT", setpoint=225.0),
+            ["SETPOINT:225"],
+        )
+
+    def test_hardware_env_sends_runtime_setpoint_for_generic_profile(self):
+        calls = []
+
+        class GenericBridge:
+            hardware_profile = "generic_serial_csv"
+            last_error = ""
+
+            def send_profile_command(self, kind, **kwargs):
+                calls.append((kind, kwargs))
+                return True
+
+            def disconnect(self):
+                return None
+
+        env = tuner.HardwareEnv(
+            GenericBridge(),
+            {"p": 1.0, "i": 0.1, "d": 0.05},
+        )
+
+        applied = env.set_setpoint(225.0)
+
+        self.assertTrue(applied)
+        self.assertEqual(calls, [("SETPOINT", {"setpoint": 225.0})])
+        self.assertEqual(env.get_setpoint(), 225.0)
+        self.assertIn("225", env.last_setpoint_message)
+
+    def test_mspm0_setpoint_write_is_rejected(self):
+        class Mspm0Bridge:
+            hardware_profile = "mspm0_datavision"
+            last_error = ""
+
+            def send_profile_command(self, *_args, **_kwargs):
+                raise AssertionError("MSPM0 telemetry-only profile must not write setpoint")
+
+            def disconnect(self):
+                return None
+
+        env = tuner.HardwareEnv(
+            Mspm0Bridge(),
+            {"p": 1.0, "i": 0.1, "d": 0.05},
+        )
+
+        self.assertFalse(env.set_setpoint(225.0))
+        self.assertEqual(env.get_setpoint(), 0.0)
+        self.assertIn("read-only", env.last_setpoint_issue)
 
     def test_hardware_env_uses_fixed_sampling_thresholds(self):
         class EmptyBridge:

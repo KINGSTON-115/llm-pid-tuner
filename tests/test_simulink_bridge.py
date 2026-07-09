@@ -395,6 +395,21 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
             bridge._eng.set_param_calls,
         )
 
+    def test_set_setpoint_updates_bridge_and_model_block(self):
+        bridge = self._make_bridge({})
+        bridge.setpoint_block = "demo/Setpoint"
+        bridge._eng.blocks = {
+            "demo/Setpoint": {"BlockType": "Constant", "Value": "0"},
+        }
+
+        bridge.set_setpoint(240.0)
+
+        self.assertEqual(bridge.setpoint, 240.0)
+        self.assertIn(
+            ("demo/Setpoint", "Value", "240.0"),
+            bridge._eng.set_param_calls,
+        )
+
 
     def test_set_pid_supports_kp_ki_kd_parameter_names(self):
         bridge = self._make_bridge({})

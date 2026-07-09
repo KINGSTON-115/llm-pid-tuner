@@ -30,6 +30,10 @@ class BaseTuningEnvironment(ABC):
         """Return the current target setpoint."""
         pass
 
+    def set_setpoint(self, setpoint: float) -> bool:
+        """Try to update the target setpoint at runtime."""
+        return False
+
     @abstractmethod
     def get_prompt_context(self) -> Dict[str, Any]:
         """Return context metadata for LLM prompt generation."""

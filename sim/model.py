@@ -41,15 +41,25 @@ class HeatingSimulator:
         self.noise_level = 0.1
         self.rng = random.Random(random_seed)
         self.step_count = 0
+        self.dynamic_setpoint_enabled = True
 
     def set_pid(self, kp: float, ki: float, kd: float) -> None:
         self.kp = kp
         self.ki = ki
         self.kd = kd
 
+    def set_setpoint(self, setpoint: float) -> None:
+        self.base_setpoint = float(setpoint)
+        self.setpoint = float(setpoint)
+        self.dynamic_setpoint_enabled = False
+
     def compute_pid(self) -> None:
         # Dynamic setpoint: step change every 50 steps (10 seconds)
-        if self.step_count > 0 and self.step_count % 50 == 0:
+        if (
+            self.dynamic_setpoint_enabled
+            and self.step_count > 0
+            and self.step_count % 50 == 0
+        ):
             if self.setpoint == self.base_setpoint:
                 self.setpoint = self.base_setpoint + 50.0
             else:
