@@ -76,6 +76,8 @@ If you use one of the built-in hardware profile adapters, set `HARDWARE_PROFILE`
 
 If you omit this field, the app uses `generic_serial_csv`.
 
+In TUI mode, press `t` to enter a new runtime setpoint and observe how the current PID values handle a target change. The default `generic_serial_csv` / `firmware.cpp` path sends `SETPOINT:<value>` over serial; `mspm0_datavision` remains read-only.
+
 ### 3. Run the exe once
 
 Double-click `llm-pid-tuner.exe`.
@@ -148,6 +150,8 @@ The app will:
 - stop early when the system is already “good enough”
 
 When one evaluation round satisfies `GOOD_ENOUGH_AVG_ERROR`, `GOOD_ENOUGH_STEADY_STATE_ERROR`, and `GOOD_ENOUGH_OVERSHOOT`, the app keeps the current PID values and enters observation rounds instead of asking the LLM for another adjustment. It stops after `REQUIRED_STABLE_ROUNDS` consecutive stable evaluations, which defaults to 3; if the response gets worse during observation, the stable counter resets and normal LLM tuning resumes.
+
+In TUI mode, press `t` to change the runtime setpoint and test how the current PID values track a target change.
 
 In practice, this means the tool tries to be useful on real hardware, not just aggressive.
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import field
+import math
 import threading
 import time
 from queue import Queue
@@ -11,9 +12,10 @@ from rich.markup import escape as markup_escape
 from core.compat import slotted_dataclass
 from core.i18n import get_language
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
-from textual.widgets import RichLog, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, Input, RichLog, Static
 
 from sim.runtime import (
     EVENT_DECISION,
@@ -75,8 +77,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "help_l": "日志详情",
         "help_r": "清空视图",
         "help_n": "下一轮",
+        "help_t": "设置目标",
         "help_browse": "滚轮 / PgUp / PgDn / ↑↓  浏览日志",
         "help_done": "调参完成，按 n 可以上次结果为起点继续新一轮",
+        "setpoint_prompt": "输入新的目标值",
+        "setpoint_placeholder": "例如 200",
+        "setpoint_apply": "应用",
+        "setpoint_cancel": "取消",
+        "setpoint_invalid": "请输入有限数字。",
+        "setpoint_requested": "已请求目标值: {setpoint:g}",
         # booleans
         "paused_yes": "是",
         "paused_no": "否",
@@ -134,8 +143,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "help_l": "Log Detail",
         "help_r": "Reset View",
         "help_n": "Next Round",
+        "help_t": "Set SP",
         "help_browse": "Wheel / PgUp / PgDn / ↑↓  browse log",
         "help_done": "Tuning done. Press n to start another round from the last result.",
+        "setpoint_prompt": "Enter a new setpoint",
+        "setpoint_placeholder": "e.g. 200",
+        "setpoint_apply": "Apply",
+        "setpoint_cancel": "Cancel",
+        "setpoint_invalid": "Enter a finite number.",
+        "setpoint_requested": "Setpoint requested: {setpoint:g}",
         # booleans
         "paused_yes": "yes",
         "paused_no": "no",
@@ -441,6 +457,8 @@ class PanelState:
             + sep
             + hk("p", self.tr("help_p"))
             + sep
+            + hk("t", self.tr("help_t"))
+            + sep
             + hk("l", self.tr("help_l"))
             + sep
             + hk("r", self.tr("help_r"))
@@ -529,6 +547,110 @@ class PanelState:
 
 
 # ---------------------------------------------------------------------------
+# Runtime setpoint dialog
+# ---------------------------------------------------------------------------
+class SetpointDialog(ModalScreen[Optional[float]]):
+    CSS = """
+    SetpointDialog {
+        align: center middle;
+    }
+
+    #setpoint-dialog {
+        width: 44;
+        height: auto;
+        border: round $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+
+    #setpoint-input {
+        margin-top: 1;
+    }
+
+    #setpoint-error {
+        height: 1;
+        color: $error;
+    }
+
+    #setpoint-buttons {
+        height: 3;
+        align-horizontal: right;
+    }
+    """
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(
+        self,
+        *,
+        current_setpoint: float,
+        language: str,
+        translations: Dict[str, Dict[str, str]],
+    ) -> None:
+        super().__init__()
+        self.current_setpoint = float(current_setpoint)
+        self.language = language
+        self.translations = translations
+
+    def tr(self, key: str) -> str:
+        lang = self.language if self.language in self.translations else "en"
+        return self.translations[lang][key]
+
+    def compose(self) -> ComposeResult:
+        initial = "" if abs(self.current_setpoint) < 1e-12 else f"{self.current_setpoint:g}"
+        yield Vertical(
+            Static(self.tr("setpoint_prompt")),
+            Input(
+                value=initial,
+                placeholder=self.tr("setpoint_placeholder"),
+                id="setpoint-input",
+            ),
+            Static("", id="setpoint-error"),
+            Horizontal(
+                Button(self.tr("setpoint_apply"), id="setpoint-apply", variant="primary"),
+                Button(self.tr("setpoint_cancel"), id="setpoint-cancel"),
+                id="setpoint-buttons",
+            ),
+            id="setpoint-dialog",
+        )
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#setpoint-input", Input).focus()
+        except NoMatches:
+            return
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_input_submitted(self, _event: Input.Submitted) -> None:
+        self._submit()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "setpoint-cancel":
+            self.dismiss(None)
+            return
+        if event.button.id == "setpoint-apply":
+            self._submit()
+
+    def _submit(self) -> None:
+        try:
+            raw_value = self.query_one("#setpoint-input", Input).value.strip()
+            value = float(raw_value)
+            if not math.isfinite(value):
+                raise ValueError
+        except (NoMatches, TypeError, ValueError):
+            try:
+                self.query_one("#setpoint-error", Static).update(
+                    self.tr("setpoint_invalid")
+                )
+            except NoMatches:
+                pass
+            return
+        self.dismiss(value)
+
+
+# ---------------------------------------------------------------------------
 # TUI Application
 # ---------------------------------------------------------------------------
 class SimulationTUIApp(App[None]):
@@ -576,6 +698,7 @@ class SimulationTUIApp(App[None]):
         ("q", "request_quit", "Quit"),
         ("s", "save_and_exit", "Save and exit"),
         ("p", "toggle_pause", "Pause"),
+        ("t", "change_setpoint", "Setpoint"),
         ("l", "toggle_event_detail", "Log detail"),
         ("r", "reset_view", "Reset view"),
         ("n", "next_round", "Next round"),
@@ -864,6 +987,39 @@ class SimulationTUIApp(App[None]):
         )
         self._log_requires_full_refresh = True
         self._refresh_all()
+
+    def action_change_setpoint(self) -> None:
+        if self.state.tuning_done or not self._worker_is_running():
+            return
+
+        def on_setpoint(value: Optional[float]) -> None:
+            if value is None:
+                return
+            try:
+                requested = self.controller.request_setpoint(value)
+            except ValueError:
+                return
+            self.state.current_setpoint = requested
+            message = self.state.tr("setpoint_requested").format(setpoint=requested)
+            self.state.apply_event(
+                {
+                    "type": EVENT_LIFECYCLE,
+                    "phase": "setpoint_requested",
+                    "message": message,
+                    "elapsed_sec": self.state.elapsed_sec,
+                }
+            )
+            self._log_requires_full_refresh = True
+            self._refresh_all()
+
+        self.push_screen(
+            SetpointDialog(
+                current_setpoint=self.state.current_setpoint,
+                language=self.state.language,
+                translations=TRANSLATIONS,
+            ),
+            callback=on_setpoint,
+        )
 
     def action_toggle_event_detail(self) -> None:
         self.state.detailed_events = not self.state.detailed_events

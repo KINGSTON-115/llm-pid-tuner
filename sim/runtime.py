@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import field
+import math
 from queue import Empty, Queue
 import threading
 import time
@@ -57,6 +58,8 @@ class QueueEventSink:
 class SimulationController:
     stop_event: threading.Event = field(default_factory=threading.Event)
     run_event: threading.Event = field(default_factory=threading.Event)
+    _setpoint_lock: threading.Lock = field(default_factory=threading.Lock)
+    _requested_setpoint: float | None = None
 
     def __post_init__(self) -> None:
         self.run_event.set()
@@ -102,6 +105,20 @@ class SimulationController:
     def request_stop(self) -> None:
         self.stop_event.set()
         self.run_event.set()
+
+    def request_setpoint(self, setpoint: float) -> float:
+        value = float(setpoint)
+        if not math.isfinite(value):
+            raise ValueError("setpoint must be finite")
+        with self._setpoint_lock:
+            self._requested_setpoint = value
+        return value
+
+    def consume_setpoint_request(self) -> float | None:
+        with self._setpoint_lock:
+            value = self._requested_setpoint
+            self._requested_setpoint = None
+            return value
 
     def wait_until_running(self, poll_interval: float = 0.05) -> bool:
         while not self.stop_event.is_set():

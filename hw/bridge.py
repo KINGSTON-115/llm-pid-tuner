@@ -101,6 +101,7 @@ class _DemoSerialDevice:
         r"SET2\s+P:(?P<p>-?\d+(?:\.\d+)?)\s+I:(?P<i>-?\d+(?:\.\d+)?)\s+D:(?P<d>-?\d+(?:\.\d+)?)",
         re.IGNORECASE,
     )
+    _setpoint_re = re.compile(r"SETPOINT:(?P<setpoint>-?\d+(?:\.\d+)?)", re.IGNORECASE)
 
     def __init__(self) -> None:
         from sim.model import HeatingSimulator
@@ -161,6 +162,11 @@ class _DemoSerialDevice:
                 "i": float(match2.group("i")),
                 "d": float(match2.group("d")),
             }
+            return
+
+        setpoint_match = self._setpoint_re.fullmatch(command)
+        if setpoint_match:
+            self._sim.set_setpoint(float(setpoint_match.group("setpoint")))
 
 
 class SerialBridge:
@@ -285,12 +291,14 @@ class SerialBridge:
         kind: str,
         primary_pid: Optional[Dict[str, float]] = None,
         secondary_pid: Optional[Dict[str, float]] = None,
+        setpoint: Optional[float] = None,
     ) -> bool:
         commands = build_profile_commands(
             self.hardware_profile,
             kind,
             primary_pid=primary_pid,
             secondary_pid=secondary_pid,
+            setpoint=setpoint,
         )
         if not commands:
             self.last_error = (

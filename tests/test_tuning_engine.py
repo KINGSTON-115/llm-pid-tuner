@@ -235,6 +235,41 @@ class TuningEngineObservationTests(unittest.TestCase):
         self.assertEqual(pid_limits["p"]["max_increase_ratio"], 2.0)
         self.assertTrue(tuner.prompt_contexts[0]["pid_limits_are_runtime_enforced"])
 
+    def test_setpoint_feedback_is_published_as_lifecycle_event(self):
+        env = FakeEnv([good_samples()])
+        env.last_setpoint_message = "Setpoint changed to 240."
+        tuner = CountingTuner()
+        sink = QueueEventSink(Queue())
+        config = {
+            "BUFFER_SIZE": 3,
+            "MAX_TUNING_ROUNDS": 1,
+            "MIN_ERROR_THRESHOLD": 0.0,
+            "REQUIRED_STABLE_ROUNDS": 1,
+            "GOOD_ENOUGH_AVG_ERROR": 1.0,
+            "GOOD_ENOUGH_STEADY_STATE_ERROR": 0.5,
+            "GOOD_ENOUGH_OVERSHOOT": 2.0,
+        }
+
+        with patch.dict("core.tuning_engine.CONFIG", config, clear=False):
+            run_tuning_engine(
+                env,
+                tuner,
+                "python_sim",
+                event_sink=sink,
+                emit_console=False,
+            )
+
+        events = drain_event_queue(sink.event_queue)
+        self.assertTrue(
+            any(
+                event.get("type") == EVENT_LIFECYCLE
+                and event.get("phase") == "setpoint"
+                and event.get("message") == "Setpoint changed to 240."
+                for event in events
+            )
+        )
+        self.assertEqual(env.last_setpoint_message, "")
+
 
 if __name__ == "__main__":
     unittest.main()

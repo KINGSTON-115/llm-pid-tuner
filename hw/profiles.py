@@ -98,6 +98,7 @@ def build_profile_commands(
     kind: str,
     primary_pid: Optional[Dict[str, float]] = None,
     secondary_pid: Optional[Dict[str, float]] = None,
+    setpoint: Optional[float] = None,
 ) -> List[str]:
     normalized = normalize_hardware_profile(profile)
     command_kind = str(kind or "").strip().upper()
@@ -106,6 +107,11 @@ def build_profile_commands(
 
     if command_kind == "STATUS":
         return ["status"] if normalized == "stm32f407_openmv" else ["STATUS"]
+
+    if command_kind == "SETPOINT":
+        if normalized == DEFAULT_HARDWARE_PROFILE and setpoint is not None:
+            return [f"SETPOINT:{float(setpoint):g}"]
+        return []
 
     if command_kind not in {"SET", "SET2"}:
         return []

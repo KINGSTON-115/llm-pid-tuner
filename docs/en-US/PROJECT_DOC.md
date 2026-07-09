@@ -177,6 +177,8 @@ Hardware mode can also select a built-in protocol adapter through `HARDWARE_PROF
 
 If you do not need a special hardware protocol, keep `HARDWARE_PROFILE=generic_serial_csv`; the existing workflow stays unchanged.
 
+In TUI mode, press `t` to change the runtime setpoint. For the default `generic_serial_csv` protocol, the host sends `SETPOINT:<value>`, and the example `firmware.cpp` updates its target accordingly; read-only profiles do not perform setpoint write-back.
+
 ## 6. Key Design Principles
 
 ### 6.1 Prefer usability over aggression

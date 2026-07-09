@@ -8,12 +8,28 @@ from hw.profiles import (
     normalize_hardware_profile,
 )
 
+def _consume_requested_setpoint(controller: Any) -> Optional[float]:
+    if controller is None or not hasattr(controller, "consume_setpoint_request"):
+        return None
+    requested = controller.consume_setpoint_request()
+    if requested is None:
+        return None
+    return float(requested)
+
 class PythonSimEnv(BaseTuningEnvironment):
     def __init__(self, sim: Any, setpoint: float, controller: Any = None):
         self.sim = sim
-        self._setpoint = setpoint
+        self._setpoint = float(setpoint)
         self.controller = controller
         self.prompt_context = {}
+        self.last_setpoint_issue = ""
+        self.last_setpoint_message = ""
+
+    def _apply_requested_setpoint(self) -> None:
+        requested = _consume_requested_setpoint(self.controller)
+        if requested is None:
+            return
+        self.set_setpoint(requested)
 
     def collect_samples(self) -> List[Dict[str, float]]:
         samples = []
@@ -25,6 +41,7 @@ class PythonSimEnv(BaseTuningEnvironment):
             if self.controller and getattr(self.controller, "should_stop", False):
                 return samples
 
+            self._apply_requested_setpoint()
             self.sim.compute_pid()
             self.sim.update()
             data = self.sim.get_data()
@@ -47,7 +64,23 @@ class PythonSimEnv(BaseTuningEnvironment):
         return {"p": self.sim.kp, "i": self.sim.ki, "d": self.sim.kd}, None
 
     def get_setpoint(self) -> float:
-        return self._setpoint
+        try:
+            return float(getattr(self.sim, "setpoint", self._setpoint))
+        except (TypeError, ValueError):
+            return self._setpoint
+
+    def set_setpoint(self, setpoint: float) -> bool:
+        self.last_setpoint_issue = ""
+        value = float(setpoint)
+        if hasattr(self.sim, "set_setpoint"):
+            self.sim.set_setpoint(value)
+        else:
+            setattr(self.sim, "setpoint", value)
+            if hasattr(self.sim, "base_setpoint"):
+                setattr(self.sim, "base_setpoint", value)
+        self._setpoint = value
+        self.last_setpoint_message = f"Setpoint changed to {value:g}."
+        return True
 
     def get_prompt_context(self) -> Dict[str, Any]:
         return self.prompt_context
@@ -61,10 +94,18 @@ class PythonSimEnv(BaseTuningEnvironment):
 class SimulinkEnv(BaseTuningEnvironment):
     def __init__(self, bridge: Any, setpoint: float, controller: Any = None):
         self.bridge = bridge
-        self._setpoint = setpoint
+        self._setpoint = float(setpoint)
         self.controller = controller
         self.prompt_context = {}
         self.last_apply_issue = ""
+        self.last_setpoint_issue = ""
+        self.last_setpoint_message = ""
+
+    def _apply_requested_setpoint(self) -> None:
+        requested = _consume_requested_setpoint(self.controller)
+        if requested is None:
+            return
+        self.set_setpoint(requested)
 
     def _bridge_gain(self, *names: str, default: float) -> float:
         for name in names:
@@ -92,6 +133,7 @@ class SimulinkEnv(BaseTuningEnvironment):
             if run_count > max_run_steps:
                 raise RuntimeError("Simulink data collection timed out.")
                 
+            self._apply_requested_setpoint()
             self.bridge.run_step()
             batch = self.bridge.get_data()
             for data in batch:
@@ -135,7 +177,27 @@ class SimulinkEnv(BaseTuningEnvironment):
         return primary, secondary
 
     def get_setpoint(self) -> float:
-        return self._setpoint
+        try:
+            return float(getattr(self.bridge, "setpoint", self._setpoint))
+        except (TypeError, ValueError):
+            return self._setpoint
+
+    def set_setpoint(self, setpoint: float) -> bool:
+        self.last_setpoint_issue = ""
+        value = float(setpoint)
+        try:
+            if hasattr(self.bridge, "set_setpoint"):
+                self.bridge.set_setpoint(value)
+            else:
+                setattr(self.bridge, "setpoint", value)
+                if hasattr(self.bridge, "_apply_model_setpoint"):
+                    self.bridge._apply_model_setpoint()
+            self._setpoint = value
+            self.last_setpoint_message = f"Setpoint changed to {value:g}."
+            return True
+        except Exception as exc:
+            self.last_setpoint_issue = f"Failed to update Simulink setpoint: {exc}"
+            return False
 
     def get_prompt_context(self) -> Dict[str, Any]:
         return self.prompt_context
@@ -156,11 +218,20 @@ class HardwareEnv(BaseTuningEnvironment):
         self.bridge = bridge
         self.current_pid = dict(initial_pid)
         self.current_secondary_pid: Optional[Dict[str, float]] = None
+        self.current_setpoint = 0.0
         self.controller = controller
         self.prompt_context = {}
         self.last_collect_issue = ""
         self.last_collect_warning = ""
         self.last_apply_issue = ""
+        self.last_setpoint_issue = ""
+        self.last_setpoint_message = ""
+
+    def _apply_requested_setpoint(self) -> None:
+        requested = _consume_requested_setpoint(self.controller)
+        if requested is None:
+            return
+        self.set_setpoint(requested)
 
     def collect_samples(self) -> List[Dict[str, float]]:
         samples = []
@@ -182,6 +253,7 @@ class HardwareEnv(BaseTuningEnvironment):
             if self.controller and getattr(self.controller, "should_stop", False):
                 return samples
 
+            self._apply_requested_setpoint()
             if (time.time() - started_at) >= timeout_sec:
                 if len(samples) >= int(self.MIN_SAMPLES_PER_ROUND):
                     self.last_collect_warning = (
@@ -219,6 +291,8 @@ class HardwareEnv(BaseTuningEnvironment):
                             "i": float(data["i"]),
                             "d": float(data["d"]),
                         }
+                    if "setpoint" in data:
+                        self.current_setpoint = float(data["setpoint"])
                     if all(key in data for key in ("p2", "i2", "d2")):
                         self.current_secondary_pid = {
                             "p": float(data["p2"]),
@@ -295,7 +369,41 @@ class HardwareEnv(BaseTuningEnvironment):
         return dict(self.current_pid), secondary
 
     def get_setpoint(self) -> float:
-        return 0.0 # Handled by hardware
+        return self.current_setpoint
+
+    def set_setpoint(self, setpoint: float) -> bool:
+        self.last_setpoint_issue = ""
+        self.last_setpoint_message = ""
+        value = float(setpoint)
+        hardware_profile = normalize_hardware_profile(
+            getattr(self.bridge, "hardware_profile", DEFAULT_HARDWARE_PROFILE)
+        )
+
+        if hardware_profile == "mspm0_datavision":
+            self.last_setpoint_issue = (
+                "MSPM0 DataVision profile is read-only: setpoint write-back is disabled "
+                "until a command protocol is confirmed."
+            )
+            return False
+
+        if hasattr(self.bridge, "send_profile_command"):
+            sent = self.bridge.send_profile_command("SETPOINT", setpoint=value)
+            if sent is False:
+                self.last_setpoint_issue = (
+                    f"Failed to apply hardware setpoint: {self.bridge.last_error or 'unknown write error'}"
+                )
+                return False
+        else:
+            sent = self.bridge.send_command(f"SETPOINT:{value:g}")
+            if sent is False:
+                self.last_setpoint_issue = (
+                    f"Failed to apply hardware setpoint: {self.bridge.last_error or 'unknown write error'}"
+                )
+                return False
+
+        self.current_setpoint = value
+        self.last_setpoint_message = f"Setpoint changed to {value:g}."
+        return True
 
     def get_prompt_context(self) -> Dict[str, Any]:
         return self.prompt_context
