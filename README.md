@@ -8,7 +8,15 @@
 
 中文 | [English](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md)
 
-[![GitHub Star History](docs/star-history.svg)](https://github.com/KINGSTON-115/llm-pid-tuner/stargazers)
+## Star History
+
+<a href="https://www.star-history.com/?repos=KINGSTON-115%2Fllm-pid-tuner&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&theme=dark&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+ </picture>
+</a>
 
 > 如果你是第一次接触这个项目，**不要先折腾 Python**。
 > **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
