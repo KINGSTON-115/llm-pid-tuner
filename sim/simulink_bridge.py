@@ -650,14 +650,14 @@ class SimulinkBridge:
         discovery = self._block_discovery or self._create_block_discovery()
         return discovery.setpoint_parameter_name(block_type)
 
-    def _apply_model_setpoint(self) -> None:
+    def _apply_model_setpoint(self) -> bool:
         block_path, block_type = self._resolve_setpoint_block()
         if not block_path or not block_type:
             print(
                 "[Simulink][WARN] Could not auto-detect the setpoint source block. "
                 f"Make sure the model setpoint matches MATLAB_SETPOINT={self.setpoint}."
             )
-            return
+            return False
 
         parameter_name = self._setpoint_parameter_name(block_type)
         if not parameter_name:
@@ -665,7 +665,7 @@ class SimulinkBridge:
                 f"[Simulink][WARN] Detected setpoint block {block_path}, "
                 f"but block type {block_type} is not writable yet."
             )
-            return
+            return False
 
         self._call_engine_method(
             "set_param",
@@ -676,10 +676,23 @@ class SimulinkBridge:
         )
         self.setpoint_block = block_path
         print(f"[Simulink] Synced setpoint {self.setpoint} to {block_path} ({parameter_name}).")
+        return True
 
-    def set_setpoint(self, setpoint: float) -> None:
+    def set_setpoint(self, setpoint: float) -> bool:
+        previous_setpoint = self.setpoint
         self.setpoint = float(setpoint)
-        self._apply_model_setpoint()
+        try:
+            applied = self._apply_model_setpoint()
+        except Exception:
+            self.setpoint = previous_setpoint
+            raise
+        if not applied:
+            self.setpoint = previous_setpoint
+            raise RuntimeError(
+                "Could not update the Simulink setpoint because no writable "
+                "setpoint block was found."
+            )
+        return True
 
     def _to_float_scalar(self, value: object) -> float:
         session = self._ensure_session()

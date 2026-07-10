@@ -236,7 +236,7 @@ def run_tuning_engine(
                     _console(emit_console, f"\n[ERROR] {rollback_apply_issue}")
                     _emit_lifecycle(event_sink, start_time, "error", rollback_apply_issue)
                     break
-                _console(emit_console, f"[CMD] Applied rollback PID.")
+                _console(emit_console, "[CMD] Applied rollback PID.")
                 continue
 
             if evaluation.completed_reason == "stable_rounds_reached" and not disable_early_exit:
@@ -392,7 +392,7 @@ def run_tuning_engine(
                 _console(emit_console, f"\n[ERROR] {apply_issue}")
                 _emit_lifecycle(event_sink, start_time, "error", apply_issue)
                 break
-            _console(emit_console, f"[CMD] Applied new PID parameters.")
+            _console(emit_console, "[CMD] Applied new PID parameters.")
             
         if (
             session.round_num >= CONFIG["MAX_TUNING_ROUNDS"]
