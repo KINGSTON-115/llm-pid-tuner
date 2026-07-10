@@ -1,0 +1,61 @@
+{
+  "name": "modbus_tcp_single_loop_demo",
+  "connection": {
+    "protocol": "modbus_tcp",
+    "host": "127.0.0.1",
+    "port": 502,
+    "device_id": 1,
+    "timeout_sec": 3.0
+  },
+  "acquisition": {
+    "poll_interval_sec": 0.2,
+    "sample_count": 20,
+    "minimum_samples": 5,
+    "timeout_sec": 10.0
+  },
+  "pid_semantics": {
+    "form": "ideal",
+    "integral_time_unit": "seconds",
+    "derivative_time_unit": "seconds",
+    "controller_action": "reverse"
+  },
+  "write_policy": {
+    "mode": "confirm",
+    "require_auto_mode": true,
+    "require_tune_enable": true,
+    "require_interlock": true,
+    "ack_timeout_sec": 2.0,
+    "ack_poll_interval_sec": 0.05
+  },
+  "canonical_pid_limits": {
+    "p": {"min": 0.0, "max": 20.0},
+    "i": {"min": 0.0, "max": 10.0},
+    "d": {"min": 0.0, "max": 10.0}
+  },
+  "process": {
+    "process_name": "demo temperature loop",
+    "pv_unit": "degC",
+    "output_unit": "%",
+    "engineering_min": 0.0,
+    "engineering_max": 100.0
+  },
+  "registers": {
+    "pv": {"address": 0, "table": "holding", "data_type": "float32"},
+    "setpoint": {"address": 2, "table": "holding", "data_type": "float32"},
+    "output": {"address": 4, "table": "holding", "data_type": "float32"},
+    "kp": {"address": 6, "table": "holding", "data_type": "float32"},
+    "integral": {"address": 8, "table": "holding", "data_type": "float32"},
+    "derivative": {"address": 10, "table": "holding", "data_type": "float32"},
+    "auto_mode": {"address": 12, "table": "holding", "data_type": "bool"},
+    "tune_enable": {"address": 13, "table": "holding", "data_type": "bool"},
+    "interlock_ok": {"address": 14, "table": "holding", "data_type": "bool"},
+    "quality": {"address": 15, "table": "holding", "data_type": "bool"},
+    "sample_counter": {"address": 16, "table": "holding", "data_type": "uint32"},
+    "candidate_kp": {"address": 20, "table": "holding", "data_type": "float32"},
+    "candidate_integral": {"address": 22, "table": "holding", "data_type": "float32"},
+    "candidate_derivative": {"address": 24, "table": "holding", "data_type": "float32"},
+    "apply_sequence": {"address": 26, "table": "holding", "data_type": "uint16"},
+    "ack_sequence": {"address": 27, "table": "holding", "data_type": "uint16"},
+    "apply_status": {"address": 28, "table": "holding", "data_type": "int16"}
+  }
+}
