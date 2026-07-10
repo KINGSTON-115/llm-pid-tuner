@@ -18,7 +18,6 @@ import serial.tools.list_ports
 from hw.profiles import (
     DEFAULT_HARDWARE_PROFILE,
     build_profile_commands,
-    get_hardware_board_family,
     get_hardware_profile_info,
     get_openmv_image_center,
     normalize_hardware_profile,

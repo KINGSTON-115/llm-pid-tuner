@@ -402,13 +402,23 @@ class SimulinkBridgeCompatTests(unittest.TestCase):
             "demo/Setpoint": {"BlockType": "Constant", "Value": "0"},
         }
 
-        bridge.set_setpoint(240.0)
+        applied = bridge.set_setpoint(240.0)
 
+        self.assertTrue(applied)
         self.assertEqual(bridge.setpoint, 240.0)
         self.assertIn(
             ("demo/Setpoint", "Value", "240.0"),
             bridge._eng.set_param_calls,
         )
+
+    def test_set_setpoint_restores_previous_value_when_block_is_missing(self):
+        bridge = self._make_bridge({})
+        previous_setpoint = bridge.setpoint
+
+        with self.assertRaisesRegex(RuntimeError, "no writable setpoint block"):
+            bridge.set_setpoint(240.0)
+
+        self.assertEqual(bridge.setpoint, previous_setpoint)
 
 
     def test_set_pid_supports_kp_ki_kd_parameter_names(self):

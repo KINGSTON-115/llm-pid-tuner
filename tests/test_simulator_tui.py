@@ -190,6 +190,32 @@ class SimulinkEnvTests(unittest.TestCase):
         self.assertEqual(samples[0]["setpoint"], 260.0)
         self.assertIn("260", env.last_setpoint_message)
 
+    def test_set_setpoint_reports_bridge_rejection_without_changing_value(self):
+        class RejectingBridge:
+            setpoint = 200.0
+
+            def set_setpoint(self, _setpoint):
+                return False
+
+        env = SimulinkEnv(RejectingBridge(), 200.0)
+
+        self.assertFalse(env.set_setpoint(260.0))
+        self.assertEqual(env.get_setpoint(), 200.0)
+        self.assertIn("rejected", env.last_setpoint_issue)
+
+    def test_legacy_setpoint_fallback_restores_value_when_apply_fails(self):
+        class LegacyBridge:
+            setpoint = 200.0
+
+            def _apply_model_setpoint(self):
+                return False
+
+        env = SimulinkEnv(LegacyBridge(), 200.0)
+
+        self.assertFalse(env.set_setpoint(260.0))
+        self.assertEqual(env.get_setpoint(), 200.0)
+        self.assertIn("No writable", env.last_setpoint_issue)
+
 
 class PythonSimEnvTests(unittest.TestCase):
     def test_collect_samples_applies_requested_setpoint(self):
