@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="520" viewBox="0 0 1000 520" role="img" aria-labelledby="title desc">
+  <title id="title">GitHub Star History for KINGSTON-115/llm-pid-tuner</title>
+  <desc id="desc">729 stars from 2026-02-15 through 2026-07-10.</desc>
+  <defs>
+    <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2f81f7" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#2f81f7" stop-opacity="0.04"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#1f2328" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <rect x="6" y="6" width="988" height="508" rx="14" fill="#ffffff" stroke="#d0d7de" filter="url(#shadow)"/>
+  <text x="78" y="42" fill="#1f2328" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="700">GitHub Star History</text>
+  <text x="78" y="67" fill="#57606a" font-family="Segoe UI,Arial,sans-serif" font-size="14">KINGSTON-115/llm-pid-tuner · Updated 2026-07-10 · 729 stars</text>
+  <line x1="78" y1="452.0" x2="964" y2="452.0" stroke="#d8dee4" stroke-width="1"/>
+  <text x="66" y="457.0" text-anchor="end" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">0</text>
+  <line x1="78" y1="361.0" x2="964" y2="361.0" stroke="#d8dee4" stroke-width="1"/>
+  <text x="66" y="366.0" text-anchor="end" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">200</text>
+  <line x1="78" y1="270.0" x2="964" y2="270.0" stroke="#d8dee4" stroke-width="1"/>
+  <text x="66" y="275.0" text-anchor="end" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">400</text>
+  <line x1="78" y1="179.0" x2="964" y2="179.0" stroke="#d8dee4" stroke-width="1"/>
+  <text x="66" y="184.0" text-anchor="end" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">600</text>
+  <line x1="78" y1="88.0" x2="964" y2="88.0" stroke="#d8dee4" stroke-width="1"/>
+  <text x="66" y="93.0" text-anchor="end" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">800</text>
+  <line x1="78.0" y1="88" x2="78.0" y2="452" stroke="#eef1f4" stroke-width="1"/>
+  <text x="78.0" y="480" text-anchor="middle" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">Feb</text>
+  <line x1="163.5" y1="88" x2="163.5" y2="452" stroke="#eef1f4" stroke-width="1"/>
+  <text x="163.5" y="480" text-anchor="middle" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">Mar</text>
+  <line x1="353.0" y1="88" x2="353.0" y2="452" stroke="#eef1f4" stroke-width="1"/>
+  <text x="353.0" y="480" text-anchor="middle" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">Apr</text>
+  <line x1="536.3" y1="88" x2="536.3" y2="452" stroke="#eef1f4" stroke-width="1"/>
+  <text x="536.3" y="480" text-anchor="middle" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">May</text>
+  <line x1="725.7" y1="88" x2="725.7" y2="452" stroke="#eef1f4" stroke-width="1"/>
+  <text x="725.7" y="480" text-anchor="middle" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">Jun</text>
+  <line x1="909.0" y1="88" x2="909.0" y2="452" stroke="#eef1f4" stroke-width="1"/>
+  <text x="909.0" y="480" text-anchor="middle" fill="#6e7781" font-family="Segoe UI,Arial,sans-serif" font-size="12">Jul</text>
+  <path d="M78.0,452.0 L84.1,446.5 L90.2,440.6 L96.3,434.7 L102.4,433.8 L108.6,432.4 L114.7,429.3 L120.8,427.9 L126.9,426.5 L133.0,425.2 L139.1,418.8 L145.2,411.5 L151.3,404.7 L157.4,400.6 L163.5,395.6 L169.7,393.8 L175.8,390.1 L181.9,386.9 L188.0,384.2 L194.1,381.5 L200.2,377.4 L206.3,375.6 L212.4,374.2 L218.5,373.3 L224.6,371.9 L230.8,369.6 L236.9,368.7 L243.0,366.9 L249.1,364.2 L255.2,360.1 L261.3,355.5 L267.4,351.9 L273.5,347.4 L279.6,343.3 L285.8,341.0 L291.9,338.3 L298.0,336.0 L304.1,332.8 L310.2,331.0 L316.3,324.1 L322.4,322.8 L328.5,320.1 L334.6,318.7 L340.7,316.9 L346.9,315.5 L353.0,313.2 L359.1,311.9 L365.2,310.0 L371.3,309.1 L377.4,307.8 L383.5,305.5 L389.6,301.9 L395.7,298.2 L401.8,295.0 L408.0,293.2 L414.1,292.3 L420.2,291.4 L426.3,289.1 L432.4,285.0 L438.5,282.7 L444.6,281.4 L450.7,279.1 L456.8,277.3 L463.0,275.9 L469.1,274.1 L475.2,268.6 L481.3,265.0 L487.4,261.8 L493.5,256.8 L499.6,253.2 L505.7,250.0 L511.8,245.9 L517.9,242.7 L524.1,240.0 L530.2,238.6 L536.3,237.7 L542.4,236.8 L548.5,234.1 L554.6,232.2 L560.7,232.2 L566.8,227.7 L572.9,225.0 L579.0,220.4 L585.2,215.4 L591.3,212.2 L597.4,209.5 L603.5,206.3 L609.6,203.1 L615.7,202.2 L621.8,200.8 L627.9,197.7 L634.0,196.3 L640.2,193.6 L646.3,190.8 L652.4,188.6 L658.5,187.2 L664.6,185.4 L670.7,184.0 L676.8,181.3 L682.9,178.1 L689.0,174.9 L695.1,172.2 L701.3,170.4 L707.4,169.0 L713.5,166.7 L719.6,164.4 L725.7,164.0 L731.8,162.2 L737.9,159.9 L744.0,159.4 L750.1,156.7 L756.2,155.8 L762.4,154.4 L768.5,151.7 L774.6,150.8 L780.7,149.0 L786.8,148.5 L792.9,146.2 L799.0,145.8 L805.1,144.0 L811.2,141.2 L817.4,140.3 L823.5,139.4 L829.6,139.4 L835.7,138.5 L841.8,138.1 L847.9,136.7 L854.0,135.8 L860.1,135.3 L866.2,134.0 L872.3,133.5 L878.5,133.0 L884.6,132.6 L890.7,132.1 L896.8,131.7 L902.9,131.7 L909.0,129.9 L915.1,128.5 L921.2,127.1 L927.3,126.7 L933.4,125.8 L939.6,123.9 L945.7,123.0 L951.8,122.6 L957.9,121.7 L964.0,120.3 L964.0,452.0 L78,452 Z" fill="url(#area)"/>
+  <path d="M78.0,452.0 L84.1,446.5 L90.2,440.6 L96.3,434.7 L102.4,433.8 L108.6,432.4 L114.7,429.3 L120.8,427.9 L126.9,426.5 L133.0,425.2 L139.1,418.8 L145.2,411.5 L151.3,404.7 L157.4,400.6 L163.5,395.6 L169.7,393.8 L175.8,390.1 L181.9,386.9 L188.0,384.2 L194.1,381.5 L200.2,377.4 L206.3,375.6 L212.4,374.2 L218.5,373.3 L224.6,371.9 L230.8,369.6 L236.9,368.7 L243.0,366.9 L249.1,364.2 L255.2,360.1 L261.3,355.5 L267.4,351.9 L273.5,347.4 L279.6,343.3 L285.8,341.0 L291.9,338.3 L298.0,336.0 L304.1,332.8 L310.2,331.0 L316.3,324.1 L322.4,322.8 L328.5,320.1 L334.6,318.7 L340.7,316.9 L346.9,315.5 L353.0,313.2 L359.1,311.9 L365.2,310.0 L371.3,309.1 L377.4,307.8 L383.5,305.5 L389.6,301.9 L395.7,298.2 L401.8,295.0 L408.0,293.2 L414.1,292.3 L420.2,291.4 L426.3,289.1 L432.4,285.0 L438.5,282.7 L444.6,281.4 L450.7,279.1 L456.8,277.3 L463.0,275.9 L469.1,274.1 L475.2,268.6 L481.3,265.0 L487.4,261.8 L493.5,256.8 L499.6,253.2 L505.7,250.0 L511.8,245.9 L517.9,242.7 L524.1,240.0 L530.2,238.6 L536.3,237.7 L542.4,236.8 L548.5,234.1 L554.6,232.2 L560.7,232.2 L566.8,227.7 L572.9,225.0 L579.0,220.4 L585.2,215.4 L591.3,212.2 L597.4,209.5 L603.5,206.3 L609.6,203.1 L615.7,202.2 L621.8,200.8 L627.9,197.7 L634.0,196.3 L640.2,193.6 L646.3,190.8 L652.4,188.6 L658.5,187.2 L664.6,185.4 L670.7,184.0 L676.8,181.3 L682.9,178.1 L689.0,174.9 L695.1,172.2 L701.3,170.4 L707.4,169.0 L713.5,166.7 L719.6,164.4 L725.7,164.0 L731.8,162.2 L737.9,159.9 L744.0,159.4 L750.1,156.7 L756.2,155.8 L762.4,154.4 L768.5,151.7 L774.6,150.8 L780.7,149.0 L786.8,148.5 L792.9,146.2 L799.0,145.8 L805.1,144.0 L811.2,141.2 L817.4,140.3 L823.5,139.4 L829.6,139.4 L835.7,138.5 L841.8,138.1 L847.9,136.7 L854.0,135.8 L860.1,135.3 L866.2,134.0 L872.3,133.5 L878.5,133.0 L884.6,132.6 L890.7,132.1 L896.8,131.7 L902.9,131.7 L909.0,129.9 L915.1,128.5 L921.2,127.1 L927.3,126.7 L933.4,125.8 L939.6,123.9 L945.7,123.0 L951.8,122.6 L957.9,121.7 L964.0,120.3" fill="none" stroke="#2f81f7" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="964.0" cy="120.3" r="6" fill="#ffffff" stroke="#2f81f7" stroke-width="4"/>
+  <rect x="900.0" y="78.3" width="58" height="28" rx="7" fill="#0969da"/>
+  <text x="929.0" y="98.3" text-anchor="middle" fill="#ffffff" font-family="Segoe UI,Arial,sans-serif" font-size="14" font-weight="700">729</text>
+  <line x1="78" y1="452" x2="964" y2="452" stroke="#8c959f" stroke-width="1.5"/>
+  <line x1="78" y1="88" x2="78" y2="452" stroke="#8c959f" stroke-width="1.5"/>
+  <text x="964" y="498" text-anchor="end" fill="#8c959f" font-family="Segoe UI,Arial,sans-serif" font-size="11">Source: GitHub Stargazers API</text>
+</svg>

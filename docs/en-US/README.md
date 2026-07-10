@@ -4,7 +4,7 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 
 [中文](../../README.md) | English
 
-[![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
+[![GitHub Star History](../star-history.svg)](https://github.com/KINGSTON-115/llm-pid-tuner/stargazers)
 
 > 📺 [Video Tutorial (Bilibili)](https://b23.tv/WVUuIFb)
 > 📺 [YouTube Tutorial](https://youtu.be/Giruc9kN53Y)

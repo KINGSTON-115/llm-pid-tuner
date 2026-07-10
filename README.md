@@ -8,7 +8,7 @@
 
 中文 | [English](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md)
 
-[![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
+[![GitHub Star History](docs/star-history.svg)](https://github.com/KINGSTON-115/llm-pid-tuner/stargazers)
 
 > 如果你是第一次接触这个项目，**不要先折腾 Python**。
 > **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
