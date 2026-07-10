@@ -4,7 +4,15 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 
 [中文](../../README.md) | English
 
-[![GitHub Star History](../star-history.svg)](https://github.com/KINGSTON-115/llm-pid-tuner/stargazers)
+## Star History
+
+<a href="https://www.star-history.com/?repos=KINGSTON-115%2Fllm-pid-tuner&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&theme=dark&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+ </picture>
+</a>
 
 > 📺 [Video Tutorial (Bilibili)](https://b23.tv/WVUuIFb)
 > 📺 [YouTube Tutorial](https://youtu.be/Giruc9kN53Y)
