@@ -578,7 +578,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertTrue(any(event.get("phase") == "error" for event in events))
         self.assertTrue(
             any(
-                "Expected CSV" in str(event.get("detail", ""))
+                "Expected CSV" in str(event.get("message", ""))
                 for event in events
                 if event.get("type") == EVENT_LIFECYCLE
             )
@@ -630,7 +630,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertTrue(any(event.get("phase") == "error" for event in events))
         self.assertTrue(
             any(
-                "No serial data was received" in str(event.get("detail", ""))
+                "No serial data was received" in str(event.get("message", ""))
                 for event in events
                 if event.get("type") == EVENT_LIFECYCLE
             )
@@ -788,7 +788,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
         self.assertEqual(result["final_pid"], {"p": 1.0, "i": 0.1, "d": 0.05})
         self.assertTrue(
             any(
-                "Failed to apply hardware PID" in str(event.get("detail", ""))
+                "Failed to apply hardware PID" in str(event.get("message", ""))
                 for event in events
                 if event.get("type") == EVENT_LIFECYCLE
             )

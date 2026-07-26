@@ -6,14 +6,13 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
-from queue import Queue
 import time
-import traceback
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.adapters import PythonSimEnv, SimulinkEnv
 from core.tuning_engine import run_tuning_engine
 from core.config import CONFIG, initialize_runtime_config
+from core.console import choose_ui_mode, warn_tui_fallback
 
 # Alias used by run_simulation and patchable in tests
 ensure_runtime_config = initialize_runtime_config
@@ -37,8 +36,8 @@ from sim.runtime import (
     emit_console_message as _console,
     emit_lifecycle as _emit_lifecycle,
     make_llm_tuner_callbacks,
-    now_elapsed,
     publish_event,
+    run_tui_tuning_session,
 )
 from sim.simulink_setup import (
     build_simulink_initial_prompt_context,
@@ -48,7 +47,7 @@ from sim.simulink_setup import (
 )
 from system_id import extract_initial_pid, system_identify
 
-from core.i18n import get_language, set_language, tr
+from core.i18n import set_language, tr
 
 
 initialize_runtime_config(create_if_missing=False, verbose=False)
@@ -251,18 +250,12 @@ def _run_tuning_loop(
 
 
 def choose_simulink_ui_mode(force_plain: bool) -> bool:
-    if force_plain:
-        return False
-
-    print("Simulink 显示模式")
-    print("[1] TUI 模式（可能在部分终端出现乱码/刷屏）")
-    print("[2] 命令行模式 (--plain 模式，默认更稳定)")
-
-    try:
-        choice = input("Choose a mode [2]: ").strip().lower()
-    except EOFError:
-        return False
-    return choice in {"1", "tui"}
+    return choose_ui_mode(
+        force_plain,
+        title="Simulink 显示模式",
+        tui_label="TUI 模式（可能在部分终端出现乱码/刷屏）",
+        plain_label="命令行模式 (--plain 模式，默认更稳定)",
+    )
 
 
 def _run_python_simulation_with_tui(
@@ -271,57 +264,39 @@ def _run_python_simulation_with_tui(
     initial_pid: Optional[Dict[str, float]] = None,
     prompt_context_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    from sim.tui import SimulationTUIApp
-
-    event_queue: Queue[Dict[str, Any]] = Queue()
-    controller = SimulationController()
-    event_sink = QueueEventSink(event_queue)
-    result_box: Dict[str, Any] = {}
-    language = get_language()
     setpoint = _get_configured_setpoint()
 
-    def make_worker(pid: Optional[Dict[str, float]]) -> Callable[[], None]:
-        def worker() -> None:
-            sim, effective_warm_start = _create_python_simulator(
-                pid,
-                warm_start,
-                setpoint,
-            )
-            result = _run_tuning_loop(
-                sim,
-                setpoint,
-                "Python",
-                llm_mode="python_sim",
-                prompt_context=_merge_prompt_context(
-                    build_python_sim_prompt_context(),
-                    prompt_context_overrides,
-                ),
-                event_sink=event_sink,
-                controller=app.controller,
-                emit_console=False,
-                warm_start=effective_warm_start,
-                doctor_checks=doctor_checks,
-            )
-            result_box["result"] = result
-            app._last_result = result
+    def run_round(
+        pid: Optional[Dict[str, float]],
+        event_sink: QueueEventSink,
+        controller: SimulationController,
+    ) -> Dict[str, Any]:
+        sim, effective_warm_start = _create_python_simulator(
+            pid,
+            warm_start,
+            setpoint,
+        )
+        return _run_tuning_loop(
+            sim,
+            setpoint,
+            "Python",
+            llm_mode="python_sim",
+            prompt_context=_merge_prompt_context(
+                build_python_sim_prompt_context(),
+                prompt_context_overrides,
+            ),
+            event_sink=event_sink,
+            controller=controller,
+            emit_console=False,
+            warm_start=effective_warm_start,
+            doctor_checks=doctor_checks,
+        )
 
-        return worker
-
-    def next_round_factory(last_result: Dict[str, Any]) -> Callable[[], None]:
-        pid = last_result.get("final_pid")
-        return make_worker(pid if isinstance(pid, dict) else None)
-
-    app = SimulationTUIApp(
-        event_queue=event_queue,
-        controller=controller,
-        worker_target=make_worker(initial_pid),
-        event_sink=event_sink,
+    return run_tui_tuning_session(
         mode_label="Python",
-        language=language,
-        next_round_factory=next_round_factory,
+        initial_pid=initial_pid,
+        run_round=run_round,
     )
-    app.run()
-    return result_box.get("result", {})
 
 
 def _run_python_simulation_plain(
@@ -371,44 +346,25 @@ def _run_simulink_simulation_with_tui(
     initial_pid: Optional[Dict[str, float]] = None,
     prompt_context_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    from sim.tui import SimulationTUIApp
+    def run_round(
+        pid: Optional[Dict[str, float]],
+        event_sink: QueueEventSink,
+        controller: SimulationController,
+    ) -> Dict[str, Any] | None:
+        return _run_simulink_simulation(
+            initial_pid=pid,
+            doctor_checks=doctor_checks,
+            prompt_context_overrides=prompt_context_overrides,
+            event_sink=event_sink,
+            controller=controller,
+            emit_console=False,
+        )
 
-    event_queue: Queue[Dict[str, Any]] = Queue()
-    controller = SimulationController()
-    event_sink = QueueEventSink(event_queue)
-    result_box: Dict[str, Any] = {}
-    language = get_language()
-
-    def make_worker(pid: Optional[Dict[str, float]]) -> Callable[[], None]:
-        def worker() -> None:
-            result = _run_simulink_simulation(
-                initial_pid=pid,
-                doctor_checks=doctor_checks,
-                prompt_context_overrides=prompt_context_overrides,
-                event_sink=event_sink,
-                controller=app.controller,
-                emit_console=False,
-            )
-            result_box["result"] = result
-            app._last_result = result or {}
-
-        return worker
-
-    def next_round_factory(last_result: Dict[str, Any]) -> Callable[[], None]:
-        pid = last_result.get("final_pid")
-        return make_worker(pid if isinstance(pid, dict) else None)
-
-    app = SimulationTUIApp(
-        event_queue=event_queue,
-        controller=controller,
-        worker_target=make_worker(initial_pid),
-        event_sink=event_sink,
+    return run_tui_tuning_session(
         mode_label="Simulink",
-        language=language,
-        next_round_factory=next_round_factory,
+        initial_pid=initial_pid,
+        run_round=run_round,
     )
-    app.run()
-    return result_box.get("result", {})
 
 
 def _run_simulink_simulation(
@@ -535,46 +491,32 @@ def run_simulation(force_plain: bool = False) -> Dict[str, Any] | None:
     if matlab_model_path:
         use_tui = choose_simulink_ui_mode(force_plain)
         prompt_context_overrides = collect_pre_tuning_preferences("Simulink")
+        runner_kwargs: Dict[str, Any] = {"doctor_checks": doctor_checks}
+        if prompt_context_overrides is not None:
+            runner_kwargs["prompt_context_overrides"] = prompt_context_overrides
+
         if use_tui:
             try:
-                tui_kwargs: Dict[str, Any] = {"doctor_checks": doctor_checks}
-                if prompt_context_overrides is not None:
-                    tui_kwargs["prompt_context_overrides"] = prompt_context_overrides
-                return _run_simulink_simulation_with_tui(**tui_kwargs)
+                return _run_simulink_simulation_with_tui(**runner_kwargs)
             except Exception as exc:
-                print(
-                    f"[WARN] Failed to start the TUI ({exc}); falling back to plain output."
-                )
-                debug_enabled = bool(CONFIG.get("LLM_DEBUG_OUTPUT"))
-                if debug_enabled:
-                    traceback.print_exc()
+                warn_tui_fallback(exc)
 
         print_doctor_report(doctor_checks)
-        plain_kwargs: Dict[str, Any] = {"doctor_checks": doctor_checks}
-        if prompt_context_overrides is not None:
-            plain_kwargs["prompt_context_overrides"] = prompt_context_overrides
-        return _run_simulink_simulation(**plain_kwargs)
+        return _run_simulink_simulation(**runner_kwargs)
 
     prompt_context_overrides = collect_pre_tuning_preferences("Python Simulation")
+    runner_kwargs = {"warm_start": True, "doctor_checks": doctor_checks}
+    if prompt_context_overrides is not None:
+        runner_kwargs["prompt_context_overrides"] = prompt_context_overrides
+
     if not force_plain:
         try:
-            tui_kwargs = {"warm_start": True, "doctor_checks": doctor_checks}
-            if prompt_context_overrides is not None:
-                tui_kwargs["prompt_context_overrides"] = prompt_context_overrides
-            return _run_python_simulation_with_tui(**tui_kwargs)
+            return _run_python_simulation_with_tui(**runner_kwargs)
         except Exception as exc:
-            print(
-                f"[WARN] Failed to start the TUI ({exc}); falling back to plain output."
-            )
-            debug_enabled = bool(CONFIG.get("LLM_DEBUG_OUTPUT"))
-            if debug_enabled:
-                traceback.print_exc()
+            warn_tui_fallback(exc)
 
     print_doctor_report(doctor_checks)
-    plain_kwargs = {"warm_start": True, "doctor_checks": doctor_checks}
-    if prompt_context_overrides is not None:
-        plain_kwargs["prompt_context_overrides"] = prompt_context_overrides
-    return _run_python_simulation_plain(**plain_kwargs)
+    return _run_python_simulation_plain(**runner_kwargs)
 
 
 def main(argv: Optional[List[str]] = None) -> None:

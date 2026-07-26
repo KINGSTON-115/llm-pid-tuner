@@ -5,11 +5,13 @@ import math
 from queue import Empty, Queue
 import threading
 import time
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 
 from core.compat import slotted_dataclass
 from core.config import CONFIG
+from core.console import append_console_log
 from core.csv_export import CsvEventExporter
+from core.i18n import get_language
 
 
 EVENT_SAMPLE = "sample"
@@ -139,12 +141,6 @@ def reset_csv_exporter_for_tests() -> None:
     _CSV_EXPORTER.reset()
 
 
-def wait_while_paused(controller: SimulationController | None, poll_interval: float = 0.05) -> bool:
-    if controller is None:
-        return True
-    return controller.wait_until_running(poll_interval=poll_interval)
-
-
 def now_elapsed(start_time: float) -> float:
     return round(time.time() - start_time, 3)
 
@@ -152,6 +148,7 @@ def now_elapsed(start_time: float) -> float:
 def emit_console_message(enabled: bool, message: str, *, end: str = "\n") -> None:
     if enabled:
         print(message, end=end, flush=True)
+        append_console_log(message, end=end)
 
 
 def emit_lifecycle(
@@ -177,6 +174,52 @@ def emit_log(
         label=label, message=message, replace_last=replace_last,
         stream_id=stream_id, elapsed_sec=now_elapsed(start_time),
     )
+
+
+def run_tui_tuning_session(
+    *,
+    mode_label: str,
+    initial_pid: Optional[Dict[str, float]],
+    run_round: Callable[
+        [Optional[Dict[str, float]], QueueEventSink, SimulationController],
+        Optional[Dict[str, Any]],
+    ],
+) -> Dict[str, Any]:
+    """Shared TUI scaffolding for the hardware/Python/Simulink tuning runners.
+
+    ``run_round(pid, event_sink, controller)`` performs one full tuning run and
+    returns its result dict (or ``None`` on failure).
+    """
+    from sim.tui import SimulationTUIApp
+
+    event_queue: Queue[RuntimeEvent] = Queue()
+    controller = SimulationController()
+    event_sink = QueueEventSink(event_queue)
+    result_box: Dict[str, Any] = {}
+
+    def make_worker(pid: Optional[Dict[str, float]]) -> Callable[[], None]:
+        def worker() -> None:
+            result = run_round(pid, event_sink, app.controller)
+            result_box["result"] = result
+            app._last_result = result or {}
+
+        return worker
+
+    def next_round_factory(last_result: Dict[str, Any]) -> Callable[[], None]:
+        pid = last_result.get("final_pid")
+        return make_worker(pid if isinstance(pid, dict) else None)
+
+    app = SimulationTUIApp(
+        event_queue=event_queue,
+        controller=controller,
+        worker_target=make_worker(initial_pid),
+        event_sink=event_sink,
+        mode_label=mode_label,
+        language=get_language(),
+        next_round_factory=next_round_factory,
+    )
+    app.run()
+    return result_box.get("result", {})
 
 
 def make_llm_tuner_callbacks(

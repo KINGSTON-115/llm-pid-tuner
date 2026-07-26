@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.env import BaseTuningEnvironment
+from core.env import BaseTuningEnvironment, controller_requests_abort
 
 
 class PLCEnvironment(BaseTuningEnvironment):
@@ -47,10 +47,7 @@ class PLCEnvironment(BaseTuningEnvironment):
         self.last_collect_warning = ""
 
         while len(samples) < acquisition.sample_count:
-            if self.controller and hasattr(self.controller, "wait_while_paused"):
-                if not self.controller.wait_while_paused():
-                    return samples
-            if self.controller and getattr(self.controller, "should_stop", False):
+            if controller_requests_abort(self.controller):
                 return samples
             if time.monotonic() >= deadline:
                 message = (

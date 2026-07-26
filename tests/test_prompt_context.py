@@ -12,7 +12,7 @@ from sim.prompt_context import (
     build_python_sim_prompt_context,
     build_simulink_prompt_context,
     default_prompt_context_for_mode,
-    refresh_prompt_context_for_mode,
+    normalize_string_list,
 )
 
 
@@ -136,40 +136,16 @@ class DefaultPromptContextForModeTests(unittest.TestCase):
         self.assertEqual(ctx["model_path"], "m.slx")
 
 
-class RefreshPromptContextForModeTests(unittest.TestCase):
-    def test_returns_default_when_context_is_none(self):
-        ctx = refresh_prompt_context_for_mode(None, "python_sim", None)
-        self.assertEqual(ctx["source"], "built_in_python_heating_simulator")
+class NormalizeStringListTests(unittest.TestCase):
+    def test_non_list_returns_empty(self):
+        self.assertEqual(normalize_string_list(None), [])
+        self.assertEqual(normalize_string_list("a,b"), [])
 
-    def test_non_simulink_returns_shallow_copy(self):
-        original = {"source": "x", "foo": 1}
-        refreshed = refresh_prompt_context_for_mode(None, "python_sim", original)
-        self.assertEqual(refreshed, original)
-        self.assertIsNot(refreshed, original)
-
-    def test_simulink_refresh_uses_sim_attrs(self):
-        sim = types.SimpleNamespace(
-            model_path="new.slx",
-            pid_block_path="new/PID",
-            output_signal="temp",
-            sim_step_time=0.02,
-            resolved_control_signal="ctrl",
-            control_signal="ctrl",
-            resolved_output_signal="temp_out",
-            secondary_pid_block_path="",
-            setpoint_block="",
-            control_domain="",
-            model_solver_type="",
-            model_solver_name="",
-            model_fixed_step="",
-            controller_1_sample_time="",
-            controller_2_sample_time="",
-            has_control_signal=True,
+    def test_strips_and_drops_empty_items(self):
+        self.assertEqual(
+            normalize_string_list([" a ", "", 3, "  "]),
+            ["a", "3"],
         )
-        old_ctx = {"source": "matlab_simulink", "model_path": "old.slx"}
-        refreshed = refresh_prompt_context_for_mode(sim, "simulink", old_ctx)
-        self.assertEqual(refreshed["model_path"], "new.slx")
-        self.assertTrue(refreshed["pwm_signal_available"])
 
 
 if __name__ == "__main__":

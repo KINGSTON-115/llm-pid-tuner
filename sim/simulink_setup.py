@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from core.compat import slotted_dataclass
-from sim.prompt_context import build_simulink_prompt_context, _first_nonempty_text
+from sim.prompt_context import (
+    build_simulink_prompt_context,
+    _first_nonempty_text,
+    normalize_string_list,
+)
 from sim.simulink_paths import (
     normalize_simulink_block_path,
     normalize_simulink_block_paths,
@@ -31,12 +35,6 @@ class SimulinkRuntimeConfig:
     setpoint: float
 
 
-def _normalized_string_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
 def load_simulink_runtime_config(config: Mapping[str, Any]) -> SimulinkRuntimeConfig:
     try:
         sim_step_time = float(config.get("MATLAB_SIM_STEP_TIME", 10.0))
@@ -55,7 +53,7 @@ def load_simulink_runtime_config(config: Mapping[str, Any]) -> SimulinkRuntimeCo
         setpoint_block=normalize_simulink_block_path(
             config.get("MATLAB_SETPOINT_BLOCK", "")
         ),
-        output_signal_candidates=_normalized_string_list(
+        output_signal_candidates=normalize_string_list(
             config.get("MATLAB_OUTPUT_SIGNAL_CANDIDATES", [])
         ),
         pid_block_paths=normalize_simulink_block_paths(

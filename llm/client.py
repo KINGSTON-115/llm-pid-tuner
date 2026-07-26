@@ -6,11 +6,11 @@ llm/client.py - LLM client wrapper with streaming and prompt selection.
 
 from __future__ import annotations
 
-import json
 import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional
 
+from core.console import append_console_log
 from llm.prompts import SYSTEM_PROMPT, build_user_prompt, get_system_prompt
 from llm.response_parser import parse_json_response
 from llm.stream_formatter import JSONStreamFormatter
@@ -107,11 +107,7 @@ class LLMTuner:
             self.log_callback(label, message)
         if self.emit_console:
             print(message)
-            try:
-                with open("logs/console_log.txt", "a", encoding="utf-8") as f:
-                    f.write(message + "\n")
-            except Exception:
-                pass
+            append_console_log(message)
 
     def _emit_stream_update(
         self,
@@ -212,11 +208,7 @@ class LLMTuner:
             self._emit_stream_update(final_text, done=True)
         if self.emit_console:
             print()
-            try:
-                with open("logs/console_log.txt", "a", encoding="utf-8") as f:
-                    f.write(final_text + "\n\n")
-            except Exception:
-                pass
+            append_console_log(final_text + "\n")
         return final_text
 
     def request_json(

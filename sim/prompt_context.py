@@ -164,6 +164,13 @@ def _first_nonempty_text(*values: object) -> str:
     return next((text for value in values if (text := str(value or "").strip())), "")
 
 
+def normalize_string_list(value: object) -> List[str]:
+    """Coerce a JSON-ish value into a list of non-empty stripped strings."""
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
 def default_prompt_context_for_mode(sim: Any, llm_mode: str) -> Dict[str, Any] | None:
     if llm_mode == "python_sim":
         return build_python_sim_prompt_context()
@@ -197,133 +204,11 @@ def default_prompt_context_for_mode(sim: Any, llm_mode: str) -> Dict[str, Any] |
     )
 
 
-def refresh_prompt_context_for_mode(
-    sim: Any,
-    llm_mode: str,
-    prompt_context: Optional[Dict[str, Any]],
-) -> Dict[str, Any] | None:
-    if prompt_context is None:
-        return default_prompt_context_for_mode(sim, llm_mode)
-
-    if llm_mode != "simulink":
-        return dict(prompt_context)
-
-    model_path = _first_nonempty_text(
-        getattr(sim, "model_path", ""),
-        prompt_context.get("model_path", ""),
-    )
-    pid_block_path = _first_nonempty_text(
-        getattr(sim, "pid_block_path", ""),
-        prompt_context.get("controller_1_path", ""),
-        prompt_context.get("pid_block_path", ""),
-    )
-    output_signal = _first_nonempty_text(
-        getattr(sim, "output_signal", ""),
-        prompt_context.get("output_signal", ""),
-    )
-    sim_step_time = getattr(
-        sim,
-        "sim_step_time",
-        prompt_context.get("sim_step_time_sec", 0.0),
-    )
-    try:
-        sim_step_time_value = float(sim_step_time)
-    except (TypeError, ValueError):
-        sim_step_time_value = float(
-            prompt_context.get("sim_step_time_sec", 0.0) or 0.0
-        )
-
-    control_signal_name = _first_nonempty_text(
-        getattr(sim, "resolved_control_signal", ""),
-        getattr(sim, "control_signal", ""),
-        prompt_context.get("resolved_control_signal", ""),
-        prompt_context.get("control_signal", ""),
-    )
-    resolved_output_signal_name = _first_nonempty_text(
-        getattr(sim, "resolved_output_signal", ""),
-        prompt_context.get("resolved_output_signal", ""),
-        output_signal,
-    )
-    resolved_control_signal_name = _first_nonempty_text(
-        getattr(sim, "resolved_control_signal", ""),
-        prompt_context.get("resolved_control_signal", ""),
-    )
-    resolved_secondary_controller = _first_nonempty_text(
-        getattr(sim, "secondary_pid_block_path", ""),
-        prompt_context.get("controller_2_path", ""),
-    )
-    resolved_setpoint_block = _first_nonempty_text(
-        getattr(sim, "setpoint_block", ""),
-        prompt_context.get("setpoint_block", ""),
-    )
-    output_signal_candidates = prompt_context.get("output_signal_candidates")
-    configured_controller_count = int(prompt_context.get("controller_count", 1) or 1)
-    control_domain = _first_nonempty_text(
-        getattr(sim, "control_domain", ""),
-        prompt_context.get("control_domain", ""),
-    )
-    model_solver_type = _first_nonempty_text(
-        getattr(sim, "model_solver_type", ""),
-        prompt_context.get("model_solver_type", ""),
-    )
-    model_solver_name = _first_nonempty_text(
-        getattr(sim, "model_solver_name", ""),
-        prompt_context.get("model_solver_name", ""),
-    )
-    model_fixed_step = _first_nonempty_text(
-        getattr(sim, "model_fixed_step", ""),
-        prompt_context.get("model_fixed_step", ""),
-    )
-    controller_1_sample_time = _first_nonempty_text(
-        getattr(sim, "controller_1_sample_time", ""),
-        prompt_context.get("controller_1_sample_time", ""),
-    )
-    controller_2_sample_time = _first_nonempty_text(
-        getattr(sim, "controller_2_sample_time", ""),
-        prompt_context.get("controller_2_sample_time", ""),
-    )
-    pwm_signal_available = getattr(
-        sim,
-        "has_control_signal",
-        prompt_context.get("pwm_signal_available", False),
-    )
-
-    refreshed_context = build_simulink_prompt_context(
-        model_path=model_path,
-        pid_block_path=pid_block_path,
-        output_signal=output_signal,
-        sim_step_time=sim_step_time_value,
-        control_signal=control_signal_name,
-        output_signal_candidates=list(output_signal_candidates)
-        if output_signal_candidates
-        else None,
-        setpoint_block=resolved_setpoint_block,
-        resolved_output_signal=resolved_output_signal_name,
-        resolved_control_signal=resolved_control_signal_name,
-        pwm_signal_available=bool(pwm_signal_available),
-        controller_2_path=resolved_secondary_controller,
-        controller_count=(
-            2
-            if resolved_secondary_controller or configured_controller_count > 1
-            else 1
-        ),
-        control_domain=control_domain,
-        model_solver_type=model_solver_type,
-        model_solver_name=model_solver_name,
-        model_fixed_step=model_fixed_step,
-        controller_1_sample_time=controller_1_sample_time,
-        controller_2_sample_time=controller_2_sample_time,
-    )
-    for key, value in prompt_context.items():
-        refreshed_context.setdefault(key, value)
-    return refreshed_context
-
-
 __all__ = [
     "build_python_sim_prompt_context",
     "build_simulink_prompt_context",
     "default_prompt_context_for_mode",
     "_first_nonempty_text",
     "_merge_prompt_context",
-    "refresh_prompt_context_for_mode",
+    "normalize_string_list",
 ]

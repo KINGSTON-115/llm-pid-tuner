@@ -8,6 +8,12 @@ import os
 import sys
 from typing import Any, Dict
 
+from pid_safety import (
+    DEFAULT_PID_LIMITS,
+    PYTHON_SIM_PID_LIMITS,
+    SIMULINK_PID_LIMITS,
+)
+
 
 def ensure_utf8_console() -> None:
     """Force UTF-8 console IO on Windows when possible."""
@@ -96,22 +102,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "MATLAB_PID_BLOCK_PATH_2"       : "",
     "MATLAB_SIM_STEP_TIME"          : 15.0,
     "MATLAB_SETPOINT"               : 200.0,
+    # Built from the pid_safety tables so the two never drift apart.
     "PID_LIMITS"                    : {
-        "default": {
-            "p": {"min": 0.0, "max": 1000.0, "max_increase_ratio": 3.0},
-            "i": {"min": 0.0, "max":  250.0, "max_increase_ratio": 4.0},
-            "d": {"min": 0.0, "max":  250.0, "max_increase_ratio": 4.0},
-        },
-        "python_sim": {
-            "p": {"min": 0.0, "max": 5000.0, "max_increase_ratio": 3.0},
-            "i": {"min": 0.0, "max":  500.0, "max_increase_ratio": 4.0},
-            "d": {"min": 0.0, "max":  500.0, "max_increase_ratio": 4.0},
-        },
-        "simulink": {
-            "p": {"min": 0.0, "max": 5000.0, "max_increase_ratio": 5.0},
-            "i": {"min": 0.0, "max":  500.0, "max_increase_ratio": 6.0},
-            "d": {"min": 0.0, "max":  500.0, "max_increase_ratio": 6.0},
-        },
+        mode: {gain: dict(spec) for gain, spec in table.items()}
+        for mode, table in (
+            ("default", DEFAULT_PID_LIMITS),
+            ("python_sim", PYTHON_SIM_PID_LIMITS),
+            ("simulink", SIMULINK_PID_LIMITS),
+        )
     },
     "PID_MAX_INCREASE_RATIO"        : 0.0,
 }

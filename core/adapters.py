@@ -1,6 +1,6 @@
 import time
 from typing import Any, Dict, List, Optional, Tuple
-from core.env import BaseTuningEnvironment
+from core.env import BaseTuningEnvironment, controller_requests_abort
 from core.config import CONFIG
 from hw.profiles import (
     DEFAULT_HARDWARE_PROFILE,
@@ -30,9 +30,7 @@ class PythonSimEnv(BaseTuningEnvironment):
         target_steps = getattr(self.sim, "target_steps", CONFIG["BUFFER_SIZE"])
         
         while len(samples) < target_steps: # Use explicit step count instead of buffer full check
-            if self.controller and hasattr(self.controller, "wait_while_paused") and not self.controller.wait_while_paused():
-                return samples
-            if self.controller and getattr(self.controller, "should_stop", False):
+            if controller_requests_abort(self.controller):
                 return samples
 
             _apply_requested_setpoint(self.controller, self.set_setpoint)
@@ -112,9 +110,7 @@ class SimulinkEnv(BaseTuningEnvironment):
         run_count = 0
         
         while True:
-            if self.controller and hasattr(self.controller, "wait_while_paused") and not self.controller.wait_while_paused():
-                return samples
-            if self.controller and getattr(self.controller, "should_stop", False):
+            if controller_requests_abort(self.controller):
                 return samples
 
             run_count += 1
@@ -240,9 +236,7 @@ class HardwareEnv(BaseTuningEnvironment):
         expected_formats = get_hardware_sample_format_hint(hardware_profile)
 
         while len(samples) < target_size:
-            if self.controller and hasattr(self.controller, "wait_while_paused") and not self.controller.wait_while_paused():
-                return samples
-            if self.controller and getattr(self.controller, "should_stop", False):
+            if controller_requests_abort(self.controller):
                 return samples
 
             _apply_requested_setpoint(self.controller, self.set_setpoint)

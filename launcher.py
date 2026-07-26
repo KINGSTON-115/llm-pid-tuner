@@ -8,6 +8,7 @@ import sys
 import traceback
 
 from core.config import initialize_runtime_config
+from core.console import can_prompt
 from hw.bridge import safe_pause
 import simulator
 import tuner
@@ -59,10 +60,6 @@ def normalize_mode(value: str | None) -> str | None:
     if normalized in QUIT_ALIASES:
         return MODE_QUIT
     return None
-
-
-def can_prompt() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def prompt_launch_mode(default_mode: str = MODE_SIM) -> str:
@@ -163,7 +160,6 @@ def main(argv: list[str] | None = None) -> None:
         print("\n[INFO] Interrupted by user (Ctrl+C). Exiting gracefully.")
         # Try to flush any pending logs or CSV writes before exiting
         try:
-            import sys
             sys.stdout.flush()
             sys.stderr.flush()
         except Exception:

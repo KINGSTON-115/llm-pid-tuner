@@ -72,13 +72,6 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return int(default)
-
-
 def _parse_required_float(value: str) -> Optional[float]:
     try:
         parsed = float(value)

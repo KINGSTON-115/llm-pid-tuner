@@ -7,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sim.simulink_setup import (
     SimulinkRuntimeConfig,
-    _normalized_string_list,
     load_simulink_runtime_config,
     validate_simulink_runtime_config,
 )
@@ -21,19 +20,6 @@ def _minimal_valid_config() -> dict:
         "MATLAB_SIM_STEP_TIME": 10.0,
         "MATLAB_SETPOINT": 200.0,
     }
-
-
-class NormalizedStringListTests(unittest.TestCase):
-    def test_returns_list_of_stripped_non_empty(self):
-        self.assertEqual(
-            _normalized_string_list(["a", "  b  ", "", "c"]),
-            ["a", "b", "c"],
-        )
-
-    def test_non_list_returns_empty(self):
-        self.assertEqual(_normalized_string_list("not a list"), [])
-        self.assertEqual(_normalized_string_list(None), [])
-        self.assertEqual(_normalized_string_list(42), [])
 
 
 class LoadSimulinkRuntimeConfigTests(unittest.TestCase):

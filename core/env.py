@@ -1,6 +1,20 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
+
+def controller_requests_abort(controller: Any) -> bool:
+    """True when the controller asked to stop, or a pause ended with a stop.
+
+    Blocks while the controller is paused. Shared by every environment's
+    sample-collection loop and by the tuning engine's round loop.
+    """
+    if controller is None:
+        return False
+    if hasattr(controller, "wait_while_paused") and not controller.wait_while_paused():
+        return True
+    return bool(getattr(controller, "should_stop", False))
+
+
 class BaseTuningEnvironment(ABC):
     """
     Abstract interface for all tuning environments (Hardware, Python Sim, Simulink).

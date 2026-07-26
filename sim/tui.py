@@ -922,18 +922,6 @@ class SimulationTUIApp(App[None]):
         self._request_shutdown(phase="stopping", message_key="stopping")
 
     def action_save_and_exit(self) -> None:
-        # 触发保存最佳 PID 的逻辑
-        if self._last_result and hasattr(self._last_result, "best_pid"):
-            best = self._last_result.best_pid
-            if best:
-                self.state.apply_event(
-                    {
-                        "type": EVENT_LIFECYCLE,
-                        "phase": "saving",
-                        "message": f"Saved best PID: P={best.get('p', 0):.3f}, I={best.get('i', 0):.3f}, D={best.get('d', 0):.3f}",
-                        "elapsed_sec": self.state.elapsed_sec,
-                    }
-                )
         self._request_shutdown(phase="saving", message_key="saving_exit")
 
     def action_next_round(self) -> None:

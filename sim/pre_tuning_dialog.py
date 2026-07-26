@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import CONFIG
+from core.console import can_prompt as _can_prompt
 from core.i18n import get_language, set_language
 from llm.client import LLMTuner
 from llm.prompts import (
     build_pre_tuning_dialog_user_prompt,
     get_pre_tuning_dialog_system_prompt,
 )
+from sim.prompt_context import normalize_string_list
 
 
 _LANGUAGE_OPTIONS = {
@@ -51,10 +52,6 @@ _TEXT = {
 
 class PreTuningDialogError(RuntimeError):
     """Raised when the pre-tuning LLM request cannot produce usable context."""
-
-
-def _can_prompt() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _text(lang: str, key: str, **kwargs: Any) -> str:
@@ -120,12 +117,6 @@ def _collect_user_request(language: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _normalize_string_list(value: object) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
 def _fallback_prompt_context(language: str, user_text: str) -> Dict[str, Any]:
     summary = _text(language, "fallback_summary", user_text=user_text)
     return {
@@ -170,10 +161,10 @@ def _build_prompt_context_from_result(
         "user_tuning_aggressiveness": str(
             result.get("aggressiveness", "normal") or "normal"
         ),
-        "user_hard_constraints": _normalize_string_list(
+        "user_hard_constraints": normalize_string_list(
             result.get("hard_constraints", [])
         ),
-        "user_soft_preferences": _normalize_string_list(
+        "user_soft_preferences": normalize_string_list(
             result.get("soft_preferences", [])
         ),
     }

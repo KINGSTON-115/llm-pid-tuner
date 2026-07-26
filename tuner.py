@@ -13,18 +13,17 @@ tuner.py - LLM PID 自动调参系统 (History-Aware + Chain-of-Thought)
 from __future__ import annotations
 
 import argparse
-from queue import Queue
 import time
 import traceback
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from core.config import CONFIG, initialize_runtime_config
+from core.console import choose_ui_mode, warn_tui_fallback
 from hw.bridge import SerialBridge, safe_pause, select_serial_port
 from hw.profiles import DEFAULT_HARDWARE_PROFILE, normalize_hardware_profile
 from llm.client import LLMTuner
 from core.tuning_engine import run_tuning_engine
 from core.adapters import HardwareEnv
-from core.i18n import get_language
 from sim.pre_tuning_dialog import collect_pre_tuning_preferences
 from sim.prompt_context import build_hardware_prompt_context, _merge_prompt_context
 from sim.runtime import (
@@ -35,6 +34,7 @@ from sim.runtime import (
     emit_log as _emit_log,
     make_llm_tuner_callbacks,
     now_elapsed,
+    run_tui_tuning_session,
 )
 
 
@@ -70,18 +70,12 @@ def resolve_serial_port(serial_port_arg: Optional[str]) -> str | None:
 
 
 def choose_hardware_ui_mode(force_plain: bool) -> bool:
-    if force_plain:
-        return False
-
-    print("Hardware display mode")
-    print("[1] TUI mode")
-    print("[2] Plain console mode (--plain, default)")
-
-    try:
-        choice = input("Choose a mode [2]: ").strip().lower()
-    except EOFError:
-        return False
-    return choice in {"1", "tui"}
+    return choose_ui_mode(
+        force_plain,
+        title="Hardware display mode",
+        tui_label="TUI mode",
+        plain_label="Plain console mode (--plain, default)",
+    )
 
 
 def _run_hardware_tuning_loop(
@@ -160,18 +154,17 @@ def _run_hardware_tuning_loop(
             _emit_log(event_sink, start_time, "warn", warn)
         else:
             _console(emit_console, "[CMD] Sent: STATUS")
+
+        env = HardwareEnv(bridge, initial_pid or {"p": 0.0, "i": 0.0, "d": 0.0}, controller=controller)
         if initial_pid:
-            cmd = f"SET P:{initial_pid['p']} I:{initial_pid['i']} D:{initial_pid['d']}"
             if normalize_hardware_profile(getattr(bridge, "hardware_profile", DEFAULT_HARDWARE_PROFILE)) == "mspm0_datavision":
                 _console(emit_console, "[INFO] MSPM0 telemetry-only profile; skipping initial PID write-back.")
             else:
-                if hasattr(bridge, "send_profile_command"):
-                    cmd_sent = bridge.send_profile_command("SET", primary_pid=initial_pid)
-                else:
-                    cmd_sent = bridge.send_command(cmd)
+                cmd = f"SET P:{initial_pid['p']} I:{initial_pid['i']} D:{initial_pid['d']}"
+                env.apply_pid(initial_pid)
                 _emit_log(event_sink, start_time, "cmd", cmd)
-                if cmd_sent is False:
-                    warn = f"[WARN] Initial PID send failed: {bridge.last_error or 'unknown write error'}"
+                if env.last_apply_issue:
+                    warn = f"[WARN] Initial PID send failed: {env.last_apply_issue}"
                     _console(emit_console, warn)
                     _emit_log(event_sink, start_time, "warn", warn)
                 else:
@@ -186,7 +179,6 @@ def _run_hardware_tuning_loop(
             f"Collecting data from {serial_port}.",
         )
 
-        env = HardwareEnv(bridge, initial_pid or {"p": 0.0, "i": 0.0, "d": 0.0}, controller=controller)
         env.prompt_context = _merge_prompt_context(
             build_hardware_prompt_context(
                 serial_port,
@@ -236,44 +228,25 @@ def _run_hardware_tuning_with_tui(
     initial_pid: Optional[Dict[str, float]] = None,
     prompt_context_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    from sim.tui import SimulationTUIApp
+    def run_round(
+        pid: Optional[Dict[str, float]],
+        event_sink: QueueEventSink,
+        controller: SimulationController,
+    ) -> Dict[str, Any]:
+        return _run_hardware_tuning_loop(
+            serial_port,
+            event_sink=event_sink,
+            controller=controller,
+            emit_console=False,
+            initial_pid=pid,
+            prompt_context_overrides=prompt_context_overrides,
+        )
 
-    event_queue: Queue[Dict[str, Any]] = Queue()
-    controller = SimulationController()
-    event_sink = QueueEventSink(event_queue)
-    result_box: Dict[str, Any] = {}
-    language = get_language()
-
-    def make_worker(pid: Optional[Dict[str, float]]) -> Callable[[], None]:
-        def worker() -> None:
-            result = _run_hardware_tuning_loop(
-                serial_port,
-                event_sink=event_sink,
-                controller=app.controller,
-                emit_console=False,
-                initial_pid=pid,
-                prompt_context_overrides=prompt_context_overrides,
-            )
-            result_box["result"] = result
-            app._last_result = result
-
-        return worker
-
-    def next_round_factory(last_result: Dict[str, Any]) -> Callable[[], None]:
-        pid = last_result.get("final_pid")
-        return make_worker(pid if isinstance(pid, dict) else None)
-
-    app = SimulationTUIApp(
-        event_queue=event_queue,
-        controller=controller,
-        worker_target=make_worker(initial_pid),
-        event_sink=event_sink,
+    return run_tui_tuning_session(
         mode_label="Hardware",
-        language=language,
-        next_round_factory=next_round_factory,
+        initial_pid=initial_pid,
+        run_round=run_round,
     )
-    app.run()
-    return result_box.get("result", {})
 
 
 def _run_hardware_tuning_plain(
@@ -315,9 +288,7 @@ def run_hardware_tuner(
         try:
             return _run_hardware_tuning_with_tui(serial_port, **runner_kwargs)
         except Exception as exc:
-            print(f"[WARN] Failed to start the TUI ({exc}); falling back to plain output.")
-            if bool(CONFIG.get("LLM_DEBUG_OUTPUT")):
-                traceback.print_exc()
+            warn_tui_fallback(exc)
     try:
         return _run_hardware_tuning_plain(serial_port, **runner_kwargs)
     except Exception as exc:
