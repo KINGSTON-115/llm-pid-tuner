@@ -402,4 +402,4 @@ This tool reduces tuning pain. It does not replace hardware safety design.
 
 ## License
 
-`CC BY-NC-SA 4.0`
+[MIT License](../../LICENSE)
