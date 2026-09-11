@@ -282,8 +282,95 @@ If you want to save real-time data during the tuning process (timestamp, setpoin
 | Ollama                          | `http://localhost:11434/v1` | `openai`        |
 | LM Studio                       | `http://localhost:1234/v1`  | `openai`        |
 | Anthropic Claude                | `https://api.anthropic.com` | `anthropic`     |
+| OrcaRouter (API key)            | `https://api.orcarouter.ai/v1` | `orcarouter` |
+| OrcaRouter (sign in)            | `https://api.orcarouter.ai/v1` | `orcarouter_oauth` |
 
 The current runtime is hardened for OpenAI-compatible endpoints and includes a more direct HTTP fallback path when SDK behavior is not enough.
+
+### OrcaRouter
+
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible AI gateway that
+runs one endpoint for models and agents, with adaptive routing, automatic
+failover, zero-markup inference, observability, guardrails and agent-tool
+governance. Because the wire format is OpenAI-compatible, it drops into the
+existing transport without touching the tuning loop or the PID safety layer.
+
+There are **two ways to authenticate**, and they are independent — use
+whichever fits your machine:
+
+```bash
+# 1. You already hold a key (sk-orca-...)
+python tuner.py --orcarouter-key sk-orca-your-key
+
+# 2. Sign in and let OrcaRouter issue one (OAuth 2.0 + PKCE, opens a browser)
+python tuner.py --orcarouter-login
+
+# No browser (SSH, container, CI)? Paste a code instead.
+python tuner.py --orcarouter-login --orcarouter-flow B
+
+# Review or remove the stored credential without printing the key
+python tuner.py --orcarouter-status
+python tuner.py --orcarouter-logout
+```
+
+Either way the key lands in the same place every other provider secret lives —
+`config.json`, or the `ORCAROUTER_API_KEY` environment variable — and the tool
+is switched to the matching provider for you. There is no second secret store.
+
+Prefer a page? `python tuner.py --orcarouter-settings` serves the provider
+settings on loopback so you can paste or clear a key, start the login, and pick
+a model from the live catalog.
+
+#### Authentication
+
+| Method | Provider value | Where the key comes from |
+| :----- | :------------- | :----------------------- |
+| API key | `orcarouter` | You paste an existing `sk-orca-…` key. |
+| Account login | `orcarouter_oauth` | A browser authorization issues one. |
+
+The login uses OAuth 2.0 with PKCE (`S256`): a fresh verifier is generated per
+attempt and never leaves the process, so an intercepted authorization code
+cannot be redeemed by anyone else. No client secret is involved and there is
+no redirect URI to register first. With `--orcarouter-flow A` (the default) a
+short-lived listener on `127.0.0.1` receives the code automatically; with
+`--orcarouter-flow B` the consent screen shows a code you paste back, which is
+what you want on a headless box.
+
+**The issued key is durable, not a refresh token.** OrcaRouter returns a normal
+API key that belongs to your account — it is billed to you, listed in your
+console, and revocable at any time from
+[your authorized apps](https://www.orcarouter.ai/console/authorized-apps). The
+tool reuses the stored key until OrcaRouter revokes it; it never re-authorizes
+on every launch and never fakes a refresh grant. If the gateway rejects a key
+with `401`, that credential is marked `needs_reauth` and you re-run the login.
+(The consent endpoint allows at most 10 PKCE-issued keys per user per 24 hours.)
+
+#### Configuration
+
+```json
+{
+  "LLM_PROVIDER": "orcarouter",
+  "ORCAROUTER_API_KEY": "sk-orca-...",
+  "LLM_MODEL_NAME": "orcarouter/auto"
+}
+```
+
+`ORCAROUTER_BASE_URL` sets a shared self-hosted base; `ORCAROUTER_AUTH_BASE_URL`
+and `ORCAROUTER_API_BASE_URL` override authentication and inference separately
+and take precedence. Authentication uses `https://www.orcarouter.ai`; inference
+and model discovery use `https://api.orcarouter.ai/v1`. Remote origins must be
+HTTPS — plain HTTP is accepted only for loopback development.
+
+#### Models
+
+Model IDs keep their vendor namespace (`openai/gpt-5.5`,
+`anthropic/claude-opus-4.8`, …). The model list is read from the live catalog
+at `GET https://api.orcarouter.ai/v1/models`, filtered per capability, and
+cached for the current session. When discovery is unavailable the tool falls
+back to a small verified catalog and shows that it is degraded, rather than
+letting you type a model name that might not exist.
+
+`python doctor.py` checks reachability against the same `/models` endpoint.
 
 ---
 

@@ -11,6 +11,7 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional
 
 from core.console import append_console_log
+from llm import orcarouter
 from llm.prompts import SYSTEM_PROMPT, build_user_prompt, get_system_prompt
 from llm.response_parser import parse_json_response
 from llm.stream_formatter import JSONStreamFormatter
@@ -35,6 +36,13 @@ class LLMTuner:
         self.base_url = (base_url or "").rstrip("/")
         self.model = model
         self.provider_choice = self._normalize_provider_choice(provider)
+        # OrcaRouter is a first-class provider: resolve its origins and
+        # credential from the single credential seam before transport
+        # selection, then reuse the unchanged OpenAI-compatible transport.
+        self.orcarouter: Optional[orcarouter.OrcaRouterCredential] = None
+        self.orcarouter_origins: Optional[orcarouter.OrcaRouterOrigins] = None
+        if orcarouter.is_orcarouter_provider(self.provider_choice):
+            self._configure_orcarouter()
         self.provider = self._resolve_transport()
         self.timeout = timeout
         self.debug_output = debug_output
@@ -48,6 +56,40 @@ class LLMTuner:
         self.use_sdk = isinstance(self.llm_client, (OpenAISDKProvider, AnthropicSDKProvider))
         self.client = getattr(self.llm_client, "client", None)
         self.requests = getattr(self.llm_client, "requests", None)
+
+    def _configure_orcarouter(self) -> None:
+        """Point the provider at OrcaRouter's origins and credential.
+
+        Both authentication choices (a pasted API key and the PKCE login)
+        produce the same credential shape, so nothing below this line needs
+        to know which one was used.
+        """
+        from core.config import CONFIG
+
+        origins = orcarouter.resolve_origins(CONFIG)
+        self.orcarouter_origins = origins
+        record = orcarouter.resolve_credential(CONFIG, explicit_key=self.api_key)
+        if not record.is_set:
+            raise orcarouter.OrcaRouterError(
+                "OrcaRouter is selected but no API key is configured. "
+                "Paste one into ORCAROUTER_API_KEY, or run "
+                "`python tuner.py --orcarouter-login` to authorize in a browser."
+            )
+        if record.state == orcarouter.REAUTH_NEEDED:
+            raise orcarouter.OrcaRouterError(
+                "The stored OrcaRouter key was rejected by the gateway. "
+                "Run `python tuner.py --orcarouter-login` to issue a new one."
+            )
+        self.orcarouter = orcarouter.OrcaRouterCredential(
+            api_key=record.api_key,
+            source=record.source or "api_key",
+            generation=record.generation,
+            scope=record.scope or orcarouter.REQUESTED_SCOPE,
+        )
+        self.api_key = record.api_key
+        # Inference always uses the API origin, never the auth origin.
+        self.base_url = origins.api_base
+        self.provider_choice = "openai"
 
     def _initialize_provider(self) -> BaseLLMProvider:
         try:
