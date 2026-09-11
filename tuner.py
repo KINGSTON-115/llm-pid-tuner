@@ -15,12 +15,14 @@ from __future__ import annotations
 import argparse
 import time
 import traceback
+import webbrowser
 from typing import Any, Dict, List, Optional
 
 from core.config import CONFIG, initialize_runtime_config
 from core.console import choose_ui_mode, warn_tui_fallback
 from hw.bridge import SerialBridge, safe_pause, select_serial_port
 from hw.profiles import DEFAULT_HARDWARE_PROFILE, normalize_hardware_profile
+from llm import orcarouter
 from llm.client import LLMTuner
 from core.tuning_engine import run_tuning_engine
 from core.adapters import HardwareEnv
@@ -51,6 +53,54 @@ def build_parser() -> argparse.ArgumentParser:
         "--plain",
         action="store_true",
         help="Disable the Textual dashboard and use plain console logs.",
+    )
+    # The two OrcaRouter entry points, side by side.  --orcarouter-login is
+    # OAuth 2.0 + PKCE and issues a key; --orcarouter-key accepts one the
+    # user already holds.  Neither replaces the other.
+    parser.add_argument(
+        "--orcarouter-login",
+        action="store_true",
+        help=(
+            "Sign in to OrcaRouter with OAuth 2.0 + PKCE and store the issued "
+            "API key. No browser available? Add --orcarouter-flow B to paste "
+            "a code instead."
+        ),
+    )
+    parser.add_argument(
+        "--orcarouter-key",
+        metavar="SK_ORCA_KEY",
+        help=(
+            "Store an existing OrcaRouter API key (sk-orca-...) and switch the "
+            "provider to OrcaRouter - API. Pair it with --orcarouter-login's "
+            "sibling entry point rather than replacing it."
+        ),
+    )
+    parser.add_argument(
+        "--orcarouter-flow",
+        choices=("A", "B"),
+        default="A",
+        help=(
+            "PKCE delivery: A = loopback redirect (default, needs a browser "
+            "and a free local port), B = out-of-band code shown on screen."
+        ),
+    )
+    parser.add_argument(
+        "--orcarouter-status",
+        action="store_true",
+        help="Show the stored OrcaRouter credential without printing the key.",
+    )
+    parser.add_argument(
+        "--orcarouter-settings",
+        action="store_true",
+        help=(
+            "Open the local OrcaRouter settings page: paste or clear an API "
+            "key, start the PKCE login, and pick a model from the live catalog."
+        ),
+    )
+    parser.add_argument(
+        "--orcarouter-logout",
+        action="store_true",
+        help="Clear the stored OrcaRouter credential.",
     )
     return parser
 
@@ -298,8 +348,129 @@ def run_hardware_tuner(
         return {"completed_reason": "error", "error": str(exc)}
 
 
+def _apply_orcarouter_credential(credential) -> None:
+    """Persist a credential into the config store every provider already uses."""
+    from core.config import save_config
+
+    store = orcarouter.OrcaRouterCredentialStore(CONFIG)
+    record = store.save(credential)
+    # Selecting the provider is part of the definition: a provider block that
+    # nothing points at would leave the tool on its built-in default.
+    if record.source == orcarouter.PROVIDER_ID_PKCE:
+        CONFIG["LLM_PROVIDER"] = orcarouter.PROVIDER_ID_PKCE
+    else:
+        CONFIG["LLM_PROVIDER"] = orcarouter.PROVIDER_ID
+    if not str(CONFIG.get("LLM_MODEL_NAME", "")).strip() or CONFIG.get(
+        "LLM_MODEL_NAME"
+    ) == "gpt-4o":
+        CONFIG["LLM_MODEL_NAME"] = "orcarouter/auto"
+    CONFIG["LLM_API_BASE_URL"] = orcarouter.resolve_origins(CONFIG).api_base
+    save_config(verbose=True)
+    print(
+        f"[OK] OrcaRouter credential stored via {record.source} "
+        f"(key={record.masked()}, generation={record.generation})."
+    )
+    print(
+        "[INFO] Provider set to "
+        f"{CONFIG['LLM_PROVIDER']}; model {CONFIG['LLM_MODEL_NAME']}. "
+        "Run `python tuner.py --orcarouter-status` to review it."
+    )
+
+
+def run_orcarouter_command(args) -> int:
+    """The two OrcaRouter entry points, plus status and logout."""
+    from core.config import save_config
+
+    initialize_runtime_config(create_if_missing=True, verbose=False)
+    store = orcarouter.OrcaRouterCredentialStore(CONFIG)
+    origins = orcarouter.resolve_origins(CONFIG)
+
+    if args.orcarouter_status:
+        record = store.load()
+        if not record.is_set:
+            print("[INFO] No OrcaRouter credential stored.")
+            return 0
+        print("OrcaRouter credential")
+        print(f"  api_key     : {record.masked()}")
+        print(f"  auth_method : {record.source or 'unknown'}")
+        print(f"  scope       : {record.scope or '(not recorded)'}")
+        print(f"  state       : {record.state}")
+        print(f"  auth origin : {origins.auth_base}")
+        print(f"  api origin  : {origins.api_base}")
+        return 0
+
+    if args.orcarouter_logout:
+        record = store.clear()
+        save_config(verbose=True)
+        print(f"[OK] Cleared the stored OrcaRouter credential (generation {record.generation}).")
+        return 0
+
+    if args.orcarouter_key:
+        key = str(args.orcarouter_key)
+        credential = orcarouter.ApiKeyCredentialSource(api_key=key).acquire(
+            on_hint=lambda message: print(f"[WARN] {message}")
+        )
+        _apply_orcarouter_credential(credential)
+        return 0
+
+    if args.orcarouter_settings:
+        from core.config import save_config
+        from sim.orcarouter_gui import (
+            OrcaRouterCatalogService,
+            OrcaRouterSettingsServer,
+        )
+
+        service = OrcaRouterCatalogService(CONFIG, origins=origins)
+        with OrcaRouterSettingsServer(
+            CONFIG, service=service, persist=save_config
+        ) as server:
+            url = server.base_url
+            print(f"[INFO] OrcaRouter settings: {url}")
+            print(
+                "[INFO] Paste an existing API key, or use Connect with OrcaRouter "
+                "to authorize in a browser. Press Ctrl+C when you are done."
+            )
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+            try:
+                while True:
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                print("\n[INFO] Closing the OrcaRouter settings page.")
+        return 0
+
+    if args.orcarouter_login:
+        flow = str(args.orcarouter_flow or "A").upper()
+        source = orcarouter.PKCECredentialSource(
+            origins=origins,
+            flow=flow,
+            open_browser=webbrowser.open,
+        )
+        try:
+            credential = source.acquire(on_hint=lambda message: print(f"[INFO] {message}"))
+        except orcarouter.OrcaRouterError as exc:
+            print(f"[ERROR] OrcaRouter login failed: {exc}")
+            return 1
+        _apply_orcarouter_credential(credential)
+        return 0
+
+    print("Nothing to do. Use --orcarouter-login, --orcarouter-key, "
+          "--orcarouter-status or --orcarouter-logout.")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     args = build_parser().parse_args(argv)
+    if (
+        args.orcarouter_login
+        or args.orcarouter_key
+        or args.orcarouter_status
+        or args.orcarouter_logout
+        or args.orcarouter_settings
+    ):
+        raise SystemExit(run_orcarouter_command(args))
     result = run_hardware_tuner(args.serial_port, force_plain=args.plain)
     if isinstance(result, dict) and result.get("completed_reason") in {"error", "keyboard_interrupt"}:
         safe_pause("Press Enter to exit...")

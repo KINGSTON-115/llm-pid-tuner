@@ -334,8 +334,64 @@ $env:LLM_PROVIDER="openai"
 | Ollama                           | `http://localhost:11434/v1` | `openai`        | 本地免费部署                                |
 | LM Studio                        | `http://localhost:1234/v1`  | `openai`        | 本地可视化较友好                            |
 | Anthropic Claude                 | `https://api.anthropic.com` | `anthropic`     | 原生接口用这个                              |
+| OrcaRouter（API Key）            | `https://api.orcarouter.ai/v1` | `orcarouter` | 粘贴已有的 `sk-orca-…` Key                  |
+| OrcaRouter（浏览器登录）         | `https://api.orcarouter.ai/v1` | `orcarouter_oauth` | 登录后由 OrcaRouter 签发 Key          |
 
 这个项目现在做了更稳的解析和回退处理，**对 OpenAI 兼容接口更友好**。如果 SDK 路径不顺，它也会尽量走更直接的 HTTP 路径，减少“能调通 API 但程序不工作”的情况。
+
+### OrcaRouter
+
+[OrcaRouter](https://www.orcarouter.ai) 是 OpenAI 兼容的 AI 网关：模型与 Agent 共用一个入口，自带自适应路由、自动故障转移、零加价推理、可观测性、护栏与 Agent 工具治理。接口是 OpenAI 线格式，因此接的是既有传输层，**不动调参循环，也不动 PID 安全逻辑**。
+
+**两种认证方式互相独立**，按机器情况任选：
+
+```bash
+# 1. 你已经有 Key（sk-orca-…）
+python tuner.py --orcarouter-key sk-orca-your-key
+
+# 2. 浏览器登录，由 OrcaRouter 签发一个（OAuth 2.0 + PKCE）
+python tuner.py --orcarouter-login
+
+# 没有浏览器（SSH / 容器 / CI）：改用回显验证码
+python tuner.py --orcarouter-login --orcarouter-flow B
+
+# 查看或清除已保存的凭据（不会打印完整 Key）
+python tuner.py --orcarouter-status
+python tuner.py --orcarouter-logout
+```
+
+两种方式得到的 Key 都存放在**项目原有的密钥位置**（`config.json`，或 `ORCAROUTER_API_KEY` 环境变量），并自动切换好 provider，不新增第二个凭据库。
+
+想用页面操作：`python tuner.py --orcarouter-settings` 会在本机回环地址上打开设置页，可以粘贴/清除 Key、发起登录，并从实时目录里选模型。
+
+#### 认证方式
+
+| 方式 | `LLM_PROVIDER` | Key 的来源 |
+| :--- | :------------- | :--------- |
+| API Key | `orcarouter` | 你自己粘贴已有的 `sk-orca-…` |
+| 浏览器登录 | `orcarouter_oauth` | 浏览器授权后由 OrcaRouter 签发 |
+
+登录使用 OAuth 2.0 + PKCE（`S256`）：每次尝试都会新生成 verifier，且它**不会离开本进程**，所以即使授权码被截获也无法被别人兑换。不需要 client secret，也不需要预注册回调地址。默认 `--orcarouter-flow A` 会在 `127.0.0.1` 上临时监听并自动接收回调；`--orcarouter-flow B` 则把验证码显示出来由你粘贴回去，适合无图形界面的机器。
+
+**签发的 Key 是长期凭据，不是 refresh token。** OrcaRouter 返回的是属于你账号的普通 API Key：计入你的账单、在控制台可见、随时可在[已授权应用](https://www.orcarouter.ai/console/authorized-apps)一键撤销。程序会一直复用它直到被撤销，**不会每次启动都重新授权，也不会伪造 refresh 授权**。若网关返回 `401`，该凭据会被标记为 `needs_reauth`，重新登录即可。（同一用户每 24 小时最多签发 10 个 PKCE Key。）
+
+#### 配置
+
+```json
+{
+  "LLM_PROVIDER": "orcarouter",
+  "ORCAROUTER_API_KEY": "sk-orca-...",
+  "LLM_MODEL_NAME": "orcarouter/auto"
+}
+```
+
+`ORCAROUTER_BASE_URL` 用于自建部署的共享地址；`ORCAROUTER_AUTH_BASE_URL` 与 `ORCAROUTER_API_BASE_URL` 可分别覆盖认证与推理地址，且优先级更高。认证走 `https://www.orcarouter.ai`，推理与模型目录走 `https://api.orcarouter.ai/v1`。非回环地址强制 HTTPS，仅回环开发允许 HTTP。
+
+#### 模型
+
+模型 ID 保留厂商命名空间（`openai/gpt-5.5`、`anthropic/claude-opus-4.8` 等）。模型列表来自实时目录 `GET https://api.orcarouter.ai/v1/models`，按能力过滤并在本次会话内缓存；目录不可用时会回退到一份经过核对的小型列表并**明确标注为降级状态**，而不是让你手填一个可能不存在的模型名。
+
+`python doctor.py` 会用同一个 `/models` 端点做连通性检查。
 
 ---
 

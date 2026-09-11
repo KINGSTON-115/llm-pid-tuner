@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Mapping
 
 from core.compat import slotted_dataclass
+from llm.orcarouter import (
+    effective_api_key,
+    is_orcarouter_provider,
+    resolve_origins,
+)
 from sim.simulink_paths import (
     normalize_simulink_block_path,
     normalize_simulink_block_paths,
@@ -41,6 +46,14 @@ def models_endpoint(
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
             },
+        )
+
+    if is_orcarouter_provider(normalized_provider):
+        # Discovery uses the inference origin's /v1, never the auth origin.
+        origins = resolve_origins({}, shared_base=normalized_base_url or None)
+        return (
+            f"{origins.api_base}/models",
+            {"Authorization": f"Bearer {api_key}"},
         )
 
     return (
@@ -211,6 +224,16 @@ def collect_doctor_checks(
         )
     )
 
+    # The OrcaRouter key has its own slot, so the generic placeholder check
+    # must not fire for a user who selected the OrcaRouter provider.
+    orcarouter_selected = is_orcarouter_provider(config.get("LLM_PROVIDER"))
+    effective_key = (
+        effective_api_key(config)
+        if orcarouter_selected
+        else str(config.get("LLM_API_KEY", "") or "")
+    )
+    configured_key = effective_key or str(config.get("LLM_API_KEY", "") or "")
+
     required_fields = (
         "LLM_API_KEY",
         "LLM_API_BASE_URL",
@@ -218,7 +241,11 @@ def collect_doctor_checks(
         "LLM_PROVIDER",
     )
     missing = [field for field in required_fields if not config.get(field)]
-    placeholder_key = str(config.get("LLM_API_KEY", "")) == "your-api-key-here"
+    if orcarouter_selected and not config.get("LLM_API_KEY"):
+        missing = [field for field in missing if field != "LLM_API_KEY"]
+    placeholder_key = configured_key == "your-api-key-here" or (
+        orcarouter_selected and not effective_key
+    )
     if missing or placeholder_key:
         detail: list[str] = []
         if missing:
@@ -245,13 +272,22 @@ def collect_doctor_checks(
                 (
                     f"{tr_fn('提供商', 'provider')}={config.get('LLM_PROVIDER')} "
                     f"{tr_fn('模型', 'model')}={config.get('LLM_MODEL_NAME')} "
-                    f"api_key={mask_secret(str(config.get('LLM_API_KEY', '')))}"
+                    f"api_key={mask_secret(configured_key)}"
+                    + (
+                        f" auth_method={config.get('ORCAROUTER_AUTH_METHOD') or 'api_key'}"
+                        if orcarouter_selected
+                        else ""
+                    )
                 ),
             )
         )
 
     base_url = str(config.get("LLM_API_BASE_URL", "")).strip()
     provider = str(config.get("LLM_PROVIDER", "openai")).strip()
+    if is_orcarouter_provider(provider):
+        # OrcaRouter's inference origin is a fixed public default; the user
+        # is not required to also fill in LLM_API_BASE_URL.
+        base_url = str(config.get("ORCAROUTER_API_BASE_URL", "") or "").strip()
     if not base_url:
         checks.append(
             DoctorCheck(
@@ -264,7 +300,7 @@ def collect_doctor_checks(
         endpoint, headers = models_endpoint(
             provider,
             base_url,
-            str(config.get("LLM_API_KEY", "")),
+            configured_key,
         )
         try:
             response = requests_get(endpoint, headers=headers, timeout=5)
