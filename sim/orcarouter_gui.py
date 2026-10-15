@@ -22,6 +22,7 @@ keeps its existing behavior untouched.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import urllib.parse
@@ -232,6 +233,7 @@ class OrcaRouterCatalogService:
         self.origins = origins or orcarouter.resolve_origins(config)
         self._fetcher = fetcher or orcarouter.fetch_catalog
         self._last_known_good: Optional[List[ModelInfo]] = None
+        self.last_result: Optional[CatalogResult] = None
         self._lock = threading.Lock()
 
     def _credential(self) -> OrcaRouterCredential:
@@ -245,15 +247,30 @@ class OrcaRouterCatalogService:
 
     def load(self, capability: str = CAPABILITY_CHAT) -> CatalogResult:
         with self._lock:
-            result = self._fetcher(
-                self._credential(),
-                self.origins,
-                capability=capability,
-                last_known_good=self._last_known_good,
-            )
+            previous = self._last_known_good
+        # Network IO must never hold the lock used by UI model selection.
+        result = self._fetcher(
+            self._credential(), self.origins, capability=capability,
+            last_known_good=previous,
+        )
+        with self._lock:
             if not result.degraded and result.models:
                 self._last_known_good = list(result.models)
+            self.last_result = result
             return result
+
+    def select_model(self, model_id: str, persist: Callable[[], Any]) -> None:
+        with self._lock:
+            result = self.last_result
+            if result is None or model_id not in {
+                model.id for model in result.for_capability(CAPABILITY_CHAT)
+            }:
+                raise orcarouter.OrcaRouterError("Pick a chat model from the current catalog.")
+            previous = self._config.get("LLM_MODEL_NAME", "")
+            self._config["LLM_MODEL_NAME"] = model_id
+            if persist() is False:
+                self._config["LLM_MODEL_NAME"] = previous
+                raise orcarouter.OrcaRouterError("Could not save config.json.")
 
     def to_json(self, result: CatalogResult, capability: str) -> Dict[str, Any]:
         """Minimal model metadata for the browser - never the key."""
@@ -375,7 +392,13 @@ function renderOptions() {
     meta.className = "meta";
     meta.textContent = (model.input_modalities || []).join("+");
     row.append(name, meta);
-    row.addEventListener("click", () => {
+    row.addEventListener("click", async () => {
+      const res = await fetch("/api/model", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({model: model.id})
+      });
+      const data = await res.json();
+      if (!data.ok) { $("catalog-status").textContent = data.message; return; }
       state.selected = model.id;
       closePanel();
       renderOptions();
@@ -421,16 +444,23 @@ function openPanel() {
 }
 
 async function loadCatalog() {
+  const attempt = ++state.catalogAttempt;
   const cap = state.capability === "chat" ? "chat" : state.capability;
-  const res = await fetch("/api/catalog?capability=" + encodeURIComponent(cap));
-  state.catalog = await res.json();
-  renderOptions();
-  updateStatus();
+  try {
+    const res = await fetch("/api/catalog?capability=" + encodeURIComponent(cap));
+    const data = await res.json();
+    if (attempt !== state.catalogAttempt) return;
+    if (!res.ok) throw new Error(data.message || "Model discovery failed");
+    state.catalog = data;
+    renderOptions();
+    updateStatus();
+  } catch (err) {
+    if (attempt === state.catalogAttempt) $("catalog-status").textContent = String(err);
+  }
 }
 
 function providerChanged() {
-  state.attempt += 1;
-  state.generation += 1;
+  state.catalogAttempt += 1;
   const provider = $("provider-select").value;
   const isOrca = provider === "orcarouter" || provider === "orcarouter_oauth";
   $("orcarouter-panel").hidden = !isOrca;
@@ -447,7 +477,6 @@ function providerChanged() {
 }
 
 async function refreshCatalog() {
-  state.attempt += 1;
   await loadCatalog();
 }
 
@@ -462,7 +491,7 @@ async function saveKey() {
   $("orcarouter-status").textContent = data.message;
   $("orcarouter-status").dataset.tone = data.ok ? "ok" : "error";
   $("orcarouter-api-key").value = "";
-  if (data.ok) { await loadCatalog(); }
+  if (data.ok) { await loadStatus(); await loadCatalog(); }
 }
 
 async function clearKey() {
@@ -488,10 +517,28 @@ async function startLogin() {
     const data = await res.json();
     if (generation !== state.attempt) return;   // a newer attempt won
     if (data.authorize_url) {
-      $("orcarouter-url").textContent = data.authorize_url;
+      const link = document.createElement("a");
+      link.href = data.authorize_url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open OrcaRouter authorization";
+      $("orcarouter-url").replaceChildren(link);
       $("orcarouter-url").hidden = false;
+      const opened = window.open(data.authorize_url, "_blank", "noopener,noreferrer");
     }
     $("orcarouter-status").textContent = data.message;
+    if (!data.ok) { releaseLogin(data.message); return; }
+    const poll = async () => {
+      if (generation !== state.attempt) return;
+      try {
+        const status = await (await fetch("/api/connect/status")).json();
+        if (generation !== state.attempt) return;
+        if (status.state === "pending") { setTimeout(poll, 300); return; }
+        releaseLogin(status.message);
+        if (status.state === "success") { await loadStatus(); await loadCatalog(); }
+      } catch (err) { releaseLogin("Connection status unavailable. Please retry."); }
+    };
+    setTimeout(poll, 300);
   } catch (err) {
     if (generation !== state.attempt) return;
     releaseLogin("Login could not be started: " + err);
@@ -527,7 +574,20 @@ window.addEventListener("pagehide", () => {
   } catch (err) {}
 });
 
-window.addEventListener("DOMContentLoaded", () => {
+async function loadStatus() {
+  const data = await (await fetch("/api/status")).json();
+  if (["orcarouter", "orcarouter_oauth"].includes(data.provider)) {
+    $("provider-select").value = data.provider;
+  }
+  state.selected = data.model || "";
+  renderTrigger();
+  $("orcarouter-status").textContent = data.has_key
+    ? "Stored key: " + data.masked_key + ". Changes apply to the next tuning session."
+    : "No OrcaRouter key stored. Paste a key or connect below.";
+}
+
+window.addEventListener("DOMContentLoaded", async () => {
+  state.catalogAttempt = 0;
   $("provider-select").addEventListener("change", providerChanged);
   $("model-trigger").addEventListener("click", () => {
     if ($("model-listbox").hidden) openPanel(); else closePanel();
@@ -547,6 +607,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (wrap && !wrap.contains(event.target)) closePanel();
   });
   providerChanged();
+  await loadStatus();
 });
 """
 
@@ -577,8 +638,6 @@ def build_settings_page(icon_url: str = orcarouter.ORCAROUTER_ICON_URL) -> bytes
     <legend>Provider</legend>
     <label for="provider-select">Model provider</label>
     <select id="provider-select">
-      <option value="openai">OpenAI</option>
-      <option value="anthropic">Anthropic</option>
       <option value="orcarouter" selected>OrcaRouter - API</option>
       <option value="orcarouter_oauth">OrcaRouter - Auth</option>
     </select>
@@ -614,7 +673,7 @@ def build_settings_page(icon_url: str = orcarouter.ORCAROUTER_ICON_URL) -> bytes
   <fieldset id="model-field">
     <legend>Model</legend>
     <div class="row">
-      <label style="margin:0"><input type="checkbox" id="attach-image"> Attach an image</label>
+      <label style="margin:0"><input type="checkbox" id="attach-image"> Filter image-capable chat models</label>
       <button type="button" id="catalog-refresh">Refresh</button>
     </div>
     <div class="selector">
@@ -657,6 +716,8 @@ class _SettingsHandler(BaseHTTPRequestHandler):
 
     def _read_json(self) -> Dict[str, Any]:
         length = int(self.headers.get("Content-Length") or 0)
+        if length < 0 or length > 16384:
+            raise ValueError("Request body is too large.")
         raw = self.rfile.read(length) if length else b"{}"
         try:
             parsed = json.loads(raw.decode("utf-8"))
@@ -665,7 +726,19 @@ class _SettingsHandler(BaseHTTPRequestHandler):
         return parsed if isinstance(parsed, dict) else {}
 
     # -- routes -----------------------------------------------------------
+    def _local_request(self) -> bool:
+        expected = f"127.0.0.1:{self.server.server_port}"
+        origin = self.headers.get("Origin")
+        if self.headers.get("Host") != expected or (
+            origin and origin != f"http://{expected}"
+        ):
+            self._send_json({"ok": False, "message": "Use the local settings page."}, 403)
+            return False
+        return True
+
     def do_GET(self) -> None:  # noqa: N802 - http.server API
+        if not self._local_request():
+            return
         parsed = urllib.parse.urlsplit(self.path)
         if parsed.path in {"/", "/index.html"}:
             self._send(200, build_settings_page(self.server.icon_url), "text/html; charset=utf-8")
@@ -675,6 +748,9 @@ class _SettingsHandler(BaseHTTPRequestHandler):
             capability = (query.get("capability") or [CAPABILITY_CHAT])[0]
             result = self.server.service.load(capability)
             self._send_json(self.server.service.to_json(result, capability))
+            return
+        if parsed.path == "/api/connect/status":
+            self._send_json(self.server.owner.login_status())
             return
         if parsed.path == "/api/status":
             record = OrcaRouterCredentialStore(self.server.config).load()
@@ -686,12 +762,22 @@ class _SettingsHandler(BaseHTTPRequestHandler):
                     "state": record.state,
                     "auth_base": self.server.service.origins.auth_base,
                     "api_base": self.server.service.origins.api_base,
+                    "provider": self.server.config.get("LLM_PROVIDER", ""),
+                    "model": self.server.config.get("LLM_MODEL_NAME", ""),
                 }
             )
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
 
     def do_POST(self) -> None:  # noqa: N802 - http.server API
+        if not self._local_request():
+            return
+        try:
+            self._post()
+        except (ValueError, orcarouter.OrcaRouterError) as exc:
+            self._send_json({"ok": False, "message": str(exc)}, 400)
+
+    def _post(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         config = self.server.config
 
@@ -703,8 +789,8 @@ class _SettingsHandler(BaseHTTPRequestHandler):
             except orcarouter.OrcaRouterError as exc:
                 self._send_json({"ok": False, "message": str(exc)}, status=400)
                 return
-            record = OrcaRouterCredentialStore(config).save(credential)
-            self.server.persist()
+            self.server.cancel_login()
+            record = orcarouter.activate_credential(config, credential, self.server.persist)
             self._send_json(
                 {
                     "ok": True,
@@ -714,11 +800,22 @@ class _SettingsHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/credential/clear":
+            self.server.cancel_login()
+            previous = dict(config)
             record = OrcaRouterCredentialStore(config).clear()
-            self.server.persist()
+            if self.server.persist() is False:
+                config.clear()
+                config.update(previous)
+                raise orcarouter.OrcaRouterError("Could not save config.json.")
             self._send_json(
                 {"ok": True, "message": f"Cleared the stored key (generation {record.generation})."}
             )
+            return
+
+        if parsed.path == "/api/model":
+            model = str(self._read_json().get("model", ""))
+            self.server.service.select_model(model, self.server.persist)
+            self._send_json({"ok": True, "message": "Model saved. Restart tuning to apply."})
             return
 
         if parsed.path == "/api/connect/start":
@@ -766,12 +863,14 @@ class OrcaRouterSettingsServer:
         self._httpd.icon_url = icon_url
         self._httpd.start_login = self.start_login
         self._httpd.cancel_login = self.cancel_login
+        self._httpd.owner = self
         self._thread: Optional[threading.Thread] = None
         # Login lock and generation guard: a late response from an old
         # attempt must never overwrite a newer login.
         self._login_lock = threading.Lock()
         self._login_generation = 0
         self._pending: Optional[orcarouter.LoopbackCallback] = None
+        self._login_result = {"state": "idle", "message": "No login pending."}
 
     # -- lifecycle --------------------------------------------------------
     @property
@@ -789,7 +888,8 @@ class OrcaRouterSettingsServer:
 
     def stop(self) -> None:
         self.cancel_login()
-        self._httpd.shutdown()
+        if self._thread is not None:
+            self._httpd.shutdown()
         self._httpd.server_close()
         if self._thread is not None:
             self._thread.join(timeout=5)
@@ -825,24 +925,29 @@ class OrcaRouterSettingsServer:
             pair = orcarouter.new_pkce_pair()
             source = self._source()
             if str(getattr(source, "flow", "A")).upper() == "B":
-                url = orcarouter.build_authorize_url(
-                    self.service.origins, pair, callback_url="oob"
-                )
                 return {
+                    "ok": False,
                     "attempt": generation,
-                    "authorize_url": url,
                     "message": (
-                        "Open the URL below, approve access, then paste the code "
-                        "on the command line to finish."
+                        "For out-of-band login, run tuner.py --orcarouter-login "
+                        "--orcarouter-flow B (or llm-pid-tuner.exe tune with those options)."
                     ),
                 }
 
-            handle = orcarouter.start_loopback_listener(pair.state)
+            handle = orcarouter.start_loopback_listener(pair.state, timeout=source.timeout)
             self._pending = handle
             url = orcarouter.build_authorize_url(
                 self.service.origins, pair, callback_url=handle.callback_url
             )
+            self._login_result = {"state": "pending", "message": "Waiting for browser approval."}
+            credential_generation = OrcaRouterCredentialStore(self.config).load().generation
+            threading.Thread(
+                target=self._complete_login,
+                args=(generation, credential_generation, handle, pair, source.timeout),
+                daemon=True,
+            ).start()
             return {
+                "ok": True,
                 "attempt": generation,
                 "authorize_url": url,
                 "message": (
@@ -851,11 +956,54 @@ class OrcaRouterSettingsServer:
                 ),
             }
 
+    def _complete_login(self, generation, credential_generation, handle, pair, timeout):
+        try:
+            outcome = handle.wait(timeout)
+            if outcome is None:
+                raise orcarouter.OrcaRouterPKCEError("Login timed out. Please try again.")
+            code, error = outcome
+            if error or not code:
+                raise orcarouter.OrcaRouterPKCEError("Authorization was denied or invalid. Please try again.")
+            # Never exchange or persist a cancelled/superseded attempt.
+            with self._login_lock:
+                if generation != self._login_generation:
+                    return
+            result = orcarouter.exchange_code(self.service.origins, pair, code, timeout=min(timeout, 30))
+            if not result.scope_is_usable:
+                raise orcarouter.OrcaRouterPKCEError("Login requires an api-scope key. Please reconnect.")
+            with self._login_lock:
+                if generation != self._login_generation or (
+                    OrcaRouterCredentialStore(self.config).load().generation != credential_generation
+                ):
+                    return
+                orcarouter.activate_credential(
+                    self.config,
+                    OrcaRouterCredential(result.key, "pkce", scope=result.scope),
+                    self.persist,
+                )
+                self._login_result = {"state": "success", "message": "Connected. Restart tuning to apply the saved settings."}
+                self._pending = None
+        except Exception:
+            with self._login_lock:
+                if generation == self._login_generation:
+                    self._login_result = {
+                        "state": "error",
+                        "message": "Login did not complete. Check network, approval and config.json permissions, then retry.",
+                    }
+                    self._pending = None
+        finally:
+            handle.close()
+
+    def login_status(self) -> Dict[str, Any]:
+        with self._login_lock:
+            return dict(self._login_result)
+
     def cancel_login(self, *, lock: bool = True) -> None:
         """Release the login lock on every terminal path."""
         if lock:
             with self._login_lock:
                 self._login_generation += 1
+                self._login_result = {"state": "cancelled", "message": "Login cancelled."}
                 handle, self._pending = self._pending, None
         else:
             handle, self._pending = self._pending, None
@@ -929,11 +1077,14 @@ class OrcaRouterPanelModel:
 
 def build_settings_app(config: Dict[str, Any]):
     """Build the Textual settings screen (imported lazily: textual is optional)."""
-    from textual.app import App, ComposeResult
-    from textual.containers import Horizontal, Vertical
+    import webbrowser
+    from core.config import save_config
+    from textual.app import ComposeResult
+    from textual.containers import Horizontal, VerticalScroll
     from textual.screen import ModalScreen
     from textual.widgets import Button, Input, Label, Select, Static
 
+    no_selection = getattr(Select, "NULL", Select.BLANK)
     service = OrcaRouterCatalogService(config)
 
     class OrcaRouterSettingsApp(ModalScreen[None]):
@@ -945,7 +1096,7 @@ def build_settings_app(config: Dict[str, Any]):
                          border: round $accent; padding: 1 2; background: $surface; }
         .orca-label { margin-top: 1; }
         #orca-status { margin-top: 1; color: $text-muted; }
-        #orca-actions { height: 3; }
+        #orca-actions, #orca-model-actions { height: 3; }
         """
 
         BINDINGS = [("escape", "dismiss", "Close")]
@@ -954,21 +1105,24 @@ def build_settings_app(config: Dict[str, Any]):
             super().__init__()
             self.language = language
             self.panel = OrcaRouterPanelModel()
+            self.login_server = OrcaRouterSettingsServer(config, service=service, persist=save_config)
 
         def tr(self, key: str) -> str:
             return tr(self.language, key)
 
         def compose(self) -> ComposeResult:
             provider_options = [
-                ("OpenAI", "openai"),
-                ("Anthropic", "anthropic"),
                 ("OrcaRouter - API", orcarouter.PROVIDER_ID),
                 ("OrcaRouter - Auth", orcarouter.PROVIDER_ID_PKCE),
             ]
-            yield Vertical(
+            current = config.get("LLM_PROVIDER", "")
+            if current not in {orcarouter.PROVIDER_ID, orcarouter.PROVIDER_ID_PKCE}:
+                current = orcarouter.PROVIDER_ID
+            self.panel.provider_changed(current)
+            yield VerticalScroll(
                 Label(self.tr("orca_title")),
                 Label(self.tr("orca_provider"), classes="orca-label"),
-                Select(provider_options, value=orcarouter.PROVIDER_ID, id="orca-provider"),
+                Select(provider_options, value=current, allow_blank=False, id="orca-provider"),
                 Label(self.tr("orca_auth"), classes="orca-label"),
                 Input(placeholder="sk-orca-...", password=True, id="orca-api-key"),
                 Horizontal(
@@ -981,6 +1135,8 @@ def build_settings_app(config: Dict[str, Any]):
                 Select([], id="orca-model"),
                 Horizontal(
                     Button(self.tr("orca_refresh"), id="orca-refresh"),
+                    Button("清除密钥" if self.language == "zh" else "Clear key", id="orca-clear"),
+                    Button("关闭" if self.language == "zh" else "Close", id="orca-close"),
                     id="orca-model-actions",
                 ),
                 Static("", id="orca-status"),
@@ -989,17 +1145,25 @@ def build_settings_app(config: Dict[str, Any]):
 
         def on_mount(self) -> None:
             self.query_one("#orca-cancel", Button).disabled = True
-            self._refresh_catalog()
+            self._queue_catalog()
+            self.set_interval(0.25, self._poll_login)
 
-        def _refresh_catalog(self) -> None:
+        async def on_unmount(self) -> None:
+            await asyncio.to_thread(self.login_server.stop)
+
+        def _queue_catalog(self) -> None:
+            self.run_worker(self._refresh_catalog(), group="orca-catalog", exclusive=True)
+
+        async def _refresh_catalog(self) -> None:
             self.panel.state.set_loading()
             self._set_status(self.panel.state.status_note())
             try:
-                result = service.load(CAPABILITY_CHAT)
+                result = await asyncio.to_thread(service.load, CAPABILITY_CHAT)
             except Exception as exc:  # keep the panel usable on any failure
                 self._set_status(f"Model discovery failed: {exc}")
                 return
             self.panel.set_catalog(result)
+            self.panel.state.restore_selected(str(config.get("LLM_MODEL_NAME", "")))
             self._render_options()
 
         def _render_options(self) -> None:
@@ -1009,9 +1173,9 @@ def build_settings_app(config: Dict[str, Any]):
             selector = self.query_one("#orca-model", Select)
             selector.set_options(options)
             if options:
-                selector.value = self.panel.state.selected or options[0][1]
+                selector.value = self.panel.state.selected or no_selection
             else:
-                selector.value = Select.BLANK
+                selector.value = no_selection
             self._set_status(self.panel.state.status_note())
 
         def _set_status(self, message: str) -> None:
@@ -1019,29 +1183,69 @@ def build_settings_app(config: Dict[str, Any]):
 
         def on_select_changed(self, event: Any) -> None:
             if event.select.id == "orca-provider":
+                if event.value is no_selection or str(event.value) == self.panel.state.provider:
+                    return
                 self.panel.provider_changed(str(event.value))
                 if self.panel.state.is_orcarouter:
-                    self._refresh_catalog()
+                    self._queue_catalog()
                 else:
                     self._render_options()
                 return
             if event.select.id == "orca-model":
                 value = event.value
-                if value is not Select.BLANK and value is not None:
-                    self.panel.state.select(str(value))
+                if value is not no_selection and value is not None:
+                    if str(value) == config.get("LLM_MODEL_NAME"):
+                        return
+                    if self.panel.state.select(str(value)):
+                        try:
+                            service.select_model(str(value), save_config)
+                        except orcarouter.OrcaRouterError as exc:
+                            self._set_status(str(exc))
+                        else:
+                            self._set_status("Model saved. Restart tuning to apply the settings.")
 
-        def on_button_pressed(self, event: Any) -> None:
+        async def on_button_pressed(self, event: Any) -> None:
             if event.button.id == "orca-refresh":
-                self._refresh_catalog()
+                self._queue_catalog()
             elif event.button.id == "orca-save-key":
                 self._save_key()
             elif event.button.id == "orca-connect":
-                self._set_status(
-                    "Approve the login in your browser. The issued key is "
-                    "stored next to your other provider secrets."
-                )
+                try:
+                    result = self.login_server.start_login()
+                    self._set_status(result["message"])
+                    if result.get("ok"):
+                        self.query_one("#orca-connect", Button).disabled = True
+                        self.query_one("#orca-cancel", Button).disabled = False
+                        await asyncio.to_thread(webbrowser.open, result["authorize_url"])
+                except Exception:
+                    self._set_status("Could not open browser login. Retry or paste an API key.")
             elif event.button.id == "orca-cancel":
+                self.login_server.cancel_login()
                 self._set_status("Login cancelled. Your stored key was not changed.")
+            elif event.button.id == "orca-clear":
+                self.login_server.cancel_login()
+                previous = dict(config)
+                OrcaRouterCredentialStore(config).clear()
+                if save_config() is False:
+                    config.clear()
+                    config.update(previous)
+                    self._set_status("Could not save config.json.")
+                else:
+                    self._set_status("Stored key cleared.")
+            elif event.button.id == "orca-close":
+                self.dismiss(None)
+
+        def _poll_login(self) -> None:
+            status = self.login_server.login_status()
+            pending = status["state"] == "pending"
+            was_pending = self.query_one("#orca-connect", Button).disabled
+            self.query_one("#orca-connect", Button).disabled = pending
+            self.query_one("#orca-cancel", Button).disabled = not pending
+            if was_pending and not pending:
+                self._set_status(status["message"])
+                if status["state"] == "success":
+                    self.query_one("#orca-provider", Select).value = config["LLM_PROVIDER"]
+                    self._queue_catalog()
 
         def _save_key(self) -> None:
             from core.config import save_config
@@ -1052,11 +1256,16 @@ def build_settings_app(config: Dict[str, Any]):
             except orcarouter.OrcaRouterError as exc:
                 self._set_status(str(exc))
                 return
-            record = OrcaRouterCredentialStore(config).save(credential)
-            save_config()
+            self.login_server.cancel_login()
+            try:
+                record = orcarouter.activate_credential(config, credential, save_config)
+            except Exception:
+                self._set_status("Could not save config.json. Check folder permissions.")
+                return
             self.query_one("#orca-api-key", Input).value = ""
+            self.query_one("#orca-provider", Select).value = config["LLM_PROVIDER"]
             self._set_status(f"Stored the API key ({record.masked()}).")
-            self._refresh_catalog()
+            self._queue_catalog()
 
         def action_dismiss(self) -> None:
             self.dismiss(None)

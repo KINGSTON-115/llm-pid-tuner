@@ -352,20 +352,7 @@ def _apply_orcarouter_credential(credential) -> None:
     """Persist a credential into the config store every provider already uses."""
     from core.config import save_config
 
-    store = orcarouter.OrcaRouterCredentialStore(CONFIG)
-    record = store.save(credential)
-    # Selecting the provider is part of the definition: a provider block that
-    # nothing points at would leave the tool on its built-in default.
-    if record.source == orcarouter.PROVIDER_ID_PKCE:
-        CONFIG["LLM_PROVIDER"] = orcarouter.PROVIDER_ID_PKCE
-    else:
-        CONFIG["LLM_PROVIDER"] = orcarouter.PROVIDER_ID
-    if not str(CONFIG.get("LLM_MODEL_NAME", "")).strip() or CONFIG.get(
-        "LLM_MODEL_NAME"
-    ) == "gpt-4o":
-        CONFIG["LLM_MODEL_NAME"] = "orcarouter/auto"
-    CONFIG["LLM_API_BASE_URL"] = orcarouter.resolve_origins(CONFIG).api_base
-    save_config(verbose=True)
+    record = orcarouter.activate_credential(CONFIG, credential, save_config)
     print(
         f"[OK] OrcaRouter credential stored via {record.source} "
         f"(key={record.masked()}, generation={record.generation})."
@@ -400,8 +387,13 @@ def run_orcarouter_command(args) -> int:
         return 0
 
     if args.orcarouter_logout:
+        previous = dict(CONFIG)
         record = store.clear()
-        save_config(verbose=True)
+        if save_config(verbose=True) is False:
+            CONFIG.clear()
+            CONFIG.update(previous)
+            print("[ERROR] Could not save config.json; credential was not cleared.")
+            return 1
         print(f"[OK] Cleared the stored OrcaRouter credential (generation {record.generation}).")
         return 0
 

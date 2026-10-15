@@ -485,6 +485,7 @@ def start_loopback_listener(
             except (socket.timeout, OSError):
                 continue
             try:
+                conn.settimeout(2.0)
                 raw = conn.recv(8192).decode("latin-1")
                 request_line = raw.split("\r\n", 1)[0]
                 parts = request_line.split(" ")
@@ -521,6 +522,8 @@ def start_loopback_listener(
                 conn.close()
             except OSError:
                 pass
+            finally:
+                conn.close()
             done.set()
 
     thread = threading.Thread(target=serve, daemon=True)
@@ -643,8 +646,8 @@ class PKCECredentialSource(CredentialSource):
 
         result = exchange_code(self.origins, pair, code, timeout=self.timeout)
         warning = _scope_warning(result)
-        if warning and on_hint:
-            on_hint(warning)
+        if warning:
+            raise OrcaRouterPKCEError(warning)
         return OrcaRouterCredential(
             api_key=result.key,
             source=self.source_id,
@@ -812,6 +815,9 @@ class OrcaRouterCredentialStore:
 
     def clear(self) -> CredentialRecord:
         cfg = self.config
+        # A legacy OrcaRouter key must not reappear through the generic fallback.
+        if str(cfg.get("LLM_API_KEY", "")).startswith(_KEY_PREFIX):
+            cfg["LLM_API_KEY"] = ""
         cfg["ORCAROUTER_API_KEY"] = ""
         cfg["ORCAROUTER_AUTH_METHOD"] = ""
         cfg["ORCAROUTER_SCOPE"] = ""
@@ -843,6 +849,26 @@ class OrcaRouterCredentialStore:
             str(cfg.get("ORCAROUTER_AUTH_STATE", REAUTH_OK)) == REAUTH_NEEDED
             and int(cfg.get("ORCAROUTER_CREDENTIAL_GENERATION", 0) or 0) == generation
         )
+
+
+def activate_credential(config, credential, persist):
+    """Save a key and select its provider together, rolling back failed writes."""
+    previous = dict(config)
+    try:
+        record = OrcaRouterCredentialStore(config).save(credential)
+        config["LLM_PROVIDER"] = (
+            PROVIDER_ID_PKCE if credential.source == "pkce" else PROVIDER_ID
+        )
+        if not is_orcarouter_provider(previous.get("LLM_PROVIDER")) or not config.get("LLM_MODEL_NAME"):
+            config["LLM_MODEL_NAME"] = "orcarouter/auto"
+        config["LLM_API_BASE_URL"] = resolve_origins(config).api_base
+        if persist() is False:
+            raise OrcaRouterError("Could not save config.json. Check that its folder is writable.")
+        return record
+    except Exception:
+        config.clear()
+        config.update(previous)
+        raise
 
 
 def effective_api_key(config: Optional[Dict[str, Any]]) -> str:

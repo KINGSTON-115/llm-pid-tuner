@@ -341,7 +341,7 @@ $env:LLM_PROVIDER="openai"
 
 ### OrcaRouter
 
-[OrcaRouter](https://www.orcarouter.ai) 是 OpenAI 兼容的 AI 网关：模型与 Agent 共用一个入口，自带自适应路由、自动故障转移、零加价推理、可观测性、护栏与 Agent 工具治理。接口是 OpenAI 线格式，因此接的是既有传输层，**不动调参循环，也不动 PID 安全逻辑**。
+[OrcaRouter](https://www.orcarouter.ai) 是可选的 OpenAI 兼容网关，通过已有的 OpenAI 兼容传输层接入。默认提供商保持 OpenAI，调参循环和 PID 护栏沿用现有实现。
 
 **两种认证方式互相独立**，按机器情况任选：
 
@@ -364,6 +364,8 @@ python tuner.py --orcarouter-logout
 
 想用页面操作：`python tuner.py --orcarouter-settings` 会在本机回环地址上打开设置页，可以粘贴/清除 Key、发起登录，并从实时目录里选模型。
 
+Windows 打包版可直接运行 `llm-pid-tuner.exe tune --orcarouter-settings`，无需安装 Python。已有 Key 也可以运行 `llm-pid-tuner.exe tune --orcarouter-key sk-orca-your-key`；其他 `--orcarouter-*` 参数同样支持。TUI 内按 `o` 打开设置面板，保存的提供商与模型设置在下一次调参会话生效。设置界面支持浏览器回调登录；无浏览器时请使用上面的命令行 Flow B。
+
 #### 认证方式
 
 | 方式 | `LLM_PROVIDER` | Key 的来源 |
@@ -371,7 +373,7 @@ python tuner.py --orcarouter-logout
 | API Key | `orcarouter` | 你自己粘贴已有的 `sk-orca-…` |
 | 浏览器登录 | `orcarouter_oauth` | 浏览器授权后由 OrcaRouter 签发 |
 
-登录使用 OAuth 2.0 + PKCE（`S256`）：每次尝试都会新生成 verifier，且它**不会离开本进程**，所以即使授权码被截获也无法被别人兑换。不需要 client secret，也不需要预注册回调地址。默认 `--orcarouter-flow A` 会在 `127.0.0.1` 上临时监听并自动接收回调；`--orcarouter-flow B` 则把验证码显示出来由你粘贴回去，适合无图形界面的机器。
+登录使用 OAuth 2.0 + PKCE（`S256`）：每次尝试都会新生成 verifier，仅在密钥交换时发送至认证端点，不出现在授权链接中。不需要 client secret，也不需要预注册回调地址。默认 `--orcarouter-flow A` 会在 `127.0.0.1` 上临时监听并自动接收回调；`--orcarouter-flow B` 则把验证码显示出来由你粘贴回去，适合无图形界面的机器。
 
 **签发的 Key 是长期凭据，不是 refresh token。** OrcaRouter 返回的是属于你账号的普通 API Key：计入你的账单、在控制台可见、随时可在[已授权应用](https://www.orcarouter.ai/console/authorized-apps)一键撤销。程序会一直复用它直到被撤销，**不会每次启动都重新授权，也不会伪造 refresh 授权**。若网关返回 `401`，该凭据会被标记为 `needs_reauth`，重新登录即可。（同一用户每 24 小时最多签发 10 个 PKCE Key。）
 

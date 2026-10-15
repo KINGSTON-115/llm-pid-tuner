@@ -6,6 +6,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 from typing import Any, Dict
 
 from pid_safety import (
@@ -186,14 +187,23 @@ def save_config(verbose: bool = False) -> bool:
     Used by the OrcaRouter credential seam to persist a newly issued key in
     the same place every other provider secret already lives.
     """
+    temporary_path = None
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=os.path.dirname(os.path.abspath(CONFIG_PATH)),
+            prefix=".config-", suffix=".tmp", delete=False,
+        ) as handle:
+            temporary_path = handle.name
             json.dump(CONFIG, handle, indent=4, ensure_ascii=False)
+        os.replace(temporary_path, CONFIG_PATH)
         return True
     except Exception as exc:
         if verbose:
             print(f"[WARN] 无法写入配置文件: {exc}")
         return False
+    finally:
+        if temporary_path and os.path.exists(temporary_path):
+            os.remove(temporary_path)
 
 
 def _apply_proxy_env_from_config() -> None:

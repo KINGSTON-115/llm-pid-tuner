@@ -178,6 +178,21 @@ class LLMTuner:
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                response = getattr(exc, "response", None)
+                if status is None and response is not None:
+                    status = getattr(response, "status_code", None)
+                if self.orcarouter is not None and status == 401:
+                    from core.config import CONFIG, save_config
+
+                    if orcarouter.OrcaRouterCredentialStore(CONFIG).mark_needs_reauth(
+                        self.orcarouter.generation
+                    ):
+                        save_config()
+                    raise orcarouter.OrcaRouterAuthError(
+                        "OrcaRouter rejected the key (HTTP 401). Reconnect in settings or paste a new key.",
+                        generation=self.orcarouter.generation,
+                    ) from None
                 last_exception = exc
                 if attempt < max_retries - 1:
                     self._emit_log(
@@ -220,6 +235,8 @@ class LLMTuner:
                 abort_check=self.abort_check,
             )
         except Exception as sdk_error:
+            if self.orcarouter is not None and getattr(sdk_error, "status_code", None) == 401:
+                raise
             if self.use_sdk:
                 self._emit_log(
                     "warn",

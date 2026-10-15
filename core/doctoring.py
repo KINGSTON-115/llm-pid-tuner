@@ -243,6 +243,8 @@ def collect_doctor_checks(
     missing = [field for field in required_fields if not config.get(field)]
     if orcarouter_selected and not config.get("LLM_API_KEY"):
         missing = [field for field in missing if field != "LLM_API_KEY"]
+    if orcarouter_selected:
+        missing = [field for field in missing if field != "LLM_API_BASE_URL"]
     placeholder_key = configured_key == "your-api-key-here" or (
         orcarouter_selected and not effective_key
     )
@@ -287,7 +289,7 @@ def collect_doctor_checks(
     if is_orcarouter_provider(provider):
         # OrcaRouter's inference origin is a fixed public default; the user
         # is not required to also fill in LLM_API_BASE_URL.
-        base_url = str(config.get("ORCAROUTER_API_BASE_URL", "") or "").strip()
+        base_url = resolve_origins(dict(config)).api_base
     if not base_url:
         checks.append(
             DoctorCheck(

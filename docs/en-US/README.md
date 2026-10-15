@@ -289,11 +289,9 @@ The current runtime is hardened for OpenAI-compatible endpoints and includes a m
 
 ### OrcaRouter
 
-[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible AI gateway that
-runs one endpoint for models and agents, with adaptive routing, automatic
-failover, zero-markup inference, observability, guardrails and agent-tool
-governance. Because the wire format is OpenAI-compatible, it drops into the
-existing transport without touching the tuning loop or the PID safety layer.
+[OrcaRouter](https://www.orcarouter.ai) is an optional OpenAI-compatible gateway
+using the existing transport. OpenAI remains the default provider, and the
+tuning loop and PID guardrails keep their existing behavior.
 
 There are **two ways to authenticate**, and they are independent — use
 whichever fits your machine:
@@ -321,6 +319,13 @@ Prefer a page? `python tuner.py --orcarouter-settings` serves the provider
 settings on loopback so you can paste or clear a key, start the login, and pick
 a model from the live catalog.
 
+Windows release users can run `llm-pid-tuner.exe tune --orcarouter-settings`
+without installing Python. The other `--orcarouter-*` options are forwarded in
+the same way, including `llm-pid-tuner.exe tune --orcarouter-key sk-orca-your-key`.
+Press `o` in the dashboard to open settings. Saved provider and model changes
+apply to the next tuning session. Settings support browser callback login;
+use the command-line Flow B above when no browser is available.
+
 #### Authentication
 
 | Method | Provider value | Where the key comes from |
@@ -329,8 +334,8 @@ a model from the live catalog.
 | Account login | `orcarouter_oauth` | A browser authorization issues one. |
 
 The login uses OAuth 2.0 with PKCE (`S256`): a fresh verifier is generated per
-attempt and never leaves the process, so an intercepted authorization code
-cannot be redeemed by anyone else. No client secret is involved and there is
+attempt and sent only to the authentication endpoint during key exchange,
+never in the authorization URL. No client secret is involved and there is
 no redirect URI to register first. With `--orcarouter-flow A` (the default) a
 short-lived listener on `127.0.0.1` receives the code automatically; with
 `--orcarouter-flow B` the consent screen shows a code you paste back, which is
