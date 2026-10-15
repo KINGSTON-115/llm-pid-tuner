@@ -45,6 +45,10 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 
 Open [Latest Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest) page and download `llm-pid-tuner.exe` from the Assets section.
 
+The `v2.4.8` Windows release adds optional OrcaRouter authentication and model settings. From the EXE folder, run `llm-pid-tuner.exe tune --orcarouter-settings` to paste a key or sign in through your browser and select a model. Press `o` in the dashboard for settings; saved changes apply to the next tuning session. Existing provider configurations continue to work.
+
+This release uses MATLAB-compatible Python 3.10 and was checked with the shipped EXE in Python simulation and a real MATLAB R2022b Simulink tuning run. See the [v2.4.8 release notes](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.4.8) for checksums and validation limits. Source users should follow the [dev branch guide](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md#orcarouter).
+
 ### 2. Prepare hardware
 
 Your board should stream CSV data over serial.

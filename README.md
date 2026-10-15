@@ -74,6 +74,10 @@
 
 打开 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest) 页面，并下载资产里的 `llm-pid-tuner.exe`。
 
+`v2.4.8` Windows 打包版增加可选的 OrcaRouter 登录与模型设置。使用它时，可在 EXE 所在目录运行 `llm-pid-tuner.exe tune --orcarouter-settings`，通过本机设置页保存 Key 或浏览器登录，并选择模型；TUI 中也可按 `o` 打开设置，保存后在下一次调参会话生效。已有提供商无需更改配置。
+
+该版本使用 MATLAB 兼容的 Python 3.10 打包，并验证了 EXE 的 Python 仿真和 MATLAB R2022b Simulink 调参流程。完整说明、校验值与验证范围见 [v2.4.8 发布说明](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.4.8)。源码用户请参考 [dev 分支教程](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/README.md#orcarouter)。
+
 ### 第 2 步：准备硬件
 
 你需要一个能通过串口持续上报控制数据的板子。
