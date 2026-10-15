@@ -440,8 +440,12 @@ class Workbench(QMainWindow):
             self.statusBar().showMessage(f"已请求目标值 {self.setpoint.value():g}，在下一次采样时应用。")
 
     def _safe_text(self, text):
-        key = str(CONFIG.get("LLM_API_KEY", ""))
-        return str(text).replace(key, "••••") if key else str(text)
+        message = str(text)
+        for field in ("LLM_API_KEY", "ORCAROUTER_API_KEY"):
+            key = str(CONFIG.get(field, ""))
+            if key:
+                message = message.replace(key, "••••")
+        return message
 
     def _poll(self):
         if self.session is None:

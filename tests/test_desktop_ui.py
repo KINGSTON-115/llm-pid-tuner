@@ -1,4 +1,6 @@
 import json
+import gc
+import importlib.util
 import os
 from pathlib import Path
 import time
@@ -6,7 +8,8 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
-pytest.importorskip("PySide6.QtWidgets")
+if importlib.util.find_spec("PySide6") is None:
+    pytest.skip("Install requirements-desktop.txt for native UI tests", allow_module_level=True)
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
@@ -30,6 +33,7 @@ def app():
     instance.setStyleSheet(STYLE)
     yield instance
     instance.closeAllWindows()
+    gc.collect()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     shiboken6.delete(instance)
 
@@ -115,6 +119,8 @@ def test_settings_mask_key_and_only_persist_edits(app, tmp_path):
             dialog.fields["LLM_MODEL_NAME"].setText("test-model")
             dialog._save()
             assert dialog.result() == QDialog.DialogCode.Accepted
+            dialog.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     saved = json.loads(path.read_text())
     assert saved["LLM_API_KEY"] == "saved-secret"
     assert saved["custom"] == {"keep": True}
@@ -127,3 +133,12 @@ def test_invalid_config_file_is_not_overwritten(tmp_path):
     with pytest.raises(ValueError):
         save_settings({"LLM_MODEL_NAME": "new"}, path)
     assert path.read_text() == "invalid JSON"
+
+
+def test_existing_orcarouter_model_stays_read_only(app):
+    with patch.dict(CONFIG, {"LLM_PROVIDER": "orcarouter_oauth", "LLM_MODEL_NAME": "orcarouter/auto"}):
+        dialog = SettingsDialog()
+        assert dialog.fields["LLM_PROVIDER"].currentData() == "orcarouter_oauth"
+        assert not dialog.fields["LLM_MODEL_NAME"].isEnabled()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

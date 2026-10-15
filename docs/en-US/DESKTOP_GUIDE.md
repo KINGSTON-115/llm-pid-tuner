@@ -32,6 +32,8 @@ Use Connection Settings to configure the model API, serial protocol or Simulink 
 Only edited fields are saved; unknown config keys are preserved. API keys are masked in the UI but
 stored in the existing local JSON config, not an encrypted credential store. Environment overrides
 are reapplied on the next launch. AI mode uses the project's existing provider clients.
+Existing OrcaRouter credentials and model selections are reused. Configure login and catalog selection
+through `python tuner.py --orcarouter-settings`; the desktop keeps those provider fields read-only.
 
 - **Hardware:** select an explicit serial port, or `DEMO` for the virtual device. Initial PID and
   setpoint are read from telemetry; connecting does not overwrite them. AI tuning applies subsequent

@@ -68,8 +68,9 @@ class RunOptions:
         if self.strategy == "ai":
             if not str(CONFIG.get("LLM_MODEL_NAME", "")).strip():
                 raise ValueError("请在连接设置中填写模型名称。")
+            from llm.orcarouter import is_orcarouter_provider
             url = str(CONFIG.get("LLM_API_BASE_URL", ""))
-            if not url.startswith(("http://", "https://")):
+            if not is_orcarouter_provider(CONFIG.get("LLM_PROVIDER", "")) and not url.startswith(("http://", "https://")):
                 raise ValueError("请填写有效的模型接口地址（http:// 或 https://）。")
 
 
@@ -107,7 +108,7 @@ class DesktopSession:
         self.thread.start()
 
     def _run(self) -> None:
-        old_config = dict(CONFIG)
+        old_config = {key: CONFIG[key] for key in ("MAX_TUNING_ROUNDS", "BUFFER_SIZE")}
         env = None
         result = None
         cleanup = None
@@ -177,9 +178,10 @@ class DesktopSession:
                 result.update(provider="offline", model="conservative_rules")
         except Exception as exc:
             message = str(exc)
-            key = str(CONFIG.get("LLM_API_KEY", ""))
-            if key:
-                message = message.replace(key, "••••")
+            for field in ("LLM_API_KEY", "ORCAROUTER_API_KEY"):
+                key = str(CONFIG.get(field, ""))
+                if key:
+                    message = message.replace(key, "••••")
             self.sink.publish("lifecycle", phase="error", message=message)
             result = {"completed_reason": "error", "error": message}
         finally:
@@ -191,7 +193,6 @@ class DesktopSession:
             except Exception as exc:
                 self.sink.publish("lifecycle", phase="error", message=f"释放连接失败：{type(exc).__name__}")
                 result = {**(result or {}), "completed_reason": "error", "error": "连接清理失败，请检查设备状态。"}
-            CONFIG.clear()
             CONFIG.update(old_config)
             self.sink.publish("session_finished", result=result or {})
 

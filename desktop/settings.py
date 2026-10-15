@@ -99,6 +99,10 @@ class SettingsDialog(QDialog):
         field(ai, "API Key", "LLM_API_KEY", password=True)
         field(ai, "请求超时（秒）", "LLM_REQUEST_TIMEOUT", integer=(5, 300))
         ai.addRow(label("支持 OpenAI 兼容服务、DeepSeek、Ollama 等。\n离线仿真无需配置模型。", "muted", True))
+        self.orca_note = label("当前使用已有 OrcaRouter 配置。登录与模型选择沿用项目的 OrcaRouter 设置入口。", "muted", True)
+        ai.addRow(self.orca_note)
+        self.fields["LLM_PROVIDER"].currentIndexChanged.connect(self._provider_changed)
+        self._provider_changed()
         hardware = page("串口硬件")
         field(hardware, "默认串口", "SERIAL_PORT")
         field(hardware, "波特率", "BAUD_RATE", integer=(1200, 4000000))
@@ -123,6 +127,13 @@ class SettingsDialog(QDialog):
         if path:
             widget.setText(path)
 
+    def _provider_changed(self):
+        from llm.orcarouter import is_orcarouter_provider
+        is_orca = is_orcarouter_provider(self.fields["LLM_PROVIDER"].currentData())
+        self.orca_note.setVisible(is_orca)
+        for key in ("LLM_API_BASE_URL", "LLM_API_KEY", "LLM_MODEL_NAME"):
+            self.fields[key].setEnabled(not is_orca)
+
     def _save(self):
         values = {}
         for key, widget in self.fields.items():
@@ -132,7 +143,8 @@ class SettingsDialog(QDialog):
                 values[key] = widget.value()
             else:
                 values[key] = widget.text().strip()
-        if not values["LLM_API_BASE_URL"].startswith(("http://", "https://")):
+        from llm.orcarouter import is_orcarouter_provider
+        if not is_orcarouter_provider(values["LLM_PROVIDER"]) and not values["LLM_API_BASE_URL"].startswith(("http://", "https://")):
             QMessageBox.warning(self, "检查设置", "API 地址需要以 http:// 或 https:// 开头。")
             return
         try:

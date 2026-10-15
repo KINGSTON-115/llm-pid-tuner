@@ -13,7 +13,9 @@ def main() -> None:
     initialize_runtime_config(create_if_missing=True, verbose=False)
     try:
         from desktop.app import run_desktop
-    except ImportError as exc:
+    except ModuleNotFoundError as exc:
+        if not (exc.name or "").startswith("PySide6"):
+            raise
         raise SystemExit("桌面界面需要 Qt。请使用 Python 3.10+ 执行：\n"
                          "python -m pip install -r requirements-desktop.txt") from exc
     run_desktop()

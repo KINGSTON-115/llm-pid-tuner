@@ -169,3 +169,18 @@ def test_archive_keeps_all_samples_and_exports_numeric_csv(tmp_path):
         assert json.loads((tmp_path / "report.json").read_text())["sample_count"] == 6100
     finally:
         archive.close()
+
+
+def test_runtime_auth_failure_state_survives_session_cleanup():
+    session = DesktopSession(RunOptions(strategy="ai", samples=50, rounds=1, speed=50))
+
+    def analyze(*_args, **_kwargs):
+        CONFIG["ORCAROUTER_AUTH_STATE"] = "needs_reauth"
+        return None
+
+    with patch("desktop.session.LLMTuner") as tuner:
+        tuner.return_value.analyze.side_effect = analyze
+        session.start()
+        session.thread.join(3)
+    assert not session.running
+    assert CONFIG["ORCAROUTER_AUTH_STATE"] == "needs_reauth"
