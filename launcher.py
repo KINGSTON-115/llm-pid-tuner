@@ -17,20 +17,25 @@ import tuner
 MODE_TUNE = "tune"
 MODE_SIM = "sim"
 MODE_QUIT = "quit"
+MODE_GUI = "gui"
 
 TUNE_ALIASES = {MODE_TUNE, "hardware", "hw", "serial", "1"}
 SIM_ALIASES = {MODE_SIM, "simulate", "simulator", "dashboard", "2"}
 QUIT_ALIASES = {MODE_QUIT, "q", "exit"}
+GUI_ALIASES = {MODE_GUI, "desktop"}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Launch hardware tuning or the local simulator dashboard."
+        description="Launch the native desktop workbench, or a legacy tuning mode."
     )
     parser.add_argument(
         "mode_or_port",
         nargs="?",
-        help="Launch mode (`tune` / `sim`) or a serial port like COM5.",
+        help="Launch mode (`gui` / `tune` / `sim`) or a serial port like COM5. Default: gui.",
+    )
+    parser.add_argument(
+        "--tui", action="store_true", help="Open the legacy terminal mode selector."
     )
     parser.add_argument(
         "extra", nargs="*", help="Additional arguments forwarded to the selected mode."
@@ -59,6 +64,8 @@ def normalize_mode(value: str | None) -> str | None:
         return MODE_SIM
     if normalized in QUIT_ALIASES:
         return MODE_QUIT
+    if normalized in GUI_ALIASES:
+        return MODE_GUI
     return None
 
 
@@ -95,13 +102,25 @@ def run_tuner(args: list[str]) -> None:
     tuner.main(args)
 
 
+def run_desktop() -> None:
+    from desktop_main import main as desktop_main
+    desktop_main()
+
+
 def dispatch(
     mode_or_port: str | None,
     extra: list[str],
     force_plain: bool = False,
     lang: str | None = None,
+    force_tui: bool = False,
 ) -> None:
     normalized = normalize_mode(mode_or_port)
+
+    if normalized == MODE_GUI or (mode_or_port is None and not force_plain and not force_tui):
+        if extra or force_plain or force_tui:
+            raise SystemExit("Desktop mode does not accept terminal flags or positional arguments.")
+        run_desktop()
+        return
 
     if normalized == MODE_SIM:
         if extra:
@@ -161,7 +180,8 @@ def main(argv: list[str] | None = None) -> None:
             return
         args = build_parser().parse_args(argv)
         dispatch(
-            args.mode_or_port, list(args.extra), force_plain=args.plain, lang=args.lang
+            args.mode_or_port, list(args.extra), force_plain=args.plain, lang=args.lang,
+            force_tui=args.tui,
         )
     except KeyboardInterrupt:
         print("\n[INFO] Interrupted by user (Ctrl+C). Exiting gracefully.")

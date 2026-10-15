@@ -24,7 +24,7 @@ class OpenAISDKProvider(BaseLLMProvider):
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float):
         super().__init__(api_key, base_url, model, timeout)
         import openai
-        self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        self.client = openai.OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0)
 
     def execute_request(
         self,
@@ -41,13 +41,18 @@ class OpenAISDKProvider(BaseLLMProvider):
             stream=True,
         )
         accumulated = ""
-        for chunk in resp:
-            content_chunk = self._extract_chunk(chunk, accumulated)
-            if content_chunk:
-                accumulated += content_chunk
-                on_chunk(content_chunk)
+        try:
+            for chunk in resp:
                 if abort_check and abort_check():
                     break
+                content_chunk = self._extract_chunk(chunk, accumulated)
+                if content_chunk:
+                    accumulated += content_chunk
+                    on_chunk(content_chunk)
+        finally:
+            close = getattr(resp, "close", None)
+            if close is not None:
+                close()
 
     def _extract_chunk(self, chunk: Any, accumulated: str) -> str:
         choices = getattr(chunk, "choices", None) or []
@@ -72,7 +77,7 @@ class AnthropicSDKProvider(BaseLLMProvider):
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float):
         super().__init__(api_key, base_url, model, timeout)
         import anthropic
-        self.client = anthropic.Anthropic(api_key=api_key, base_url=base_url)
+        self.client = anthropic.Anthropic(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0)
 
     def execute_request(
         self,

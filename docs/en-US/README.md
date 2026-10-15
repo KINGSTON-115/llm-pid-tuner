@@ -1,5 +1,7 @@
 # LLM-PID-Tuner
 
+> **Development desktop UI**: with Python 3.10+, install `requirements-desktop.txt` and run `python launcher.py` to open the native workbench with live plots, PID controls, AI analysis and exports. Offline simulation needs no API key. See the [desktop guide](DESKTOP_GUIDE.md). Use `python launcher.py --tui` for the legacy terminal selector; the older Release instructions below still apply to published versions.
+
 An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error process of real controller tuning.
 
 [中文](../../README.md) | English

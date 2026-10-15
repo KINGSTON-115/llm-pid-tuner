@@ -42,10 +42,13 @@ class PythonSimEnv(BaseTuningEnvironment):
                     break
                 # Only take up to target_steps
                 samples.extend(data)
+                for sample in data:
+                    self.notify_sample(sample)
                 if len(samples) >= target_steps:
                     break
             else:
                 samples.append(data)
+                self.notify_sample(data)
 
         return samples
 
@@ -124,6 +127,7 @@ class SimulinkEnv(BaseTuningEnvironment):
                 if self.controller and getattr(self.controller, "should_stop", False):
                     return samples
                 samples.append(data)
+                self.notify_sample(data)
                 
             if len(samples) >= getattr(self.bridge, "target_steps", getattr(self.bridge, "target_buffer_size", CONFIG["BUFFER_SIZE"])):
                 break
@@ -236,8 +240,11 @@ class HardwareEnv(BaseTuningEnvironment):
         expected_formats = get_hardware_sample_format_hint(hardware_profile)
 
         while len(samples) < target_size:
+            pause_started = time.time()
             if controller_requests_abort(self.controller):
                 return samples
+            # A user pause must not consume the device's sampling timeout.
+            started_at += time.time() - pause_started
 
             _apply_requested_setpoint(self.controller, self.set_setpoint)
             if (time.time() - started_at) >= timeout_sec:
@@ -286,6 +293,7 @@ class HardwareEnv(BaseTuningEnvironment):
                             "d": float(data["d2"]),
                         }
                     samples.append(data)
+                    self.notify_sample(data)
                     continue
                 invalid_lines += 1
                 last_invalid_line = str(line)
