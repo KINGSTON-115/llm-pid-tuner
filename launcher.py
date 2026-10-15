@@ -152,6 +152,13 @@ def dispatch(
 def main(argv: list[str] | None = None) -> None:
     try:
         initialize_runtime_config(create_if_missing=True, verbose=True)
+        arguments = list(sys.argv[1:] if argv is None else argv)
+        if arguments and normalize_mode(arguments[0]) == MODE_TUNE:
+            run_tuner(arguments[1:])
+            return
+        if arguments and arguments[0].startswith("--orcarouter-"):
+            run_tuner(arguments)
+            return
         args = build_parser().parse_args(argv)
         dispatch(
             args.mode_or_port, list(args.extra), force_plain=args.plain, lang=args.lang
