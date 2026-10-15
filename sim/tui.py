@@ -78,6 +78,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "help_r": "清空视图",
         "help_n": "下一轮",
         "help_t": "设置目标",
+        "help_o": "OrcaRouter 设置",
         "help_browse": "滚轮 / PgUp / PgDn / ↑↓  浏览日志",
         "help_done": "调参完成，按 n 可以上次结果为起点继续新一轮",
         "setpoint_prompt": "输入新的目标值",
@@ -144,6 +145,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "help_r": "Reset View",
         "help_n": "Next Round",
         "help_t": "Set SP",
+        "help_o": "OrcaRouter",
         "help_browse": "Wheel / PgUp / PgDn / ↑↓  browse log",
         "help_done": "Tuning done. Press n to start another round from the last result.",
         "setpoint_prompt": "Enter a new setpoint",
@@ -458,6 +460,7 @@ class PanelState:
             + hk("p", self.tr("help_p"))
             + sep
             + hk("t", self.tr("help_t"))
+            + hk("o", self.tr("help_o"))
             + sep
             + hk("l", self.tr("help_l"))
             + sep
@@ -702,6 +705,7 @@ class SimulationTUIApp(App[None]):
         ("l", "toggle_event_detail", "Log detail"),
         ("r", "reset_view", "Reset view"),
         ("n", "next_round", "Next round"),
+        ("o", "open_orcarouter_settings", "OrcaRouter"),
     ]
 
     def __init__(
@@ -976,10 +980,27 @@ class SimulationTUIApp(App[None]):
         self._log_requires_full_refresh = True
         self._refresh_all()
 
+    def action_open_orcarouter_settings(self) -> None:
+        """Open the OrcaRouter provider panel (API key and PKCE entries)."""
+        from core.config import CONFIG
+        from sim.orcarouter_gui import build_settings_app
+
+        try:
+            settings_screen = build_settings_app(CONFIG)(self.state.language)
+        except Exception as exc:  # keep the dashboard usable
+            self.state.apply_event(
+                {
+                    "type": EVENT_LOG,
+                    "label": "orca",
+                    "message": f"[WARN] OrcaRouter settings unavailable: {exc}",
+                }
+            )
+            return
+        self.push_screen(settings_screen)
+
     def action_change_setpoint(self) -> None:
         if self.state.tuning_done or not self._worker_is_running():
             return
-
         def on_setpoint(value: Optional[float]) -> None:
             if value is None:
                 return

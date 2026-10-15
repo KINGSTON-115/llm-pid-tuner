@@ -6,6 +6,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 from typing import Any, Dict
 
 from pid_safety import (
@@ -77,6 +78,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "LLM_API_BASE_URL"              : "https://api.openai.com/v1",
     "LLM_MODEL_NAME"                : "gpt-4o",
     "LLM_PROVIDER"                  : "openai",
+    # OrcaRouter provider.  The API key is stored wherever every other
+    # provider secret is stored (this file / the matching env var) - no
+    # second secret store is introduced for it.  ORCAROUTER_AUTH_METHOD
+    # records which of the two entry points produced the current key.
+    "ORCAROUTER_API_KEY"            : "",
+    "ORCAROUTER_AUTH_METHOD"        : "",
+    "ORCAROUTER_SCOPE"              : "",
+    "ORCAROUTER_AUTH_STATE"         : "ok",
+    "ORCAROUTER_CREDENTIAL_GENERATION": 0,
+    "ORCAROUTER_AUTH_FLOW"          : "A",
+    "ORCAROUTER_MODEL_CATALOG"      : [],
+    "ORCAROUTER_BASE_URL"           : "",
+    "ORCAROUTER_AUTH_BASE_URL"      : "",
+    "ORCAROUTER_API_BASE_URL"       : "",
     "HTTP_PROXY"                    : "",
     "HTTPS_PROXY"                   : "",
     "ALL_PROXY"                     : "",
@@ -164,6 +179,31 @@ def load_config(create_if_missing: bool = True, verbose: bool = True) -> None:
         except Exception:
             if verbose:
                 print(f"[WARN] 环境变量 {key} 值无效，已忽略。")
+
+
+def save_config(verbose: bool = False) -> bool:
+    """Write the current CONFIG back to CONFIG_PATH.
+
+    Used by the OrcaRouter credential seam to persist a newly issued key in
+    the same place every other provider secret already lives.
+    """
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=os.path.dirname(os.path.abspath(CONFIG_PATH)),
+            prefix=".config-", suffix=".tmp", delete=False,
+        ) as handle:
+            temporary_path = handle.name
+            json.dump(CONFIG, handle, indent=4, ensure_ascii=False)
+        os.replace(temporary_path, CONFIG_PATH)
+        return True
+    except Exception as exc:
+        if verbose:
+            print(f"[WARN] 无法写入配置文件: {exc}")
+        return False
+    finally:
+        if temporary_path and os.path.exists(temporary_path):
+            os.remove(temporary_path)
 
 
 def _apply_proxy_env_from_config() -> None:

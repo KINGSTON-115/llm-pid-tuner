@@ -6,6 +6,16 @@
     "LLM_API_BASE_URL": "https://api.openai.com/v1",
     "LLM_MODEL_NAME": "gpt-4o",
     "LLM_PROVIDER": "openai",
+    "ORCAROUTER_API_KEY": "",
+    "ORCAROUTER_AUTH_METHOD": "",
+    "ORCAROUTER_SCOPE": "",
+    "ORCAROUTER_AUTH_STATE": "ok",
+    "ORCAROUTER_CREDENTIAL_GENERATION": 0,
+    "ORCAROUTER_AUTH_FLOW": "A",
+    "ORCAROUTER_MODEL_CATALOG": [],
+    "ORCAROUTER_BASE_URL": "",
+    "ORCAROUTER_AUTH_BASE_URL": "",
+    "ORCAROUTER_API_BASE_URL": "",
     "HTTP_PROXY": "",
     "HTTPS_PROXY": "",
     "ALL_PROXY": "",
@@ -33,19 +43,55 @@
     "MATLAB_SETPOINT": 200.0,
     "PID_LIMITS": {
         "default": {
-            "p": {"min": 0.0, "max": 1000.0, "max_increase_ratio": 3.0},
-            "i": {"min": 0.0, "max": 250.0, "max_increase_ratio": 4.0},
-            "d": {"min": 0.0, "max": 250.0, "max_increase_ratio": 4.0}
+            "p": {
+                "min": 0.0,
+                "max": 1000.0,
+                "max_increase_ratio": 3.0
+            },
+            "i": {
+                "min": 0.0,
+                "max": 250.0,
+                "max_increase_ratio": 4.0
+            },
+            "d": {
+                "min": 0.0,
+                "max": 250.0,
+                "max_increase_ratio": 4.0
+            }
         },
         "python_sim": {
-            "p": {"min": 0.0, "max": 5000.0, "max_increase_ratio": 3.0},
-            "i": {"min": 0.0, "max": 500.0, "max_increase_ratio": 4.0},
-            "d": {"min": 0.0, "max": 500.0, "max_increase_ratio": 4.0}
+            "p": {
+                "min": 0.0,
+                "max": 5000.0,
+                "max_increase_ratio": 3.0
+            },
+            "i": {
+                "min": 0.0,
+                "max": 500.0,
+                "max_increase_ratio": 4.0
+            },
+            "d": {
+                "min": 0.0,
+                "max": 500.0,
+                "max_increase_ratio": 4.0
+            }
         },
         "simulink": {
-            "p": {"min": 0.0, "max": 5000.0, "max_increase_ratio": 5.0},
-            "i": {"min": 0.0, "max": 500.0, "max_increase_ratio": 6.0},
-            "d": {"min": 0.0, "max": 500.0, "max_increase_ratio": 6.0}
+            "p": {
+                "min": 0.0,
+                "max": 5000.0,
+                "max_increase_ratio": 5.0
+            },
+            "i": {
+                "min": 0.0,
+                "max": 500.0,
+                "max_increase_ratio": 6.0
+            },
+            "d": {
+                "min": 0.0,
+                "max": 500.0,
+                "max_increase_ratio": 6.0
+            }
         }
     },
     "PID_MAX_INCREASE_RATIO": 0.0
