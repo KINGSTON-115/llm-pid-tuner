@@ -1,0 +1,2 @@
+-r requirements.txt
+# Convenience entry point. Qt Widgets is included in the default requirements.

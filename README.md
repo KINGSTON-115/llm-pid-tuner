@@ -1,5 +1,7 @@
 # LLM-PID-Tuner
 
+> **开发版原生桌面界面**：Python 3.10+ 安装 `requirements-desktop.txt` 后，运行 `python launcher.py` 即可打开独立窗口，支持实时曲线、PID 配置、AI 分析和数据导出。首次体验无需 API Key。详见 [桌面工作台指南](docs/zh-CN/DESKTOP_GUIDE.md)。原有终端选择器改用 `python launcher.py --tui`；下方旧 Release 的说明仍适用于已发布版本。
+
 一个用大语言模型辅助 PID 调参的实用工具。
 
 > 💬 QQ 1群：1082281492 - 欢迎加入交流讨论

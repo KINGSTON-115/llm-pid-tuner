@@ -72,10 +72,22 @@ class LauncherDispatchTests(unittest.TestCase):
             ):
                 with patch.object(launcher, "run_tuner") as run_tuner:
                     with patch.object(launcher, "run_simulation") as run_simulation:
-                        launcher.main([])
+                        launcher.main(["--tui"])
 
         run_tuner.assert_called_once_with([])
         run_simulation.assert_not_called()
+
+    def test_default_launch_opens_desktop_without_a_terminal_prompt(self):
+        with patch.object(launcher, "run_desktop") as desktop:
+            with patch.object(launcher, "prompt_launch_mode") as prompt:
+                launcher.main([])
+        desktop.assert_called_once_with()
+        prompt.assert_not_called()
+
+    def test_explicit_desktop_alias(self):
+        with patch.object(launcher, "run_desktop") as desktop:
+            launcher.main(["desktop"])
+        desktop.assert_called_once_with()
 
     def test_main_pauses_on_nonzero_system_exit(self):
         with patch.object(launcher, "initialize_runtime_config"):

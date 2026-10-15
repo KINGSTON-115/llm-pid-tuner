@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 def controller_requests_abort(controller: Any) -> bool:
@@ -20,6 +20,13 @@ class BaseTuningEnvironment(ABC):
     Abstract interface for all tuning environments (Hardware, Python Sim, Simulink).
     Decouples the core TuningEngine from the specific I/O details.
     """
+
+    sample_callback: Optional[Callable[[Dict[str, float]], None]] = None
+
+    def notify_sample(self, sample: Dict[str, float]) -> None:
+        """Optionally stream samples as they arrive, before a round is complete."""
+        if self.sample_callback is not None:
+            self.sample_callback(sample)
 
     @abstractmethod
     def collect_samples(self) -> List[Dict[str, float]]:

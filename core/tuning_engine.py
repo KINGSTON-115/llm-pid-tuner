@@ -154,6 +154,9 @@ def run_tuning_engine(
         session.buffer.reset()
         samples = env.collect_samples()
         _emit_setpoint_feedback(env, event_sink, start_time, emit_console)
+        if controller_requests_abort(controller):
+            _mark_stopped_by_user(session, event_sink, start_time, emit_console)
+            break
         collect_warning = str(getattr(env, "last_collect_warning", "") or "").strip()
         if collect_warning:
             _console(emit_console, f"[WARN] {collect_warning}")
@@ -175,7 +178,8 @@ def run_tuning_engine(
 
         for data in samples:
             session.buffer.add(data)
-            _emit_sample_event(event_sink, data)
+            if getattr(env, "sample_callback", None) is None:
+                _emit_sample_event(event_sink, data)
 
         _console(emit_console, f"[Round {round_index}] Collected {len(samples)} samples.")
 
@@ -316,7 +320,7 @@ def run_tuning_engine(
             prompt_context=prompt_context,
         )
 
-        if _stop_requested(controller):
+        if controller_requests_abort(controller):
             _mark_stopped_by_user(session, event_sink, start_time, emit_console)
             break
 

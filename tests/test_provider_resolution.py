@@ -11,15 +11,19 @@ from llm.client import LLMTuner
 
 
 class FakeOpenAI:
-    def __init__(self, api_key, base_url):
+    def __init__(self, api_key, base_url, timeout=None, max_retries=None):
         self.api_key  = api_key
         self.base_url = base_url
+        self.timeout = timeout
+        self.max_retries = max_retries
 
 
 class FakeAnthropic:
-    def __init__(self, api_key, base_url):
+    def __init__(self, api_key, base_url, timeout=None, max_retries=None):
         self.api_key  = api_key
         self.base_url = base_url
+        self.timeout = timeout
+        self.max_retries = max_retries
 
 
 class FakeResponse:
