@@ -12,7 +12,7 @@ translations = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
 qt_copy = [(str(translations / "qtbase_zh_CN.qm"), "PySide6/translations")]
 
 a = Analysis(
-    ["desktop_main.pyw"],
+    ["desktop_main.pyw", "launcher.py"],
     pathex=[], binaries=binaries,
     datas=copy_metadata("PySide6_Essentials") + copy_metadata("shiboken6") + qt_copy,
     hiddenimports=["serial.tools.list_ports"],
@@ -28,6 +28,11 @@ if sys.platform == "win32":
                   if (system32 / name).exists()}
     a.binaries = [item for item in a.binaries if Path(item[0]).name.lower() not in system_icu]
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="llm-pid-tuner-desktop",
+desktop_scripts = [entry for entry in a.scripts if Path(entry[1]).name != "launcher.py"]
+console_scripts = [entry for entry in a.scripts if Path(entry[1]).name != "desktop_main.pyw"]
+exe = EXE(pyz, desktop_scripts, [], exclude_binaries=True, name="llm-pid-tuner-desktop",
           debug=False, strip=False, upx=False, console=False)
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="llm-pid-tuner-desktop")
+# Keep console commands available without duplicating the shared Qt/runtime files.
+console = EXE(pyz, console_scripts, [], exclude_binaries=True, name="llm-pid-tuner",
+              debug=False, strip=False, upx=False, console=True)
+coll = COLLECT(exe, console, a.binaries, a.datas, strip=False, upx=False, name="llm-pid-tuner-desktop")

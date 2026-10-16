@@ -1,11 +1,17 @@
-# 原生桌面工作台（开发版）
+# 原生桌面工作台
 
 桌面版使用 PySide6 / Qt Widgets，直接打开独立窗口，不需要浏览器或 Node.js。
 它复用原有 PID 引擎、参数护栏、最佳结果回退和稳定性判定。
 
 ## 启动
 
+**Windows 免安装版**：从 [v2.5.0 Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0)
+下载 `llm-pid-tuner-v2.5.0-windows-x64.zip`，完整解压后双击 `llm-pid-tuner-desktop.exe`。
+不需要安装 Python，必须保留同目录的 `_internal`。同包的 `llm-pid-tuner.exe` 提供终端命令。
+升级时将原来的 `config.json` 复制到新目录即可保留配置；发布包不包含个人配置或密钥。
+
 源码方式需要 **Python 3.10 或更新版本**：
+使用 `v2.5.0` 标签或更新的 `dev` 分支；`main` 的源码更新可能晚于发布标签。
 
 ```powershell
 python -m pip install -r requirements-desktop.txt
@@ -19,7 +25,7 @@ Windows 上可以用安装过依赖的 Python 打开 `desktop_main.pyw`，不显
 打包后，双击 `dist/llm-pid-tuner-desktop/llm-pid-tuner-desktop.exe`。
 分发时需要保留整个 `llm-pid-tuner-desktop` 文件夹，包括 `_internal`。
 桌面 EXE 使用其所在目录中的 `config.json`；源码运行使用当前工作目录。
-这是开发版功能，已发布的旧 Release 不会自动获得此界面。
+原生桌面界面从 v2.5.0 起包含在正式 Release 中。
 
 ## 外观与语言
 
@@ -86,6 +92,9 @@ python launcher.py tune COM5   # 硬件模式
 python launcher.py --plain     # 仿真文本输出
 ```
 
+Windows 发布包中把 `python launcher.py` 换成 `.\llm-pid-tuner.exe` 即可运行上述终端命令。
+例如 OrcaRouter 登录和模型目录可使用 `.\llm-pid-tuner.exe tune --orcarouter-settings`。
+
 ## 打包与验证
 
 ```powershell
@@ -100,3 +109,5 @@ python -m PyInstaller --noconfirm llm-pid-tuner-desktop.spec
 桌面回归测试覆盖运行中切换语言和主题、暂停后的数据保持、继续采样与更新目标值、
 停止与连接释放、导出完整数据、设置保存失败恢复、关闭窗口后的信号清理，以及异常采样、
 图表窗口和 6,000 点内存上限。两种主题还检查文字与曲线对比度，四种主题/语言组合检查紧凑窗口布局。
+下拉列表测试实际打开主题、语言、运行模式和接口协议选项，检查普通与选中项的文字渲染，
+并覆盖深浅色反复切换、鼠标与键盘选择及 Windows DPI 缩放。

@@ -1,3 +1,31 @@
+# v2.5.0 — Native desktop workbench
+
+Release date: 2026-10-16
+
+- Standalone Windows window with live response/output plots, PID controls, analysis, round history and complete CSV / JSON export.
+- Light, Dark and System themes; global Simplified Chinese / English switching with saved preferences. Live changes preserve session data.
+- Fix unreadable light-mode sidebar dropdown items. Appearance, language, run-mode and provider lists now paint using the current view theme.
+- Default local thermal simulation and offline rules need no API key. AI, serial and Simulink modes reuse the existing engine.
+- The bundle includes both a console-free desktop launcher and a terminal launcher with `--tui`, `sim`, `tune` and OrcaRouter settings commands.
+
+## Download and upgrade
+
+Download `llm-pid-tuner-v2.5.0-windows-x64.zip` from the
+[Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0), extract the entire folder,
+and open `llm-pid-tuner-desktop.exe`. Keep `_internal` beside both EXEs. Copy your own `config.json`
+into the new folder to retain credentials and advanced settings. Verify the ZIP using `SHA256SUMS.txt`.
+See the [desktop guide](DESKTOP_GUIDE.md).
+
+## Validation
+
+Full regression: **503 passed, 13 subtests passed**. Popup tests inspect painted normal/selected text
+in both languages after repeated theme changes, exercise mouse/keyboard selection, and also run
+in native Windows windows with DPI scaling. Core desktop tests cover offline tuning, pause/resume/stop,
+runtime setpoints, full exports, failed-save rollback and cleanup. Real serial hardware, real MATLAB
+models and paid model services were not exercised in this release; those paths use DEMO or test doubles.
+
+---
+
 # Release v2.1.0 PRO - Beginner-Friendly Hardware Tuning Build
 
 Release date: 2026-03-06

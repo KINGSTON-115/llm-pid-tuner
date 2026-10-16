@@ -1,6 +1,6 @@
 # LLM-PID-Tuner
 
-> **开发版原生桌面界面**：Python 3.10+ 安装 `requirements-desktop.txt` 后，运行 `python launcher.py` 即可打开独立窗口，支持实时曲线、PID 配置、AI 分析和数据导出。首次体验无需 API Key。详见 [桌面工作台指南](docs/zh-CN/DESKTOP_GUIDE.md)。原有终端选择器改用 `python launcher.py --tui`；下方旧 Release 的说明仍适用于已发布版本。
+> **v2.5.0 原生桌面版**：[下载 Windows x64 桌面包](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0)，解压后双击 `llm-pid-tuner-desktop.exe`。支持实时曲线、白昼 / 暗黑 / 跟随系统、中英文全局切换和 CSV / JSON 导出；离线体验无需 API Key。详见 [桌面工作台指南](docs/zh-CN/DESKTOP_GUIDE.md)。
 
 一个用大语言模型辅助 PID 调参的实用工具。
 
@@ -21,7 +21,7 @@
 </a>
 
 > 如果你是第一次接触这个项目，**不要先折腾 Python**。
-> **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
+> **最省事的用法是下载 Release 里的 Windows ZIP，完整解压后打开桌面程序。**
 
 ## 最新开发版教程入口
 
@@ -68,7 +68,7 @@
 ## 先看你该怎么用
 
 - **只想调硬件，不想配开发环境**：走 `exe` 路线，见下方“3 分钟上手”。
-- **想先看看这个项目到底有没有用**：运行 `simulator.py` 做本地热系统仿真。
+- **想先看看这个项目到底有没有用**：打开桌面版，直接开始“本地热系统仿真 / 离线规则体验”。
 - **想接自己的 Arduino / ESP32 / 其他控制板**：使用 `firmware.cpp` + `tuner.py` / `llm-pid-tuner.exe`。
 - **想二次开发或看内部设计**：看 [PROJECT_DOC.md](docs/zh-CN/PROJECT_DOC.md)。
 
@@ -93,9 +93,13 @@
 
 ### 第 1 步：下载打包版
 
-打开 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest) 页面，并下载资产里的 `llm-pid-tuner.exe`。
+打开 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest)，下载 `llm-pid-tuner-v2.5.0-windows-x64.zip`，将整个文件夹解压到可写目录。
+双击其中的 `llm-pid-tuner-desktop.exe`，不要只复制 EXE；同目录的 `_internal` 是运行必需文件。
 
-### 第 2 步：准备硬件
+保持默认的“本地热系统仿真 / 离线规则体验”，点击“开始调参”即可看到实时响应，无需硬件和 API Key。
+左侧可以切换白昼 / 暗黑 / 跟随系统，以及简体中文 / English，偏好会自动保存。
+
+### 第 2 步：准备硬件（可选）
 
 你需要一个能通过串口持续上报控制数据的板子。
 
@@ -119,12 +123,19 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 ### 第 3 步：第一次运行 exe
 
-双击运行 `llm-pid-tuner.exe`。
+桌面版启动后会在 EXE 所在目录生成 `config.json`。通过左侧“连接设置”填写 API 和串口配置，
+再选择“串口硬件”及具体端口、“AI 自动调参”，即可使用原有调参引擎。
+首次连接会读取设备当前 PID 与目标值；运行中可暂停、停止或应用新的目标值。
 
-启动器会先让你选择模式：`[1]` 真实硬件调参，`[2]` 本地仿真 TUI（默认）。
-如果你现在是准备接串口硬件，请先选 `[1]`。
+终端入口也保留在同一文件夹中，在 PowerShell 使用：
 
-第一次运行时，如果当前目录下没有 `config.json`，程序会自动生成一份默认配置。
+```powershell
+.\llm-pid-tuner.exe --tui       # 终端模式选择器
+.\llm-pid-tuner.exe sim         # 仿真 TUI
+.\llm-pid-tuner.exe tune COM5   # 串口调参
+```
+
+两个 EXE 共用 `_internal`。从 v2.4.x 升级时，可将自己的 `config.json` 复制到新解压目录，保留密钥与高级配置。
 
 ### 第 4 步：填写 `config.json`
 
@@ -634,7 +645,7 @@ python system_id.py --file sample_step.csv
 
 - 最新打包版请看 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest)
 - 打包方法见 [Issue #11](https://github.com/KINGSTON-115/llm-pid-tuner/issues/11)
-- 当前 Windows 打包使用 Python `3.10` 环境（本项目测试使用 `matlab310` conda 环境），`llm-pid-tuner.spec` 会从当前环境收集必要 DLL
+- 当前 Windows 桌面包使用 Python `3.10` 环境，构建入口为 `llm-pid-tuner-desktop.spec`，同时包含桌面和终端启动器
 - 历史测试环境包含 `R2022b`；文档里的 `R2025b` 只是示例路径版本，请替换成你本机实际安装的 MATLAB 版本
 - 想看项目内部设计，请看 [PROJECT_DOC.md](docs/zh-CN/PROJECT_DOC.md)
 

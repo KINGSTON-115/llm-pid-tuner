@@ -3,7 +3,7 @@ from PySide6.QtCore import QPointF
 from PySide6.QtGui import QPainter, QPen, QPalette
 from PySide6.QtWidgets import (
     QComboBox as QtComboBox, QDoubleSpinBox as QtDoubleSpinBox,
-    QSpinBox as QtSpinBox, QStyle, QStyleOptionSpinBox,
+    QSpinBox as QtSpinBox, QStyle, QStyleOptionSpinBox, QStyledItemDelegate,
 )
 
 
@@ -23,6 +23,12 @@ def arrow_painter(widget):
 
 
 class QComboBox(QtComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Qt's menu delegate takes text colors from the closed combo. Sidebar
+        # combos stay dark even in light mode; paint rows with the view's theme.
+        self.setItemDelegate(QStyledItemDelegate(self))
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = arrow_painter(self)

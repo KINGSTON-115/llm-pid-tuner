@@ -1,6 +1,6 @@
 # LLM-PID-Tuner
 
-> **Development desktop UI**: with Python 3.10+, install `requirements-desktop.txt` and run `python launcher.py` to open the native workbench with live plots, PID controls, AI analysis and exports. Offline simulation needs no API key. See the [desktop guide](DESKTOP_GUIDE.md). Use `python launcher.py --tui` for the legacy terminal selector; the older Release instructions below still apply to published versions.
+> **v2.5.0 native desktop**: [download the Windows x64 bundle](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0), extract the ZIP and open `llm-pid-tuner-desktop.exe`. Live plots, Light / Dark / System themes, global Chinese / English switching and CSV / JSON export are included. Offline simulation needs no API key. See the [desktop guide](DESKTOP_GUIDE.md).
 
 An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error process of real controller tuning.
 
@@ -20,7 +20,7 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 > 📺 [YouTube Tutorial](https://youtu.be/Giruc9kN53Y)
 
 > New here? The easiest path is **not** Python.
-> Download the packaged `llm-pid-tuner.exe` from Releases and start there.
+> Download the Windows ZIP from Releases, extract the entire folder and open the desktop app.
 
 ## Table of Contents
 
@@ -54,7 +54,7 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 ## Best starting path
 
 - **Just want to tune hardware**: use the packaged `exe`
-- **Want to see the idea first**: run `simulator.py`
+- **Want to see the idea first**: open the desktop and start the default local simulation with offline rules
 - **Want to integrate your own board**: use `firmware.cpp` + `tuner.py`
 - **Want internals**: read [PROJECT_DOC.md](PROJECT_DOC.md)
 
@@ -64,9 +64,12 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 
 ### 1. Download the packaged app
 
-Open [Latest Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest) page and download `llm-pid-tuner.exe` from the Assets section.
+Open [Latest Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest) and download `llm-pid-tuner-v2.5.0-windows-x64.zip`.
+Extract the entire folder to a writable location and open `llm-pid-tuner-desktop.exe`. Keep `_internal` beside both EXEs.
+Start the default **Local thermal simulation / Offline rules** to see live results without hardware or an API key.
+The sidebar switches Light / Dark / System appearance and 简体中文 / English, and saves your preferences.
 
-### 2. Prepare hardware
+### 2. Prepare hardware (optional)
 
 Your board should stream CSV data over serial.
 
@@ -90,13 +93,20 @@ In TUI mode, press `t` to enter a new runtime setpoint and observe how the curre
 
 ### 3. Run the exe once
 
-Double-click `llm-pid-tuner.exe`.
+The desktop creates `config.json` next to the EXE. Use **Connection settings** for API and serial configuration,
+then select **Serial hardware**, a specific port and **AI automatic tuning**. Connecting reads the device's
+current gains and setpoint. Pause, stop and runtime setpoint changes are available during a session.
 
-The launcher now asks which mode to start:
-`[1]` hardware tuning or `[2]` the local simulation TUI (default).
-If you are connecting a real serial device, choose `[1]`.
+The same folder also includes a console launcher. In PowerShell:
 
-If `config.json` does not exist, the program generates a default one automatically.
+```powershell
+.\llm-pid-tuner.exe --tui       # Legacy mode selector
+.\llm-pid-tuner.exe sim         # Simulation TUI
+.\llm-pid-tuner.exe tune COM5   # Serial tuning
+```
+
+Both EXEs share `_internal`. To upgrade from v2.4.x, copy your own `config.json` into the extracted folder
+to retain credentials and advanced settings.
 
 ### 4. Edit `config.json`
 
