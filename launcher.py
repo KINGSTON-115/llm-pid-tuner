@@ -48,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lang",
         choices=["zh", "en"],
-        help="Override display language (zh or en); forwarded to simulator.",
+        help="Override display language (zh or en) for the desktop or simulator.",
     )
     return parser
 
@@ -102,9 +102,9 @@ def run_tuner(args: list[str]) -> None:
     tuner.main(args)
 
 
-def run_desktop() -> None:
+def run_desktop(language=None) -> None:
     from desktop_main import main as desktop_main
-    desktop_main()
+    desktop_main(language=language)
 
 
 def dispatch(
@@ -119,7 +119,10 @@ def dispatch(
     if normalized == MODE_GUI or (mode_or_port is None and not force_plain and not force_tui):
         if extra or force_plain or force_tui:
             raise SystemExit("Desktop mode does not accept terminal flags or positional arguments.")
-        run_desktop()
+        if lang:
+            run_desktop(language=lang)
+        else:
+            run_desktop()
         return
 
     if normalized == MODE_SIM:

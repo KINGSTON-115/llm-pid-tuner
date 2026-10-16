@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 
-def main() -> None:
+def main(language=None) -> None:
     if getattr(sys, "frozen", False):
         os.chdir(Path(sys.executable).resolve().parent)
     from core.config import initialize_runtime_config
@@ -18,7 +18,7 @@ def main() -> None:
             raise
         raise SystemExit("桌面界面需要 Qt。请使用 Python 3.10+ 执行：\n"
                          "python -m pip install -r requirements-desktop.txt") from exc
-    run_desktop()
+    run_desktop(language=language)
 
 
 if __name__ == "__main__":

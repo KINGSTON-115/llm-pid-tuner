@@ -6,21 +6,32 @@ import os
 from pathlib import Path
 import tempfile
 
+from PySide6.QtCore import Qt, QSignalBlocker
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QLineEdit, QMessageBox, QPushButton, QSpinBox,
+    QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core import config
+from desktop.i18n import Bindings, t, runtime, TEXT
 from desktop.widgets import label
+from desktop.controls import QComboBox, QSpinBox
+
+
+def warning(parent, title, message):
+    box = QMessageBox(QMessageBox.Icon.Warning, title, message, parent=parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.addButton(t("ok"), QMessageBox.ButtonRole.AcceptRole)
+    box.exec()
+    box.deleteLater()
 
 
 def save_settings(changes: dict, path: str | Path | None = None) -> None:
     target = Path(path or config.CONFIG_PATH).resolve()
     previous = json.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
     if not isinstance(previous, dict):
-        raise ValueError("配置文件必须是 JSON 对象。")
+        raise ValueError(t("invalid_config"))
     previous.update(changes)
     fd, temporary = tempfile.mkstemp(prefix=".pid-config-", suffix=".json", dir=target.parent)
     try:
@@ -37,15 +48,24 @@ def save_settings(changes: dict, path: str | Path | None = None) -> None:
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("连接设置 · LLM PID Tuner")
-        self.resize(620, 520)
+        self.copy = Bindings()
+        self.copy.bind(self.setWindowTitle, "settings_title")
+        self.resize(680, 580)
         self.fields: dict = {}
         self.original: dict = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(16)
-        layout.addWidget(label("连接设置", "title"))
-        layout.addWidget(label("配置保存在本机 config.json；API Key 以密码形式显示。", "muted"))
+        def text(key, name="", wrap=False):
+            widget = label("", name, wrap)
+            if key in TEXT:
+                self.copy.bind(widget.setText, key)
+            else:
+                widget.setText(key)
+            return widget
+
+        layout.addWidget(text("connections", "title"))
+        layout.addWidget(text("settings_hint", "muted", True))
         tabs = QTabWidget()
         layout.addWidget(tabs)
 
@@ -54,7 +74,9 @@ class SettingsDialog(QDialog):
             form = QFormLayout(widget)
             form.setContentsMargins(20, 22, 20, 22)
             form.setSpacing(16)
-            tabs.addTab(widget, title)
+            index = tabs.addTab(widget, title)
+            if title in TEXT:
+                self.copy.bind(lambda caption, i=index: tabs.setTabText(i, caption), title)
             return form
 
         def field(form, title, key, choices=None, integer=None, password=False, browse=False):
@@ -63,6 +85,9 @@ class SettingsDialog(QDialog):
                 widget = QComboBox()
                 for caption, data in choices:
                     widget.addItem(caption, data)
+                    if caption in TEXT:
+                        item = widget.count() - 1
+                        self.copy.bind(lambda text, w=widget, i=item: self._item_text(w, i, text), caption)
                 index = widget.findData(value)
                 if index < 0:
                     widget.addItem(str(value), value)
@@ -80,50 +105,64 @@ class SettingsDialog(QDialog):
                 if password:
                     widget.setEchoMode(QLineEdit.EchoMode.Password)
                 self.original[key] = widget.text()
-            widget.setAccessibleName(title)
+            if title in TEXT:
+                self.copy.bind(widget.setAccessibleName, title)
+            else:
+                widget.setAccessibleName(title)
             self.fields[key] = widget
             if browse:
                 row = QHBoxLayout()
                 row.addWidget(widget)
-                button = QPushButton("浏览…")
+                button = QPushButton()
+                self.copy.bind(button.setText, "browse")
                 button.clicked.connect(lambda: self._browse(widget))
                 row.addWidget(button)
-                form.addRow(title, row)
+                form.addRow(text(title), row)
             else:
-                form.addRow(title, widget)
+                form.addRow(text(title), widget)
 
-        ai = page("AI 模型")
-        field(ai, "接口协议", "LLM_PROVIDER", choices=[("OpenAI 兼容", "openai"), ("Claude 原生", "anthropic"), ("Claude 中转", "openai_claude"), ("自动识别", "auto")])
-        field(ai, "API 地址", "LLM_API_BASE_URL")
-        field(ai, "模型名称", "LLM_MODEL_NAME")
+        ai = page("ai_model")
+        field(ai, "protocol", "LLM_PROVIDER", choices=[("openai", "openai"), ("anthropic", "anthropic"), ("openai_claude", "openai_claude"), ("auto", "auto")])
+        field(ai, "url", "LLM_API_BASE_URL")
+        field(ai, "model", "LLM_MODEL_NAME")
         field(ai, "API Key", "LLM_API_KEY", password=True)
-        field(ai, "请求超时（秒）", "LLM_REQUEST_TIMEOUT", integer=(5, 300))
-        ai.addRow(label("支持 OpenAI 兼容服务、DeepSeek、Ollama 等。\n离线仿真无需配置模型。", "muted", True))
-        self.orca_note = label("当前使用已有 OrcaRouter 配置。登录与模型选择沿用项目的 OrcaRouter 设置入口。", "muted", True)
+        field(ai, "timeout", "LLM_REQUEST_TIMEOUT", integer=(5, 300))
+        ai.addRow(text("provider_hint", "muted", True))
+        self.orca_note = text("orca_hint", "muted", True)
         ai.addRow(self.orca_note)
         self.fields["LLM_PROVIDER"].currentIndexChanged.connect(self._provider_changed)
         self._provider_changed()
-        hardware = page("串口硬件")
-        field(hardware, "默认串口", "SERIAL_PORT")
-        field(hardware, "波特率", "BAUD_RATE", integer=(1200, 4000000))
-        field(hardware, "硬件协议", "HARDWARE_PROFILE", choices=[("通用串口 CSV", "generic_serial_csv"), ("STM32F407 + OpenMV", "stm32f407_openmv"), ("MSPM0 DataVision（只读）", "mspm0_datavision")])
-        hardware.addRow(label("连接时读取设备当前 PID。选择 AI 调参并开始后，\n引擎会根据采样结果向设备写入调整后的参数。", "muted", True))
+        hardware = page("hardware")
+        field(hardware, "default_port", "SERIAL_PORT")
+        field(hardware, "baud", "BAUD_RATE", integer=(1200, 4000000))
+        field(hardware, "hw_protocol", "HARDWARE_PROFILE", choices=[("generic_csv", "generic_serial_csv"), ("STM32F407 + OpenMV", "stm32f407_openmv"), ("mspm0", "mspm0_datavision")])
+        hardware.addRow(text("hw_settings_hint", "muted", True))
         matlab = page("Simulink")
-        for title, key in [("模型文件", "MATLAB_MODEL_PATH"), ("PID 模块路径", "MATLAB_PID_BLOCK_PATH"),
-                           ("输出信号", "MATLAB_OUTPUT_SIGNAL"), ("控制信号", "MATLAB_CONTROL_SIGNAL"),
-                           ("目标值模块", "MATLAB_SETPOINT_BLOCK"), ("MATLAB 安装路径", "MATLAB_ROOT")]:
+        for title, key in [("model_file", "MATLAB_MODEL_PATH"), ("pid_block", "MATLAB_PID_BLOCK_PATH"),
+                           ("output_signal", "MATLAB_OUTPUT_SIGNAL"), ("control_signal", "MATLAB_CONTROL_SIGNAL"),
+                           ("sp_block", "MATLAB_SETPOINT_BLOCK"), ("matlab_root", "MATLAB_ROOT")]:
             field(matlab, title, key, browse=key == "MATLAB_MODEL_PATH")
-        matlab.addRow(label("需要本机 MATLAB Engine；双控制器等高级配置沿用 config.json。", "muted", True))
+        matlab.addRow(text("matlab_hint", "muted", True))
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存设置")
+        self.copy.bind(buttons.button(QDialogButtonBox.StandardButton.Save).setText, "save")
         buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        self.copy.bind(buttons.button(QDialogButtonBox.StandardButton.Cancel).setText, "cancel")
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        if parent is not None and hasattr(parent, "preferences"):
+            parent.preferences.language_changed.connect(self.retranslate)
+
+    def retranslate(self):
+        self.copy.refresh()
+
+    @staticmethod
+    def _item_text(widget, index, text):
+        with QSignalBlocker(widget):
+            widget.setItemText(index, text)
 
     def _browse(self, widget):
-        path, _ = QFileDialog.getOpenFileName(self, "选择 Simulink 模型", "", "Simulink (*.slx *.mdl)")
+        path, _ = QFileDialog.getOpenFileName(self, t("choose_model"), "", "Simulink (*.slx *.mdl)", options=QFileDialog.Option.DontUseNativeDialog)
         if path:
             widget.setText(path)
 
@@ -145,11 +184,11 @@ class SettingsDialog(QDialog):
                 values[key] = widget.text().strip()
         from llm.orcarouter import is_orcarouter_provider
         if not is_orcarouter_provider(values["LLM_PROVIDER"]) and not values["LLM_API_BASE_URL"].startswith(("http://", "https://")):
-            QMessageBox.warning(self, "检查设置", "API 地址需要以 http:// 或 https:// 开头。")
+            warning(self, t("check_settings"), t("invalid_url"))
             return
         try:
             save_settings({key: value for key, value in values.items() if value != self.original[key]})
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "无法保存", str(exc))
+            warning(self, t("save_error"), runtime(str(exc)))
             return
         self.accept()
