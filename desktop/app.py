@@ -2,37 +2,28 @@
 from __future__ import annotations
 
 from datetime import datetime
+from collections import deque
+import math
 from queue import Empty
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QFrame, QHBoxLayout, QHeaderView, QMainWindow, QMenu, QMessageBox,
-    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox,
+    QApplication, QFileDialog, QFormLayout,
+    QFrame, QHBoxLayout, QHeaderView, QMainWindow, QMenu,
+    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
     QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.config import CONFIG
 from desktop.session import DesktopSession, RunOptions, SessionArchive
-from desktop.settings import SettingsDialog
-from desktop.widgets import MetricCard, ResponsePlot, STYLE, card, label
-
-
-PHASES = {
-    "connecting": "正在连接", "connected": "已连接", "collecting": "正在采样",
-    "llm_request": "分析响应", "observing": "稳定性观察", "observing_pending": "继续优化",
-    "fallback": "使用保守兜底", "rollback": "回退到最佳参数", "completed": "调参完成",
-    "stopped": "已停止", "error": "运行出错", "setpoint": "目标值已更新",
-    "setpoint_warning": "目标值未生效", "warning": "运行提示",
-}
-REASONS = {
-    "max_rounds_reached": "已完成设定轮数", "stopped_by_user": "已停止",
-    "stable_rounds_reached": "已达到稳定标准", "low_error_converged": "低误差收敛",
-    "llm_marked_done": "AI 已结束调参", "rollback_to_best": "已回退到最佳参数", "error": "运行出错",
-}
-STATUSES = {"STABLE": "稳定", "SLOW_RESPONSE": "响应偏慢", "OVERSHOOTING": "存在超调", "OSCILLATING": "存在振荡"}
+from desktop.settings import SettingsDialog, warning
+from desktop.widgets import MetricCard, ResponsePlot, card, label, line_icon
+from desktop.i18n import Bindings, t, token, runtime
+from desktop.preferences import Preferences
+from desktop.theme import PALETTES
+from desktop.controls import QComboBox, QDoubleSpinBox, QSpinBox
 
 
 def app_icon() -> QIcon:
@@ -52,9 +43,11 @@ def app_icon() -> QIcon:
 
 
 class Workbench(QMainWindow):
-    def __init__(self):
+    def __init__(self, language=None):
         super().__init__()
-        self.setWindowTitle("LLM PID Tuner · 桌面工作台")
+        self.preferences = Preferences(self, language)
+        self.copy = Bindings()
+        self.copy.bind(self.setWindowTitle, "window")
         self.setWindowIcon(app_icon())
         self.resize(1440, 940)
         self.setMinimumSize(1120, 760)
@@ -64,8 +57,13 @@ class Workbench(QMainWindow):
         self._finished = False
         self._started_at = 0.
         self._round = 0
-        self._last_phase = "准备就绪"
+        self._last_phase = "ready"
         self._latest_pid = None
+        self._last_sample = None
+        self._analysis_event = {"type": "empty"}
+        self._log_events = deque(maxlen=600)
+        self._status = ("ready_hint", {})
+        self._elapsed_seconds = 0
         root = QWidget()
         self.setCentralWidget(root)
         shell = QHBoxLayout(root)
@@ -81,29 +79,31 @@ class Workbench(QMainWindow):
         heading = QHBoxLayout()
         title = QVBoxLayout()
         title.setSpacing(5)
-        title.addWidget(label("WORKSPACE  /  CONTROL LAB", "muted"))
-        title.addWidget(label("PID 调参工作台", "title"))
-        title.addWidget(label("观察响应，理解每一次调整。", "muted"))
+        title.addWidget(self._label("eyebrow", "eyebrow"))
+        title.addWidget(self._label("title", "title"))
+        title.addWidget(self._label("subtitle", "muted"))
         heading.addLayout(title)
         heading.addStretch()
-        self.badge = label("●  准备就绪", "badge")
-        heading.addWidget(self.badge)
-        self.export_button = QPushButton("导出结果  ↓")
+        self.badge = label("", "badge")
+        heading.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.export_button = self._button("export")
         export_menu = QMenu(self)
-        export_menu.addAction("采样数据 · CSV", lambda: self.export("csv"))
-        export_menu.addAction("调参报告 · JSON", lambda: self.export("json"))
+        for key, kind in (("csv", "csv"), ("json", "json")):
+            action = export_menu.addAction("", lambda checked=False, fmt=kind: self.export(fmt))
+            self.copy.bind(action.setText, key)
         self.export_button.setMenu(export_menu)
         self.export_button.setEnabled(False)
-        heading.addWidget(self.export_button)
+        heading.addWidget(self.export_button, 0, Qt.AlignmentFlag.AlignVCenter)
         content.addLayout(heading)
 
         metrics = QHBoxLayout()
         metrics.setSpacing(12)
-        self.metric_cards = [MetricCard("当前响应  /  PV", "等待采样"),
-                             MetricCard("平均绝对误差", "每轮完成后更新"),
-                             MetricCard("超调量", "相对当前目标值"),
-                             MetricCard("稳态误差", "最后 20% 采样的平均误差")]
-        for widget in self.metric_cards:
+        self.metric_cards = []
+        for caption, hint in (("pv", "waiting"), ("mae", "round_hint"), ("overshoot", "overshoot_hint"), ("steady", "steady_hint")):
+            widget = MetricCard("", "")
+            self.copy.bind(widget.title.setText, caption)
+            self.copy.bind(widget.hint.setText, hint)
+            self.metric_cards.append(widget)
             metrics.addWidget(widget)
         content.addLayout(metrics)
 
@@ -115,23 +115,25 @@ class Workbench(QMainWindow):
         middle.setHandleWidth(14)
         chart_card, chart_layout = card()
         chart_heading = QHBoxLayout()
-        chart_heading.addWidget(label("系统响应", "section"))
+        chart_heading.addWidget(self._label("response", "section"))
         chart_heading.addStretch()
-        chart_heading.addWidget(label("● 实际响应", "muted"))
-        chart_heading.addWidget(label("┄ 目标值", "muted"))
+        self.response_legend = self._label("actual", "muted")
+        self.target_legend = self._label("target", "muted")
+        chart_heading.addWidget(self.response_legend)
+        chart_heading.addWidget(self.target_legend)
         self.range_select = QComboBox()
-        for caption, seconds in [("全部采样", 0), ("最近 60 秒", 60), ("最近 120 秒", 120)]:
-            self.range_select.addItem(caption, seconds)
+        self._choices(self.range_select, [("all_samples", 0), ("last_60", 60), ("last_120", 120)])
         self.range_select.currentIndexChanged.connect(self._range_changed)
         chart_heading.addWidget(self.range_select)
         chart_layout.addLayout(chart_heading)
         self.plot = ResponsePlot()
         chart_layout.addWidget(self.plot, 1)
         chart_footer = QHBoxLayout()
-        self.sample_label = label("0 个采样点", "muted")
+        self.sample_label = label("", "muted")
         chart_footer.addWidget(self.sample_label)
         chart_footer.addStretch()
-        chart_footer.addWidget(label("悬停查看数据  ·  下方为控制输出", "muted"))
+        self.hover_hint = self._label("hover_hint", "muted")
+        chart_footer.addWidget(self.hover_hint)
         chart_layout.addLayout(chart_footer)
         middle.addWidget(chart_card)
         middle.addWidget(self._controls())
@@ -146,9 +148,7 @@ class Workbench(QMainWindow):
         self.analysis = QPlainTextEdit()
         self.analysis.setReadOnly(True)
         self.analysis.setMaximumBlockCount(600)
-        self.analysis.setPlainText("从一次仿真实验开始\n\n选择初始 PID 与目标值，点击「开始调参」。\n默认使用离线保守规则，无需 API Key；切换到 AI 模式可查看模型的实时分析。")
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["轮次", "平均误差", "稳态误差", "超调 %", "系统状态", "连续稳定轮数"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -156,9 +156,11 @@ class Workbench(QMainWindow):
         self.logs = QPlainTextEdit()
         self.logs.setReadOnly(True)
         self.logs.setMaximumBlockCount(600)
-        self.tabs.addTab(self.analysis, "调参分析")
-        self.tabs.addTab(self.table, "轮次记录")
-        self.tabs.addTab(self.logs, "运行日志")
+        for widget, key in ((self.analysis, "analysis"), (self.table, "history"), (self.logs, "logs")):
+            index = self.tabs.addTab(widget, "")
+            self.copy.bind(lambda text, i=index: self.tabs.setTabText(i, text), key)
+            self.copy.bind(widget.setAccessibleName, key)
+        self.tabs.currentChanged.connect(self._navigate)
         activity_layout.addWidget(self.tabs)
         vertical.addWidget(activity_card)
         vertical.setSizes([450, 190])
@@ -169,51 +171,93 @@ class Workbench(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.setValue(0)
         content.addWidget(self.progress)
-        self.statusBar().showMessage("本地仿真已就绪。配置初始参数后即可开始。")
-        self.elapsed = label("LOCAL SESSION  ·  00:00", "muted")
+        self.elapsed = label("", "muted")
         self.statusBar().addPermanentWidget(self.elapsed)
         self.timer = QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self._poll)
         self.timer.start()
         self._mode_changed()
+        self.preferences.language_changed.connect(self.retranslate)
+        self.preferences.theme_changed.connect(self._theme_changed)
+        self.retranslate()
+        self._theme_changed(self.preferences.resolved_theme)
+
+    def _label(self, key, name="", wrap=False):
+        widget = label("", name, wrap)
+        self.copy.bind(widget.setText, key)
+        return widget
+
+    def _button(self, key):
+        widget = QPushButton()
+        self.copy.bind(widget.setText, key)
+        self.copy.bind(widget.setAccessibleName, key)
+        return widget
+
+    def _choices(self, combo, choices):
+        for key, data in choices:
+            index = combo.count()
+            combo.addItem("", data)
+            self.copy.bind(lambda text, c=combo, i=index: self._item_text(c, i, text), key)
+
+    @staticmethod
+    def _item_text(combo, index, text):
+        with QSignalBlocker(combo):
+            combo.setItemText(index, text)
 
     def _sidebar(self):
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(182)
+        sidebar.setFixedWidth(190)
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(18, 30, 18, 20)
         layout.setSpacing(10)
-        logo = label("∿  PID LAB", "brand")
+        logo = label("PID / LAB", "brand")
         layout.addWidget(logo)
         layout.addWidget(label("LLM PID TUNER"))
-        layout.addSpacing(38)
-        layout.addWidget(label("工作空间"))
-        self.overview = QPushButton("◉   实时调参")
+        layout.addSpacing(24)
+        layout.addWidget(self._label("workspace", "navCaption"))
+        self.overview = self._button("overview")
         self.overview.setCheckable(True)
         self.overview.setChecked(True)
-        self.history_nav = QPushButton("▤   轮次记录")
+        self.history_nav = self._button("history")
         self.history_nav.setCheckable(True)
         self.overview.clicked.connect(lambda: self._navigate(0))
         self.history_nav.clicked.connect(lambda: self._navigate(1))
         layout.addWidget(self.overview)
         layout.addWidget(self.history_nav)
         layout.addSpacing(20)
-        layout.addWidget(label("偏好设置"))
-        self.settings_button = QPushButton("⚙   连接设置")
+        layout.addWidget(self._label("preferences", "navCaption"))
+        self.settings_button = self._button("connections")
         self.settings_button.clicked.connect(self.settings)
         layout.addWidget(self.settings_button)
+        layout.addSpacing(8)
+        layout.addWidget(self._label("appearance"))
+        self.theme_select = QComboBox()
+        self._choices(self.theme_select, [("system", "system"), ("light", "light"), ("dark", "dark")])
+        self.copy.bind(self.theme_select.setAccessibleName, "appearance")
+        self.theme_select.setCurrentIndex(self.theme_select.findData(self.preferences.theme))
+        self.theme_select.currentIndexChanged.connect(lambda: self._preference_changed("theme"))
+        layout.addWidget(self.theme_select)
+        layout.addWidget(self._label("language"))
+        self.language_select = QComboBox()
+        self.language_select.addItem("简体中文", "zh")
+        self.language_select.addItem("English", "en")
+        self.copy.bind(self.language_select.setAccessibleName, "language")
+        self.language_select.setCurrentIndex(self.language_select.findData(self.preferences.language))
+        self.language_select.currentIndexChanged.connect(lambda: self._preference_changed("language"))
+        layout.addWidget(self.language_select)
         layout.addStretch()
-        layout.addWidget(label("●  本机运行"))
-        layout.addWidget(label("原生桌面工作台\nPython · Serial · Simulink", wrap=True))
+        layout.addWidget(self._label("local"))
+        layout.addWidget(self._label("native", wrap=True))
+        layout.addWidget(label("Python · Serial · Simulink"))
         return sidebar
 
     def _controls(self):
         panel, layout = card()
-        panel.setMinimumWidth(290)
-        panel.setMaximumWidth(365)
-        layout.addWidget(label("实验配置", "section"))
+        panel.setMinimumWidth(300)
+        panel.setMaximumWidth(355)
+        layout.addWidget(self._label("config", "section"))
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -225,19 +269,18 @@ class Workbench(QMainWindow):
         scroll.setWidget(body)
         layout.addWidget(scroll, 1)
         self.mode = QComboBox()
-        for caption, key in [("本地热系统仿真", "python"), ("串口硬件", "hardware"), ("MATLAB / Simulink", "simulink")]:
-            self.mode.addItem(caption, key)
+        self._choices(self.mode, [("python", "python"), ("hardware", "hardware")])
+        self.mode.addItem("MATLAB / Simulink", "simulink")
         self.mode.currentIndexChanged.connect(self._mode_changed)
-        form.addRow("运行环境", self.mode)
+        form.addRow(self._label("environment"), self.mode)
         self.strategy = QComboBox()
-        self.strategy.addItem("离线规则体验", "offline")
-        self.strategy.addItem("AI 自动调参", "ai")
+        self._choices(self.strategy, [("offline", "offline"), ("ai", "ai")])
         self.strategy.currentIndexChanged.connect(self._strategy_changed)
-        form.addRow("调参策略", self.strategy)
+        form.addRow(self._label("strategy"), self.strategy)
         self.port = QComboBox()
         self.port.setEditable(True)
-        self.port.setAccessibleName("串口")
-        self.refresh_ports = QPushButton("刷新")
+        self.copy.bind(self.port.setAccessibleName, "port")
+        self.refresh_ports = self._button("refresh")
         self.refresh_ports.clicked.connect(self._refresh_ports)
         port_row = QHBoxLayout()
         port_row.addWidget(self.port, 1)
@@ -245,16 +288,16 @@ class Workbench(QMainWindow):
         self.port_container = QWidget()
         self.port_container.setLayout(port_row)
         port_row.setContentsMargins(0, 0, 0, 0)
-        self.port_caption = label("串口")
+        self.port_caption = self._label("port")
         form.addRow(self.port_caption, self.port_container)
         self._refresh_ports()
         self.setpoint = QDoubleSpinBox()
         self.setpoint.setRange(-1000000, 1000000)
         self.setpoint.setDecimals(2)
         self.setpoint.setValue(200)
-        self.setpoint.setAccessibleName("目标值")
-        form.addRow("目标值 SP", self.setpoint)
-        self.apply_setpoint = QPushButton("应用运行时目标值")
+        self.copy.bind(self.setpoint.setAccessibleName, "target")
+        form.addRow(self._label("sp"), self.setpoint)
+        self.apply_setpoint = self._button("apply_sp")
         self.apply_setpoint.clicked.connect(self._setpoint_request)
         self.apply_setpoint.setEnabled(False)
         form.addRow(self.apply_setpoint)
@@ -270,14 +313,14 @@ class Workbench(QMainWindow):
             widget.setValue(value)
             widget.setStyleSheet("QDoubleSpinBox { padding: 7px 3px; }")
             widget.setMinimumWidth(64)
-            widget.setAccessibleName(f"初始 K{gain}")
+            self.copy.bind(widget.setAccessibleName, "gain_accessible", gain=gain)
             self.gains[gain] = widget
             col.addWidget(widget)
             gains_row.addLayout(col)
         form.addRow(gains_row)
-        self.current_pid = label("当前 PID  ·  等待采样", "muted", True)
+        self.current_pid = label("", "muted", True)
         form.addRow(self.current_pid)
-        self.advanced_button = QPushButton("高级参数  ·  轮数 / 采样 / 速度")
+        self.advanced_button = self._button("advanced")
         self.advanced_button.setCheckable(True)
         form.addRow(self.advanced_button)
         self.advanced = QWidget()
@@ -290,29 +333,29 @@ class Workbench(QMainWindow):
         self.rounds = QSpinBox()
         self.rounds.setRange(1, 500)
         self.rounds.setValue(12)
-        advanced_form.addRow("最大轮数", self.rounds)
+        advanced_form.addRow(self._label("rounds"), self.rounds)
         self.samples = QSpinBox()
         self.samples.setRange(50, 5000)
         self.samples.setSingleStep(50)
         self.samples.setValue(100)
-        advanced_form.addRow("每轮采样", self.samples)
+        advanced_form.addRow(self._label("batch"), self.samples)
         self.speed = QComboBox()
         for factor in (1, 5, 10, 25, 50):
             self.speed.addItem(f"{factor}×", factor)
         self.speed.setCurrentIndex(2)
-        advanced_form.addRow("仿真速度", self.speed)
+        advanced_form.addRow(self._label("speed"), self.speed)
         self.mode_hint = label("", "muted", True)
         form.addRow(self.mode_hint)
-        self.start_button = QPushButton("▶   开始调参")
+        self.start_button = self._button("start")
         self.start_button.setObjectName("primary")
         self.start_button.setMinimumHeight(40)
         self.start_button.clicked.connect(self.start_session)
         layout.addWidget(self.start_button)
         row = QHBoxLayout()
-        self.pause_button = QPushButton("暂停")
+        self.pause_button = self._button("pause")
         self.pause_button.clicked.connect(self.pause)
         self.pause_button.setEnabled(False)
-        self.stop_button = QPushButton("停止")
+        self.stop_button = self._button("stop")
         self.stop_button.setObjectName("danger")
         self.stop_button.clicked.connect(self.stop)
         self.stop_button.setEnabled(False)
@@ -326,8 +369,147 @@ class Workbench(QMainWindow):
         self.overview.setChecked(index == 0)
         self.history_nav.setChecked(index == 1)
 
+    def _preference_changed(self, kind):
+        combo = self.theme_select if kind == "theme" else self.language_select
+        try:
+            getattr(self.preferences, "set_" + kind)(combo.currentData())
+        except (OSError, ValueError) as exc:
+            with QSignalBlocker(combo):
+                combo.setCurrentIndex(combo.findData(getattr(self.preferences, kind)))
+            warning(self, t("save_error"), t("preference_error", error=self._safe_text(exc)))
+
+    def _theme_changed(self, theme):
+        c = PALETTES[theme]
+        with QSignalBlocker(self.theme_select):
+            self.theme_select.setCurrentIndex(self.theme_select.findData(self.preferences.theme))
+        self.plot.set_theme(theme)
+        self.response_legend.setStyleSheet(f"color: {c.accent};")
+        self.target_legend.setStyleSheet(f"color: {c.target};")
+        self.response_legend.setText("● " + t("actual"))
+        self.target_legend.setText("┄ " + t("target"))
+        for button, icon, color in ((self.overview, "response", c.sidebar_text),
+                                     (self.history_nav, "history", c.sidebar_text),
+                                     (self.settings_button, "settings", c.sidebar_text),
+                                     (self.start_button, "play", c.accent_text),
+                                     (self.stop_button, "stop", c.danger),
+                                     (self.export_button, "export", c.text)):
+            button.setIcon(line_icon(icon, color))
+        self._render_badge()
+
+    def _show_status(self, key, **values):
+        self._status = (key, values)
+        self._render_status()
+
+    def _render_status(self):
+        key, values = self._status
+        if key == "runtime":
+            message = runtime(values["message"])
+        else:
+            if key == "finished_hint":
+                values = {"reason": token(values["reason"])}
+            message = t(key, **values)
+        self.statusBar().showMessage(message)
+
+    def _render_badge(self):
+        state = self._last_phase
+        if self.session and not self._finished:
+            if self.session.controller.should_stop:
+                state = "stopping"
+            elif self.session.controller.is_paused:
+                state = "paused"
+        self.badge.setText("●  " + token(state))
+        self.badge.setProperty("state", state)
+        self.badge.style().unpolish(self.badge)
+        self.badge.style().polish(self.badge)
+        paused = bool(self.session and self.session.controller.is_paused)
+        self.pause_button.setText(t("resume" if paused else "pause"))
+        self.pause_button.setAccessibleName(self.pause_button.text())
+        self.pause_button.setIcon(line_icon("resume" if paused else "pause", PALETTES[self.preferences.resolved_theme].text))
+
+    def _render_counts(self):
+        self.sample_label.setText(t("samples", count=self.archive.count, round=self._round) +
+                                  (t("plot_limit") if self.archive.count > 6000 else ""))
+        seconds = self._elapsed_seconds
+        self.elapsed.setText(t("elapsed", time=f"{seconds // 60:02d}:{seconds % 60:02d}"))
+
+    def _render_pid(self):
+        final = self.archive.result.get("final_pid")
+        pid = final or self._latest_pid
+        if pid:
+            text = "   ".join(f"K{k} {pid[k]:.4g}" for k in ("p", "i", "d"))
+            secondary = self.archive.result.get("secondary_pid") if final else None
+            if secondary is None and self._last_sample and "p2" in self._last_sample:
+                secondary = {k: self._last_sample[k + "2"] for k in ("p", "i", "d")}
+            if secondary:
+                text += "\n" + t("controller2") + " · " + "  ".join(f"K{k} {secondary[k]:.4g}" for k in ("p", "i", "d"))
+        else:
+            text = t("waiting")
+        self.current_pid.setText(t("final_pid" if final else "current_pid", pid=text))
+        if self._last_sample:
+            self.metric_cards[0].hint.setText(t("error_hint", sp=self._last_sample["setpoint"], error=self._last_sample["error"]))
+
+    def _decision_text(self, event):
+        heading = t("decision", round=event["round"], action=token(event.get("action", "")))
+        # Only built-in offline/fallback summaries go through the known-copy translator.
+        raw = event.get("analysis_summary", "")
+        summary = runtime(raw) if event.get("fallback_used") else raw
+        return heading, summary
+
+    def _render_analysis(self):
+        event = self._analysis_event
+        kind = event["type"]
+        if kind == "empty":
+            message = t("analysis_empty")
+        elif kind == "starting":
+            message = t("starting_" + event["strategy"])
+        elif kind == "decision":
+            heading, summary = self._decision_text(event)
+            notes = "\n".join(runtime(note) for note in event.get("guardrail_notes", []))
+            message = heading + "\n\n" + summary + ("\n\n" + t("guardrails") + "\n" + notes if notes else "")
+        elif kind == "rollback":
+            message = runtime(event["reason"]) if event.get("reason") else t("rollback_text")
+        elif kind == "error":
+            message = t("run_error", error=runtime(event["message"]))
+        else:
+            message = event.get("message", "")[-40000:]
+        self.analysis.setPlainText(message)
+
+    def _log_text(self, event):
+        if event["type"] == "decision":
+            heading, summary = self._decision_text(event)
+            return heading + " · " + summary
+        message = runtime(event.get("message", ""))
+        if event["type"] == "lifecycle":
+            return f"{event['time']}  {token(event.get('phase', ''))} · {message}"
+        return message
+
+    def _append_log(self, event):
+        self._log_events.append(event)
+        self.logs.appendPlainText(self._log_text(event))
+
+    def retranslate(self):
+        self.copy.refresh()
+        with QSignalBlocker(self.language_select):
+            self.language_select.setCurrentIndex(self.language_select.findData(self.preferences.language))
+        self.plot.retranslate()
+        self.table.setHorizontalHeaderLabels([t(key) for key in ("col_round", "col_mae", "col_steady", "col_overshoot", "col_status", "col_stable")])
+        for row, metrics in enumerate(self.archive.metrics):
+            self.table.item(row, 4).setText(token(metrics["status"]))
+        scroll = self.logs.verticalScrollBar()
+        position, at_end = scroll.value(), scroll.value() == scroll.maximum()
+        self.logs.setPlainText("\n".join(self._log_text(event) for event in self._log_events))
+        scroll.setValue(scroll.maximum() if at_end else position)
+        self._render_analysis()
+        self._render_pid()
+        self._render_counts()
+        self._render_status()
+        self._update_mode_hint()
+        self._theme_changed(self.preferences.resolved_theme)
+
     def _refresh_ports(self):
         current = self.port.currentText() or str(CONFIG.get("SERIAL_PORT", "DEMO"))
+        self._port_error = ""
+        self.port.setToolTip("")
         self.port.clear()
         self.port.addItem("DEMO")
         try:
@@ -335,15 +517,26 @@ class Workbench(QMainWindow):
             for port in comports():
                 self.port.addItem(port.device)
         except Exception as exc:
-            self.port.setToolTip(f"串口扫描失败：{exc}")
+            self._port_error = self._safe_text(exc)
+            self.port.setToolTip(t("scan_error", error=self._port_error))
         self.port.setCurrentText(current if current != "AUTO" else "DEMO")
 
     def _strategy_changed(self):
         if not hasattr(self, "mode_hint"):
             return
-        if self.mode.currentData() == "python":
-            self.mode_hint.setText("本地离线仿真，不调用模型。" if self.strategy.currentData() == "offline"
-                                   else f"使用配置的 AI 模型：{CONFIG.get('LLM_MODEL_NAME', '')}")
+        self._update_mode_hint()
+
+    def _update_mode_hint(self):
+        mode = self.mode.currentData()
+        if mode == "hardware":
+            text = t("hardware_hint")
+        elif mode == "simulink":
+            text = t("simulink_hint")
+        else:
+            text = t("offline_hint") if self.strategy.currentData() == "offline" else t("ai_hint", model=CONFIG.get("LLM_MODEL_NAME", ""))
+        self.mode_hint.setText(text)
+        if self._port_error:
+            self.port.setToolTip(t("scan_error", error=self._port_error))
 
     def _mode_changed(self):
         if not hasattr(self, "mode_hint"):
@@ -357,12 +550,7 @@ class Workbench(QMainWindow):
         if mode != "python":
             self.strategy.setCurrentIndex(1)
         self.strategy.setEnabled(mode == "python")
-        if mode == "hardware":
-            self.mode_hint.setText("读取设备当前 PID 和目标值。开始后 AI 会写回参数；停止仅结束上位机调参。")
-        elif mode == "simulink":
-            self.mode_hint.setText("使用连接设置中的模型，读取模型当前 PID；曲线按仿真步返回。")
-        else:
-            self._strategy_changed()
+        self._update_mode_hint()
 
     def _range_changed(self):
         self.plot.window_seconds = self.range_select.currentData()
@@ -371,7 +559,9 @@ class Workbench(QMainWindow):
     def settings(self):
         if self.session and self.session.running:
             return
-        SettingsDialog(self).exec()
+        dialog = SettingsDialog(self)
+        dialog.exec()
+        dialog.deleteLater()
         self._strategy_changed()
 
     def start_session(self):
@@ -384,19 +574,26 @@ class Workbench(QMainWindow):
         try:
             session = DesktopSession(options)
         except ValueError as exc:
-            QMessageBox.warning(self, "检查实验配置", str(exc))
+            warning(self, t("check_run"), self._safe_text(exc))
             return
         self.archive.close()
         self.archive = SessionArchive()
         self.plot.clear()
         self.table.setRowCount(0)
+        self.export_button.setEnabled(False)
         self.logs.clear()
-        self.analysis.setPlainText("正在启动实验…\n" + ("离线规则体验 · 不调用 AI 模型。" if options.strategy == "offline" else "等待采样完成后请求模型。"))
+        self._log_events.clear()
+        self._analysis_event = {"type": "starting", "strategy": options.strategy}
+        self._render_analysis()
         for metric in self.metric_cards:
             metric.value.setText("—")
-        self.current_pid.setText("当前 PID  ·  等待采样")
         self._round = 0
         self._latest_pid = None
+        self._last_sample = None
+        self._last_phase = "connecting"
+        self._elapsed_seconds = 0
+        self._render_pid()
+        self._render_counts()
         self._finished = False
         self._started_at = time.monotonic()
         self.session = session
@@ -413,7 +610,7 @@ class Workbench(QMainWindow):
         self.pause_button.setEnabled(active)
         self.stop_button.setEnabled(active)
         self.apply_setpoint.setEnabled(active)
-        self.pause_button.setText("暂停")
+        self._render_badge()
         if not active:
             self._mode_changed()
 
@@ -421,9 +618,8 @@ class Workbench(QMainWindow):
         if not self.session:
             return
         paused = self.session.controller.toggle_pause()
-        self.pause_button.setText("继续" if paused else "暂停")
-        self.badge.setText("●  已暂停" if paused else f"●  {self._last_phase}")
-        self.statusBar().showMessage("已暂停。进行中的模型请求会完成，但参数将在继续后应用。" if paused else "已继续运行。")
+        self._render_badge()
+        self._show_status("paused_hint" if paused else "resumed_hint")
 
     def stop(self):
         if self.session:
@@ -431,13 +627,13 @@ class Workbench(QMainWindow):
             self.stop_button.setEnabled(False)
             self.pause_button.setEnabled(False)
             self.apply_setpoint.setEnabled(False)
-            self.badge.setText("●  正在停止")
-            self.statusBar().showMessage("正在结束后台任务并释放连接；进行中的网络或 MATLAB 调用可能需要等待。")
+            self._render_badge()
+            self._show_status("stopping_hint")
 
     def _setpoint_request(self):
         if self.session:
             self.session.controller.request_setpoint(self.setpoint.value())
-            self.statusBar().showMessage(f"已请求目标值 {self.setpoint.value():g}，在下一次采样时应用。")
+            self._show_status("sp_requested", value=self.setpoint.value())
 
     def _safe_text(self, text):
         message = str(text)
@@ -460,11 +656,9 @@ class Workbench(QMainWindow):
             changed = True
         if changed:
             self.plot.update()
-            self.sample_label.setText(f"{self.archive.count:,} 个采样点  ·  已评估 {self._round} 轮" +
-                                      ("  ·  图中保留最近 6,000 点" if self.archive.count > 6000 else ""))
             self.export_button.setEnabled(self.archive.count > 0 or bool(self.archive.result))
-        elapsed = int(time.monotonic() - self._started_at)
-        self.elapsed.setText(f"LOCAL SESSION  ·  {elapsed // 60:02d}:{elapsed % 60:02d}")
+        self._elapsed_seconds = int(time.monotonic() - self._started_at)
+        self._render_counts()
         if self._finished and not self.session.running and self.session.events.empty():
             self.session = None
             self._set_active(False)
@@ -474,15 +668,23 @@ class Workbench(QMainWindow):
     def _event(self, event):
         kind = event["type"]
         if kind == "sample":
+            try:
+                fields = ("timestamp", "input", "setpoint", "pwm", "error", "p", "i", "d")
+                if any(key in event for key in ("p2", "i2", "d2")):
+                    fields += ("p2", "i2", "d2")
+                values = {key: float(event[key]) for key in fields}
+            except (KeyError, ValueError, TypeError, OverflowError):
+                return
+            if not all(math.isfinite(value) for value in values.values()):
+                return
+            event = {**event, **values}
+            if not self.plot.add_sample(event):
+                return
             self.archive.sample(event)
-            self.plot.add_sample(event)
+            self._last_sample = dict(event)
             self.metric_cards[0].value.setText(f"{event['input']:.2f}")
-            self.metric_cards[0].hint.setText(f"SP {event['setpoint']:g}  ·  误差 {event['error']:.2f}")
             self._latest_pid = {k: event[k] for k in ("p", "i", "d")}
-            pid = "   ".join(f"K{k} {event[k]:.4g}" for k in ("p", "i", "d"))
-            if "p2" in event:
-                pid += "\n控制器 2  " + "  ".join(f"K{k} {event[k + '2']:.4g}" for k in ("p", "i", "d"))
-            self.current_pid.setText("当前 PID  ·  " + pid)
+            self._render_pid()
         elif kind == "round_metrics":
             self.archive.metrics.append(dict(event))
             self._round = event["round"]
@@ -492,51 +694,51 @@ class Workbench(QMainWindow):
             row = self.table.rowCount()
             self.table.insertRow(row)
             values = [str(event["round"]), f"{event['avg_error']:.3f}", f"{event['steady_state_error']:.3f}",
-                      f"{event['overshoot']:.2f}", STATUSES.get(event["status"], event["status"]), str(event["stable_rounds"])]
+                      f"{event['overshoot']:.2f}", token(event["status"]), str(event["stable_rounds"])]
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
             self.table.scrollToBottom()
             self.progress.setValue(event["round"])
         elif kind == "decision":
-            summary = self._safe_text(event.get("analysis_summary", ""))
-            notes = self._safe_text("\n".join(event.get("guardrail_notes", [])))
-            self.analysis.setPlainText(f"第 {event['round']} 轮 · {event.get('action', '')}\n\n{summary}" +
-                                       (f"\n\n安全护栏\n{notes}" if notes else ""))
-            self.logs.appendPlainText(f"第 {event['round']} 轮 · {summary}")
+            self._analysis_event = {**event, "analysis_summary": self._safe_text(event.get("analysis_summary", "")),
+                                    "guardrail_notes": [self._safe_text(note) for note in event.get("guardrail_notes", [])]}
+            self._render_analysis()
+            self._append_log(self._analysis_event)
         elif kind == "rollback":
-            self.analysis.setPlainText(self._safe_text(event.get("reason", "已回退到最佳参数。")))
+            self._analysis_event = {**event, "reason": self._safe_text(event.get("reason", ""))}
+            self._render_analysis()
         elif kind == "log":
             message = self._safe_text(event.get("message", ""))
             if event.get("label") == "llm_stream":
-                self.analysis.setPlainText(message[-40000:])
+                self._analysis_event = {"type": "stream", "message": message[-40000:]}
+                self._render_analysis()
                 bar = self.analysis.verticalScrollBar()
                 bar.setValue(bar.maximum())
             else:
-                self.logs.appendPlainText(message)
+                self._append_log({**event, "message": message})
         elif kind == "lifecycle":
             phase = event.get("phase", "")
-            self._last_phase = PHASES.get(phase, phase)
-            if not self.session.controller.is_paused and not self.session.controller.should_stop:
-                self.badge.setText(f"●  {self._last_phase}")
+            self._last_phase = phase
+            self._render_badge()
             message = self._safe_text(event.get("message", ""))
-            self.logs.appendPlainText(f"{datetime.now():%H:%M:%S}  {self._last_phase}  ·  {message}")
-            self.statusBar().showMessage(message)
+            self._append_log({**event, "message": message, "time": f"{datetime.now():%H:%M:%S}"})
+            if not self.session or not (self.session.controller.is_paused or self.session.controller.should_stop):
+                self._show_status("runtime", message=message)
             if phase == "error":
-                self.analysis.setPlainText(f"运行遇到问题\n\n{message}\n\n检查连接设置后可以重新开始。")
+                self._analysis_event = {"type": "error", "message": message}
+                self._render_analysis()
         elif kind == "session_finished":
             self.archive.result = event.get("result", {})
-            final_pid = self.archive.result.get("final_pid")
-            if final_pid:
-                self.current_pid.setText("最终 PID  ·  " + "   ".join(f"K{k} {final_pid[k]:.4g}" for k in ("p", "i", "d")))
             reason = self.archive.result.get("completed_reason", "")
-            text = REASONS.get(reason, reason or "已结束")
-            self.badge.setText(f"●  {text}")
-            self.statusBar().showMessage(f"{text}。可以导出数据，或调整配置开始新的实验。")
             self._finished = True
+            self._last_phase = reason or "ended"
+            self._render_badge()
+            self._render_pid()
+            self._show_status("finished_hint", reason=reason or "ended")
 
     def export(self, kind):
         name = f"pid-session-{datetime.now():%Y%m%d-%H%M%S}.{kind}"
-        path, _ = QFileDialog.getSaveFileName(self, "导出本次实验", name, f"{kind.upper()} (*.{kind})")
+        path, _ = QFileDialog.getSaveFileName(self, t("export_title"), name, f"{kind.upper()} (*.{kind})", options=QFileDialog.Option.DontUseNativeDialog)
         if not path:
             return
         try:
@@ -545,9 +747,9 @@ class Workbench(QMainWindow):
             else:
                 self.archive.export_json(path)
         except OSError as exc:
-            QMessageBox.warning(self, "导出失败", str(exc))
+            warning(self, t("export_error"), self._safe_text(exc))
             return
-        self.statusBar().showMessage(f"已导出：{path}")
+        self._show_status("exported", path=path)
 
     def closeEvent(self, event):
         if self.session is not None:
@@ -560,13 +762,12 @@ class Workbench(QMainWindow):
         event.accept()
 
 
-def run_desktop() -> None:
+def run_desktop(language=None) -> None:
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("LLM PID Tuner")
     app.setStyle("Fusion")
     app.setFont(QFont("Microsoft YaHei UI", 9))
-    app.setStyleSheet(STYLE)
-    window = Workbench()
+    window = Workbench(language=language)
     screen = app.primaryScreen()
     if screen is not None:
         area = screen.availableGeometry()

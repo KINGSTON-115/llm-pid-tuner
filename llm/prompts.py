@@ -133,6 +133,13 @@ def get_system_prompt(
     sections = [_BASE_SYSTEM_PROMPT, mode_notes]
     if guardrail_section:
         sections.append(guardrail_section)
+    language = (prompt_context or {}).get("response_language")
+    if language in ("zh", "en"):
+        sections.append(
+            "## Response language\nWrite analysis_summary and thought_process in "
+            + ("Simplified Chinese" if language == "zh" else "English")
+            + ". Keep JSON field names, status, tuning_action and numeric values unchanged."
+        )
     return "\n\n".join(sections)
 
 

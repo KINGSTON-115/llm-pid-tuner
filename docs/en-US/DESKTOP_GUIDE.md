@@ -14,11 +14,29 @@ python launcher.py
 
 `python desktop_main.py` and `python launcher.py gui` also open the desktop UI.
 On Windows, open `desktop_main.pyw` with the Python installation containing the dependencies for a console-free launch.
-The current desktop UI is in Chinese; existing terminal language options remain available.
+The desktop supports Simplified Chinese and English throughout the interface.
 
 For a packaged installation, open `dist/llm-pid-tuner-desktop/llm-pid-tuner-desktop.exe`.
 Distribute the entire folder, including `_internal`. The packaged desktop reads `config.json` next to the EXE;
 source launches read it from the working directory. Existing published releases do not include this development feature.
+
+## Appearance and language
+
+Use the sidebar to choose **Light**, **Dark**, or **System** appearance. System is the default
+and follows operating system changes live. The theme covers the main window, charts, menus,
+settings, file dialogs, and the native Windows title bar on supported Windows builds.
+
+Choose **简体中文 / English** to switch the entire interface without restarting. Built-in messages,
+existing activity logs, offline explanations, table headers and dialogs update immediately.
+Switching during sampling or a pause preserves the data, history and current gains. Existing model
+analysis and external diagnostics keep their original text. The next AI request asks for the selected
+language; a request already in flight keeps its original language.
+
+The choices are saved in local `config.json` as `DESKTOP_THEME` (`light` / `dark` / `system`)
+and `DESKTOP_LANGUAGE` (`zh` / `en`). A failed save keeps the previous preferences and displays
+an error. With no saved language, the system language is used. `python launcher.py gui --lang en`
+overrides the startup language for that launch without changing the saved preference.
+CSV and JSON field names remain stable for downstream tools.
 
 ## Use
 
@@ -65,3 +83,8 @@ python -m PyInstaller --noconfirm llm-pid-tuner-desktop.spec
 The desktop bundle has no console window and does not include WebEngine. Automated checks use
 offline simulation, the virtual serial device and test doubles. Real hardware and Simulink models
 require validation in their target environments.
+
+Desktop regression checks cover switching preferences while paused, preserving data and history,
+resuming and updating the setpoint, stop/cleanup, complete exports, failed saves, dialog signal cleanup,
+invalid samples, time windows and the 6,000-point chart limit. Both themes have text/trace contrast
+checks; all four theme/language combinations are checked at the compact window size.

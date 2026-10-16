@@ -15,6 +15,8 @@ from queue import Queue
 from core.adapters import HardwareEnv, PythonSimEnv, SimulinkEnv
 from core.buffer import AdvancedDataBuffer
 from core.config import CONFIG
+from core.i18n import get_language
+from desktop.i18n import t
 from core.tuning_engine import run_tuning_engine
 from hw.bridge import SerialBridge
 from llm.client import LLMTuner
@@ -47,31 +49,31 @@ class RunOptions:
 
     def validate(self) -> None:
         if self.mode not in {"python", "hardware", "simulink"}:
-            raise ValueError("请选择有效的运行环境。")
+            raise ValueError(t("invalid_mode"))
         if self.strategy not in {"offline", "ai"}:
-            raise ValueError("请选择有效的调参策略。")
+            raise ValueError(t("invalid_strategy"))
         if not all(math.isfinite(v) for v in (*self.pid.values(), self.setpoint, self.speed)):
-            raise ValueError("参数必须是有限数值。")
+            raise ValueError(t("finite_values"))
         limits = get_pid_limits("python_sim" if self.mode == "python" else self.mode)
         if self.mode == "python" and any(not limits[k]["min"] <= v <= limits[k]["max"] for k, v in self.pid.items()):
-            raise ValueError("初始 PID 超出当前环境的安全范围，请检查参数。")
+            raise ValueError(t("unsafe_pid"))
         if not 1 <= self.rounds <= 500 or not 50 <= self.samples <= 5000:
-            raise ValueError("轮数应为 1–500，每轮采样点应为 50–5000。")
+            raise ValueError(t("invalid_counts"))
         if not 1 <= self.speed <= 50:
-            raise ValueError("仿真速度应为 1–50 倍。")
+            raise ValueError(t("invalid_speed"))
         if self.mode == "hardware" and (not self.port.strip() or self.port.upper() == "AUTO"):
-            raise ValueError("请选择具体串口，或使用 DEMO 虚拟串口。")
+            raise ValueError(t("invalid_port"))
         if self.mode != "python" and self.strategy == "offline":
-            raise ValueError("离线规则体验仅用于本地热系统仿真；设备和 Simulink 请使用 AI 调参。")
+            raise ValueError(t("offline_only"))
         if self.mode == "hardware" and CONFIG.get("HARDWARE_PROFILE") == "mspm0_datavision":
-            raise ValueError("MSPM0 DataVision 是只读协议，桌面调参暂不支持；请使用原有遥测入口。")
+            raise ValueError(t("readonly_profile"))
         if self.strategy == "ai":
             if not str(CONFIG.get("LLM_MODEL_NAME", "")).strip():
-                raise ValueError("请在连接设置中填写模型名称。")
+                raise ValueError(t("missing_model"))
             from llm.orcarouter import is_orcarouter_provider
             url = str(CONFIG.get("LLM_API_BASE_URL", ""))
             if not is_orcarouter_provider(CONFIG.get("LLM_PROVIDER", "")) and not url.startswith(("http://", "https://")):
-                raise ValueError("请填写有效的模型接口地址（http:// 或 https://）。")
+                raise ValueError(t("missing_url"))
 
 
 class OfflineTuner:
@@ -137,7 +139,7 @@ class DesktopSession:
                 settings = load_simulink_runtime_config({**CONFIG, "MATLAB_SETPOINT": options.setpoint})
                 issue = validate_simulink_runtime_config(settings)
                 if issue or not settings.model_path:
-                    raise ValueError(issue or "请先在连接设置中选择 Simulink 模型。")
+                    raise ValueError(issue or t("missing_simulink"))
                 sim = create_simulink_bridge(settings)
                 cleanup = sim.disconnect
                 sim.connect()
@@ -167,6 +169,7 @@ class DesktopSession:
                     abort_check=lambda: self.controller.should_stop,
                     timeout=CONFIG.get("LLM_REQUEST_TIMEOUT", 60),
                 )
+                tuner = _LocalizedTuner(tuner)
             result = run_tuning_engine(
                 env, tuner, llm_mode, self.sink, self.controller,
                 emit_console=False, start_time=start, current_stream_round=stream_round,
@@ -195,6 +198,15 @@ class DesktopSession:
                 result = {**(result or {}), "completed_reason": "error", "error": "连接清理失败，请检查设备状态。"}
             CONFIG.update(old_config)
             self.sink.publish("session_finished", result=result or {})
+
+
+class _LocalizedTuner:
+    """Take the current language at each request, including after a live switch."""
+    def __init__(self, tuner):
+        self.tuner = tuner
+
+    def analyze(self, *args, prompt_context=None, **kwargs):
+        return self.tuner.analyze(*args, prompt_context={**(prompt_context or {}), "response_language": get_language()}, **kwargs)
 
 
 class SessionArchive:

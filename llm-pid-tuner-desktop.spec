@@ -1,17 +1,20 @@
 # Native desktop bundle; build with requirements-desktop.txt and PyInstaller.
 from PyInstaller.utils.hooks import copy_metadata
 from pathlib import Path
+from PySide6.QtCore import QLibraryInfo
 import os
 import sys
 
 # Conda's libffi may live outside DLLs and PyInstaller's normal search path.
 ffi = Path(sys.prefix) / "Library" / "bin" / "ffi.dll"
 binaries = [(str(ffi), ".")] if ffi.exists() else []
+translations = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath))
+qt_copy = [(str(translations / "qtbase_zh_CN.qm"), "PySide6/translations")]
 
 a = Analysis(
     ["desktop_main.pyw"],
     pathex=[], binaries=binaries,
-    datas=copy_metadata("PySide6_Essentials") + copy_metadata("shiboken6"),
+    datas=copy_metadata("PySide6_Essentials") + copy_metadata("shiboken6") + qt_copy,
     hiddenimports=["serial.tools.list_ports"],
     hookspath=[], hooksconfig={}, runtime_hooks=[],
     excludes=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml", "PySide6.QtQuick"],

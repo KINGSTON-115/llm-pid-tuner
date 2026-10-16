@@ -89,6 +89,11 @@ class LauncherDispatchTests(unittest.TestCase):
             launcher.main(["desktop"])
         desktop.assert_called_once_with()
 
+    def test_lang_flag_overrides_saved_desktop_language(self):
+        with patch.object(launcher, "run_desktop") as desktop:
+            launcher.main(["gui", "--lang", "en"])
+        desktop.assert_called_once_with(language="en")
+
     def test_main_pauses_on_nonzero_system_exit(self):
         with patch.object(launcher, "initialize_runtime_config"):
             with patch.object(launcher, "dispatch", side_effect=SystemExit(1)):
