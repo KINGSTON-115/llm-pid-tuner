@@ -10,8 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 if importlib.util.find_spec("PySide6") is None:
     pytest.skip("Install requirements-desktop.txt for native UI tests", allow_module_level=True)
-from PySide6.QtGui import QFontDatabase, QPalette
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtGui import QColor, QFontDatabase, QPalette
+from PySide6.QtCore import QCoreApplication, QEvent, QRect, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QDialogButtonBox, QFileDialog, QStyle, QStyleOptionSpinBox
 import shiboken6
@@ -20,7 +20,6 @@ from core.config import CONFIG, DEFAULT_CONFIG
 from desktop.app import Workbench
 from desktop.settings import SettingsDialog, save_settings
 from desktop.widgets import STYLE
-from desktop.i18n import t
 from desktop.theme import PALETTES
 from desktop.preferences import Preferences
 
@@ -326,6 +325,75 @@ def test_numeric_step_buttons_work_in_both_themes(app, window):
             rect = spin.style().subControlRect(QStyle.ComplexControl.CC_SpinBox, option, control, spin)
             QTest.mouseClick(spin, Qt.MouseButton.LeftButton, pos=rect.center())
             assert spin.value() == expected
+
+
+def assert_popup_text(view, row, color):
+    """Check painted glyphs, since the native combo delegate can ignore view colors."""
+    rect = view.visualRect(view.model().index(row, 0)).adjusted(12, 2, -12, -2)
+    image = view.viewport().grab().toImage()
+    scale = image.devicePixelRatio()
+    rect = QRect(round(rect.x() * scale), round(rect.y() * scale),
+                 round(rect.width() * scale), round(rect.height() * scale))
+    rect = rect.intersected(image.rect())
+    expected = QColor(color)
+    matches = sum(
+        max(abs(actual.red() - expected.red()), abs(actual.green() - expected.green()),
+            abs(actual.blue() - expected.blue())) < 48
+        for y in range(rect.top(), rect.bottom() + 1)
+        for x in range(rect.left(), rect.right() + 1)
+        for actual in (image.pixelColor(x, y),)
+    )
+    assert matches >= 10, f"Row {row}: no readable text in {color} ({matches} matching pixels)"
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_popup_items_paint_readably_after_theme_changes(app, window, language):
+    window.preferences.set_language(language)
+    dialog = SettingsDialog(window)
+    try:
+        dialog.show()
+        # Include sidebar, main form and settings; reopen the same views after each switch.
+        combos = (window.theme_select, window.language_select, window.mode,
+                  dialog.fields["LLM_PROVIDER"])
+        for theme in ("light", "dark", "light"):
+            window.preferences.set_theme(theme)
+            colors = PALETTES[theme]
+            for combo in combos:
+                combo.showPopup()
+                app.processEvents()
+                view = combo.view()
+                assert view.isVisible()
+                selected = combo.currentIndex()
+                assert_popup_text(view, selected, colors.accent)
+                for row in range(combo.count()):
+                    if row != selected:
+                        assert_popup_text(view, row, colors.text)
+                combo.hidePopup()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_theme_popup_mouse_and_language_popup_keyboard_selection(app, window):
+    combo = window.theme_select
+    for theme in ("dark", "light"):
+        combo.showPopup()
+        app.processEvents()
+        row = combo.findData(theme)
+        rect = combo.view().visualRect(combo.model().index(row, 0))
+        QTest.mouseClick(combo.view().viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+        app.processEvents()
+        assert not combo.view().isVisible()
+        assert window.preferences.theme == theme
+    combo = window.language_select
+    combo.setFocus()
+    QTest.keyClick(combo, Qt.Key.Key_Space)
+    QTest.keyClick(combo.view(), Qt.Key.Key_End)
+    QTest.keyClick(combo.view(), Qt.Key.Key_Return)
+    app.processEvents()
+    assert window.preferences.language == "en"
+    assert window.start_button.text() == "Start tuning"
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])

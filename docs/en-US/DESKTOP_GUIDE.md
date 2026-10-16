@@ -1,11 +1,18 @@
-# Native desktop workbench (development version)
+# Native desktop workbench
 
 The workbench uses PySide6 / Qt Widgets and opens as a standalone window. No browser or Node.js is needed.
 It shares the existing tuning engine, PID guardrails, rollback and convergence checks.
 
 ## Run
 
+**Windows portable build:** download `llm-pid-tuner-v2.5.0-windows-x64.zip` from the
+[v2.5.0 Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0), extract the entire folder,
+and open `llm-pid-tuner-desktop.exe`. Python is not required. Keep `_internal` beside the EXEs.
+The included `llm-pid-tuner.exe` supports terminal commands. Copy your old `config.json` into the new folder
+to retain settings when upgrading; personal config files and credentials are not included in the release.
+
 Use **Python 3.10+**:
+check out the `v2.5.0` tag or a newer `dev` revision; source on `main` can lag behind release tags.
 
 ```powershell
 python -m pip install -r requirements-desktop.txt
@@ -18,7 +25,7 @@ The desktop supports Simplified Chinese and English throughout the interface.
 
 For a packaged installation, open `dist/llm-pid-tuner-desktop/llm-pid-tuner-desktop.exe`.
 Distribute the entire folder, including `_internal`. The packaged desktop reads `config.json` next to the EXE;
-source launches read it from the working directory. Existing published releases do not include this development feature.
+source launches read it from the working directory. Native desktop bundles are available starting with v2.5.0.
 
 ## Appearance and language
 
@@ -71,6 +78,8 @@ which discards the temporary session. Dual-controller telemetry is included in C
 
 Legacy entry points remain: `python launcher.py --tui`, `python launcher.py sim`,
 `python launcher.py tune COM5`, and `python launcher.py --plain`.
+In the Windows bundle, replace `python launcher.py` with `.\llm-pid-tuner.exe` for these commands.
+For OrcaRouter login and model selection, use `.\llm-pid-tuner.exe tune --orcarouter-settings`.
 
 ## Build
 
@@ -88,3 +97,5 @@ Desktop regression checks cover switching preferences while paused, preserving d
 resuming and updating the setpoint, stop/cleanup, complete exports, failed saves, dialog signal cleanup,
 invalid samples, time windows and the 6,000-point chart limit. Both themes have text/trace contrast
 checks; all four theme/language combinations are checked at the compact window size.
+Popup regression tests open appearance, language, run-mode and provider lists and inspect painted text
+for normal and selected rows, repeated theme changes, mouse/keyboard selection and Windows DPI scaling.

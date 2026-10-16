@@ -101,6 +101,8 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabl
 QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {{ background: transparent; border: none; width: 16px; }}
 QComboBox::drop-down {{ border: none; width: 21px; }}
 QComboBox QAbstractItemView {{ background: {c.surface}; color: {c.text}; selection-background-color: {c.accent_soft}; selection-color: {c.accent}; padding: 5px; border: 1px solid {c.border}; }}
+QComboBox QAbstractItemView::item {{ min-height: 24px; padding: 3px 8px; border-radius: 4px; }}
+QComboBox QAbstractItemView::item:selected {{ background: {c.accent_soft}; color: {c.accent}; }}
 QPlainTextEdit {{ background: transparent; border: none; padding: 12px; selection-background-color: {c.accent}; selection-color: {c.accent_text}; }}
 QTableWidget {{ background: {c.surface}; border: none; gridline-color: {c.grid}; selection-background-color: {c.accent_soft}; selection-color: {c.text}; alternate-background-color: {c.raised}; }}
 QHeaderView::section {{ background: {c.raised}; color: {c.muted}; border: none; padding: 10px 8px; font-size: 11px; }}
