@@ -1,5 +1,7 @@
 # LLM-PID-Tuner
 
+> **v2.5.0 原生桌面版**：[下载 Windows x64 桌面包](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0)，完整解压后双击 `llm-pid-tuner-desktop.exe`。支持实时曲线、白昼 / 暗黑 / 跟随系统、中英文全局切换和 CSV / JSON 导出；离线体验无需 API Key。详见 [桌面工作台指南](docs/zh-CN/DESKTOP_GUIDE.md)。源码请使用 `v2.5.0` 标签或更新的 `dev` 分支。
+
 一个用大语言模型辅助 PID 调参的实用工具。
 
 > 💬 QQ 群：1082281492 - 欢迎加入交流讨论
@@ -11,7 +13,7 @@
 [![Star History Chart](https://api.star-history.com/svg?repos=KINGSTON-115/llm-pid-tuner&type=Date)](https://star-history.com/#KINGSTON-115/llm-pid-tuner)
 
 > 如果你是第一次接触这个项目，**不要先折腾 Python**。
-> **最省事的用法是直接下载 Release 里的 `llm-pid-tuner.exe`。**
+> **最省事的用法是下载 Release 里的 Windows ZIP，完整解压后打开桌面程序。**
 
 ## 最新开发版教程入口
 
@@ -72,13 +74,14 @@
 
 ### 第 1 步：下载打包版
 
-打开 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest) 页面，并下载资产里的 `llm-pid-tuner.exe`。
+打开 [Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest)，下载 `llm-pid-tuner-v2.5.0-windows-x64.zip`，将整个文件夹解压到可写目录。
+双击其中的 `llm-pid-tuner-desktop.exe`，必须保留同目录的 `_internal`。
 
-`v2.4.8` Windows 打包版增加可选的 OrcaRouter 登录与模型设置。使用它时，可在 EXE 所在目录运行 `llm-pid-tuner.exe tune --orcarouter-settings`，通过本机设置页保存 Key 或浏览器登录，并选择模型；TUI 中也可按 `o` 打开设置，保存后在下一次调参会话生效。已有提供商无需更改配置。
+保持默认的“本地热系统仿真 / 离线规则体验”，点击“开始调参”即可看到实时响应，无需硬件和 API Key。
+左侧可以切换白昼 / 暗黑 / 跟随系统，以及简体中文 / English，偏好会自动保存。
+本次修复白昼模式下拉选项的可读性，完整验证范围见 [v2.5.0 发布说明](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0)。
 
-该版本使用 MATLAB 兼容的 Python 3.10 打包，并验证了 EXE 的 Python 仿真和 MATLAB R2022b Simulink 调参流程。完整说明、校验值与验证范围见 [v2.4.8 发布说明](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.4.8)。源码用户请参考 [dev 分支教程](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/README.md#orcarouter)。
-
-### 第 2 步：准备硬件
+### 第 2 步：准备硬件（可选）
 
 你需要一个能通过串口持续上报控制数据的板子。
 
@@ -94,12 +97,20 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 ### 第 3 步：第一次运行 exe
 
-双击运行 `llm-pid-tuner.exe`。
+桌面版会在 EXE 所在目录生成 `config.json`。通过“连接设置”填写 API 和串口配置，
+再选择“串口硬件”、具体端口及“AI 自动调参”。连接时读取设备当前 PID 和目标值。
+从旧版升级时，可将自己的 `config.json` 复制到新目录，保留密钥与高级配置。
 
-启动器会先让你选择模式：`[1]` 真实硬件调参，`[2]` 本地仿真 TUI（默认）。
-如果你现在是准备接串口硬件，请先选 `[1]`。
+同目录还包含终端启动器，两个 EXE 共用 `_internal`。在 PowerShell 中运行：
 
-第一次运行时，如果当前目录下没有 `config.json`，程序会自动生成一份默认配置。
+```powershell
+.\llm-pid-tuner.exe --tui
+.\llm-pid-tuner.exe sim
+.\llm-pid-tuner.exe tune COM5
+.\llm-pid-tuner.exe tune --orcarouter-settings
+```
+
+最后一条命令打开 OrcaRouter 登录和模型目录设置；已有提供商配置继续可用。
 
 ### 第 4 步：填写 `config.json`
 

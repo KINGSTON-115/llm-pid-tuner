@@ -1,5 +1,7 @@
 # LLM-PID-Tuner
 
+> **v2.5.0 native desktop**: [download the Windows x64 bundle](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0), extract the entire ZIP and open `llm-pid-tuner-desktop.exe`. Includes live plots, Light / Dark / System themes, global Chinese / English switching and CSV / JSON export. Offline simulation needs no API key. See the [desktop guide](DESKTOP_GUIDE.md). For source use, check out `v2.5.0` or a newer `dev` revision.
+
 An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error process of real controller tuning.
 
 [中文](../../README.md) | English
@@ -10,7 +12,7 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 > 📺 [YouTube Tutorial](https://youtu.be/Giruc9kN53Y)
 
 > New here? The easiest path is **not** Python.
-> Download the packaged `llm-pid-tuner.exe` from Releases and start there.
+> Download the Windows ZIP from Releases, extract the entire folder and open the desktop app.
 
 ## System Architecture
 
@@ -43,13 +45,14 @@ An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error 
 
 ### 1. Download the packaged app
 
-Open [Latest Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest) page and download `llm-pid-tuner.exe` from the Assets section.
+Download `llm-pid-tuner-v2.5.0-windows-x64.zip` from [Latest Release](https://github.com/KINGSTON-115/llm-pid-tuner/releases/latest).
+Extract the entire folder to a writable location and open `llm-pid-tuner-desktop.exe`. Keep `_internal` beside both EXEs.
 
-The `v2.4.8` Windows release adds optional OrcaRouter authentication and model settings. From the EXE folder, run `llm-pid-tuner.exe tune --orcarouter-settings` to paste a key or sign in through your browser and select a model. Press `o` in the dashboard for settings; saved changes apply to the next tuning session. Existing provider configurations continue to work.
+Start the default **Local thermal simulation / Offline rules** to see live results without hardware or an API key.
+The sidebar switches Light / Dark / System appearance and 简体中文 / English, and saves your preferences.
+This release fixes unreadable light-mode dropdown items. See the [v2.5.0 release notes](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0) for validation details.
 
-This release uses MATLAB-compatible Python 3.10 and was checked with the shipped EXE in Python simulation and a real MATLAB R2022b Simulink tuning run. See the [v2.4.8 release notes](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.4.8) for checksums and validation limits. Source users should follow the [dev branch guide](https://github.com/KINGSTON-115/llm-pid-tuner/blob/dev/docs/en-US/README.md#orcarouter).
-
-### 2. Prepare hardware
+### 2. Prepare hardware (optional)
 
 Your board should stream CSV data over serial.
 
@@ -63,13 +66,20 @@ timestamp_ms,setpoint,input,pwm,error,p,i,d
 
 ### 3. Run the exe once
 
-Double-click `llm-pid-tuner.exe`.
+The desktop creates `config.json` next to the EXE. Use **Connection settings** for API and serial configuration,
+then select **Serial hardware**, a specific port and **AI automatic tuning**. Connecting reads current device gains
+and setpoint. Copy your own `config.json` into the new folder to retain credentials and advanced settings when upgrading.
 
-The launcher now asks which mode to start:
-`[1]` hardware tuning or `[2]` the local simulation TUI (default).
-If you are connecting a real serial device, choose `[1]`.
+The same folder includes a terminal launcher. Both EXEs share `_internal`. In PowerShell:
 
-If `config.json` does not exist, the program generates a default one automatically.
+```powershell
+.\llm-pid-tuner.exe --tui
+.\llm-pid-tuner.exe sim
+.\llm-pid-tuner.exe tune COM5
+.\llm-pid-tuner.exe tune --orcarouter-settings
+```
+
+The last command opens OrcaRouter login and model selection. Existing provider configurations continue to work.
 
 ### 4. Edit `config.json`
 
