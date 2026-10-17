@@ -127,6 +127,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         )
     },
     "PID_MAX_INCREASE_RATIO"        : 0.0,
+    "CONTROLLER_SPEC"               : {},
+    "LOCAL_SEARCH_ENABLED"          : False,
 }
 
 CONFIG: Dict[str, Any] = dict(DEFAULT_CONFIG)

@@ -277,6 +277,14 @@ class Workbench(QMainWindow):
         self._choices(self.strategy, [("offline", "offline"), ("ai", "ai")])
         self.strategy.currentIndexChanged.connect(self._strategy_changed)
         form.addRow(self._label("strategy"), self.strategy)
+        self.formula_button = self._button("formula_title")
+        self.formula_button.clicked.connect(self.edit_formula)
+        form.addRow(self.formula_button)
+        from PySide6.QtWidgets import QCheckBox
+        self.local_search = QCheckBox()
+        self.copy.bind(self.local_search.setText, "local_search")
+        self.local_search.setChecked(bool(CONFIG.get("LOCAL_SEARCH_ENABLED", True)))
+        form.addRow(self.local_search)
         self.port = QComboBox()
         self.port.setEditable(True)
         self.copy.bind(self.port.setAccessibleName, "port")
@@ -433,6 +441,12 @@ class Workbench(QMainWindow):
         self.elapsed.setText(t("elapsed", time=f"{seconds // 60:02d}:{seconds % 60:02d}"))
 
     def _render_pid(self):
+        formula_parameters = self.archive.result.get("final_parameters")
+        if formula_parameters is None and self._last_sample:
+            formula_parameters = self._last_sample.get("parameters")
+        if formula_parameters is not None:
+            self.current_pid.setText(t("formula_parameters", parameters="  ".join(f"{k}={v:.5g}" for k, v in formula_parameters.items())))
+            return
         final = self.archive.result.get("final_pid")
         pid = final or self._latest_pid
         if pid:
@@ -545,8 +559,9 @@ class Workbench(QMainWindow):
         self.port_caption.setVisible(mode == "hardware")
         self.port_container.setVisible(mode == "hardware")
         self.speed.setEnabled(mode == "python")
+        self.local_search.setEnabled(mode == "python")
         for widget in self.gains.values():
-            widget.setEnabled(mode == "python")
+            widget.setEnabled(mode == "python" and not CONFIG.get("CONTROLLER_SPEC"))
         if mode != "python":
             self.strategy.setCurrentIndex(1)
         self.strategy.setEnabled(mode == "python")
@@ -564,13 +579,24 @@ class Workbench(QMainWindow):
         dialog.deleteLater()
         self._strategy_changed()
 
+    def edit_formula(self):
+        if self.session is not None:
+            return
+        from desktop.formula_editor import FormulaEditor
+        dialog = FormulaEditor(self)
+        dialog.exec()
+        dialog.deleteLater()
+        self._mode_changed()
+
     def start_session(self):
         if self.session is not None:
             return
         options = RunOptions(mode=self.mode.currentData(), strategy=self.strategy.currentData(),
                              setpoint=self.setpoint.value(), **{k: v.value() for k, v in self.gains.items()},
                              rounds=self.rounds.value(), samples=self.samples.value(),
-                             speed=self.speed.currentData(), port=self.port.currentText().strip())
+                             speed=self.speed.currentData(), port=self.port.currentText().strip(),
+                             controller_spec=CONFIG.get("CONTROLLER_SPEC") or None,
+                             local_search=self.local_search.isChecked())
         try:
             session = DesktopSession(options)
         except ValueError as exc:
@@ -604,7 +630,7 @@ class Workbench(QMainWindow):
 
     def _set_active(self, active):
         for widget in (self.mode, self.strategy, self.port, self.refresh_ports, self.rounds,
-                       self.samples, self.speed, self.settings_button, *self.gains.values()):
+                       self.samples, self.speed, self.settings_button, self.formula_button, self.local_search, *self.gains.values()):
             widget.setEnabled(not active)
         self.start_button.setEnabled(not active)
         self.pause_button.setEnabled(active)

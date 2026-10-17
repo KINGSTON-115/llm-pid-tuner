@@ -135,6 +135,11 @@ def run_tuning_engine(
     if start_time == 0.0:
         start_time = time.time()
 
+    if getattr(env, "controller_formula", None) is not None:
+        from core.formula_tuning import run_formula_tuning
+        return run_formula_tuning(env, tuner, llm_mode, event_sink, controller,
+                                  max_rounds, disable_early_exit, start_time, current_stream_round)
+
     primary_pid, secondary_pid = env.get_current_pid()
     session = create_tuning_session(
         initial_pid=primary_pid,
@@ -161,6 +166,10 @@ def run_tuning_engine(
     prompt_context = _attach_pid_guardrail_context(prompt_context, pid_limits)
     usage_start = _tuner_usage(tuner)["transport_attempts"]
     observe_reference: Optional[Dict[str, Any]] = None
+    local_streak, local_count = 0, 0
+    local_rejected = set()
+    pending_local = None
+    local_target = None
 
     while session.round_num < max_rounds:
         if controller_requests_abort(controller):
@@ -205,6 +214,14 @@ def run_tuning_engine(
         _console(emit_console, f"[Round {round_index}] Collected {len(samples)} samples.")
 
         evaluation = evaluate_completed_round(session, dict(session.buffer.current_pid))
+        if local_target is not None and evaluation.metrics["setpoint"] != local_target:
+            local_rejected.clear()
+            pending_local = None
+            local_streak = 0
+        local_target = evaluation.metrics["setpoint"]
+        if pending_local and should_rollback_to_best(evaluation.metrics, pending_local):
+            local_rejected.add(tuple(evaluation.current_pid[k] for k in ("p", "i", "d")))
+        pending_local = None
         observation_requested, observe_reference = observe_reference, None
         publish_round_metrics(event_sink, evaluation, round_index)
 
@@ -346,16 +363,44 @@ def run_tuning_engine(
             })
             prompt_context = _attach_pid_guardrail_context(prompt_context, pid_limits)
 
-        session.decision_requests += 1
-        result = tuner.analyze(
-            prompt_data,
-            history_text,
-            tuning_mode=llm_mode,
-            prompt_context=prompt_context,
-        )
-        usage = _tuner_usage(tuner, usage_start)
-        publish_event(event_sink, "llm_usage", round=evaluation.round_index,
-                      usage={k: v for k, v in usage.items() if k != "attempts"})
+        result = None
+        local_enabled = getattr(env, "local_search_enabled", False)
+        if local_enabled and evaluation.round_index >= max_rounds:
+            result = {**evaluation.current_pid, "tuning_action": "OBSERVE", "status": "TUNING",
+                      "analysis_summary": "Round budget exhausted; retain the last measured parameters."}
+        if local_enabled and result is None and session.buffer.secondary_pid is None:
+            from core.local_search import rank_candidates, pid_bounds, compact_predictions
+            preview = getattr(env, "preview_parameters", None)
+            if callable(preview):
+                plan = rank_candidates(evaluation.current_pid, pid_bounds(evaluation.current_pid, pid_limits), preview,
+                                       overshoot_limit=session.good_enough_rules["overshoot_threshold"],
+                                       project=lambda candidate: apply_pid_guardrails(evaluation.current_pid, candidate, limits=pid_limits)[0])
+                publish_event(event_sink, "local_search", round=evaluation.round_index, prediction=plan)
+                prompt_context["local_predictions"] = compact_predictions(plan, evaluation.current_pid)
+                selected = plan["selected"]
+                if (selected and (local_streak < 2 or getattr(env, "local_only", False))
+                    and tuple(selected["parameters"][k] for k in ("p", "i", "d")) not in local_rejected
+                    and evaluation.round_index < max_rounds):
+                    result = {**selected["parameters"], "tuning_action": "ADJUST_PID", "status": "TUNING",
+                              "analysis_summary": "Local model predicts lower error; verify the candidate with measured response."}
+                    local_streak += 1
+                    local_count += 1
+                    pending_local = dict(evaluation.metrics)
+        if controller_requests_abort(controller):
+            _mark_stopped_by_user(session, event_sink, start_time, emit_console)
+            break
+        if result is None:
+            session.decision_requests += 1
+            result = tuner.analyze(
+                prompt_data,
+                history_text,
+                tuning_mode=llm_mode,
+                prompt_context=prompt_context,
+            )
+            local_streak = 0
+            usage = _tuner_usage(tuner, usage_start)
+            publish_event(event_sink, "llm_usage", round=evaluation.round_index,
+                          usage={k: v for k, v in usage.items() if k != "attempts"})
 
         if controller_requests_abort(controller):
             _mark_stopped_by_user(session, event_sink, start_time, emit_console)
@@ -423,6 +468,7 @@ def run_tuning_engine(
     return {
         "elapsed_sec": time.time() - start_time,
         "llm_usage": _tuner_usage(tuner, usage_start),
+        "local_decisions": local_count,
         **build_tuning_result(
             session,
             final_pid=dict(final_primary),

@@ -26,7 +26,7 @@ from sim.prompt_context import build_python_sim_prompt_context
 from sim.runtime import EVENT_ROUND_METRICS
 
 
-DEFAULT_CASES = ("baseline", "fallback", "llm")
+DEFAULT_CASES = ("baseline", "fallback", "local", "llm", "hybrid")
 
 
 def create_llm_tuner() -> LLMTuner:
@@ -95,7 +95,9 @@ def run_case(
     sim.set_pid(1.0, 0.1, 0.05)
     env = PythonSimEnv(sim, SETPOINT)
     env.prompt_context = build_python_sim_prompt_context()
-    strategy = create_llm_tuner() if case_name == "llm" else _OfflineStrategy(
+    env.local_search_enabled = case_name in {"local", "hybrid"}
+    env.local_only = case_name == "local"
+    strategy = create_llm_tuner() if case_name in {"llm", "hybrid"} else _OfflineStrategy(
         env, hold=case_name == "baseline"
     )
     result = run_tuning_engine(
@@ -112,7 +114,7 @@ def run_case(
         "seed": seed,
         "scenario": "fixed_setpoint_continuous_state",
         "rounds_executed": result["rounds_completed"],
-        "llm_calls": result["decision_requests"] if case_name == "llm" else 0,
+        "llm_calls": result["decision_requests"] if case_name in {"llm", "hybrid"} else 0,
         "final": {
             **{key: result["final_metrics"].get(key) for key in (
                 "avg_error", "steady_state_error", "overshoot", "status"
@@ -185,7 +187,7 @@ def main():
         "--cases",
         nargs="+",
         choices=DEFAULT_CASES,
-        default=list(DEFAULT_CASES),
+        default=["baseline", "fallback", "llm"],
         help="要运行的 benchmark case",
     )
     parser.add_argument(

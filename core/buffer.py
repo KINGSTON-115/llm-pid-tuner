@@ -120,7 +120,7 @@ class AdvancedDataBuffer:
         # Many target changes may exceed the nominal limit; never hide them.
         return [data[i] for i in sorted(selected)]
 
-    def to_prompt_data(self) -> str:
+    def to_prompt_data(self, *, include_pid: bool = True) -> str:
         metrics = self.calculate_advanced_metrics()
 
         sampled_data = self._prompt_samples()
@@ -128,10 +128,11 @@ class AdvancedDataBuffer:
         lines = []
         lines.append("## Current Status")
         lines.append(f"- 设定值 (Setpoint): {self.setpoint}")
-        lines.append(
-            f"- 当前 PID: P={self.current_pid['p']}, I={self.current_pid['i']}, D={self.current_pid['d']}"
-        )
-        if self.secondary_pid is not None:
+        if include_pid:
+            lines.append(
+                f"- 当前 PID: P={self.current_pid['p']}, I={self.current_pid['i']}, D={self.current_pid['d']}"
+            )
+        if include_pid and self.secondary_pid is not None:
             lines.append(
                 f"- 当前 PID 2 (controller_2): "
                 f"P={self.secondary_pid['p']}, "

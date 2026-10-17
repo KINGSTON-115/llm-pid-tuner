@@ -1,0 +1,11 @@
+{
+  "equations": "outer = Kp * error + Ki * integral(error)\nfiltered = lowpass(outer, tau)\nu = clip(filtered - Kd * derivative(input), 0, 255)",
+  "output": "u",
+  "parameters": {
+    "Kp": {"value": 1.0, "min": 0.0, "max": 100.0, "max_step": 1.0},
+    "Ki": {"value": 0.1, "min": 0.0, "max": 10.0, "max_step": 0.1},
+    "Kd": {"value": 0.05, "min": 0.0, "max": 10.0, "max_step": 0.1},
+    "tau": {"value": 0.5, "min": 0.01, "max": 5.0, "max_step": 0.2}
+  },
+  "output_limits": [0.0, 255.0]
+}
