@@ -174,8 +174,8 @@ class DesktopSession:
                 env, tuner, llm_mode, self.sink, self.controller,
                 emit_console=False, start_time=start, current_stream_round=stream_round,
             )
-            # Report the device's actual PID, including early-DONE paths in the shared engine.
-            result["final_pid"], result["secondary_pid"] = env.get_current_pid()
+            # Keep the legacy alias aligned with the engine's verified snapshot.
+            result["secondary_pid"] = result["final_secondary_pid"]
             result["strategy"] = options.strategy
             if options.strategy == "offline":
                 result.update(provider="offline", model="conservative_rules")

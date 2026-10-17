@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import field
 from typing import Any, Dict, List, Optional
 
@@ -27,10 +28,14 @@ class TuningSessionState:
     stable_rounds: int = 0
     best_result: Optional[Dict[str, Any]] = None
     last_metrics: Dict[str, Any] = field(default_factory=dict)
+    evaluated_pid: Optional[Dict[str, float]] = None
+    evaluated_secondary_pid: Optional[Dict[str, float]] = None
+    experiments: List[Dict[str, Any]] = field(default_factory=list)
     completed_reason: str = "max_rounds_reached"
     fallback_count: int = 0
     guardrail_count: int = 0
     rollback_count: int = 0
+    decision_requests: int = 0
 
 
 @slotted_dataclass
@@ -93,7 +98,39 @@ def evaluate_completed_round(
     # 检测重试：同一轮因 pause 被中断后重新进入，last_round 已等于 round_index
     is_retry = state.last_round == round_index
     state.last_round = round_index
+    current_secondary = (
+        dict(state.buffer.secondary_pid)
+        if state.buffer.secondary_pid is not None
+        else None
+    )
+    # Consecutive observations must describe the same controller pair and target.
+    if (
+        state.evaluated_pid is not None
+        and (
+            not pid_equals(current_pid, state.evaluated_pid)
+            or current_secondary != state.evaluated_secondary_pid
+            or metrics.get("setpoint") != state.last_metrics.get("setpoint")
+        )
+    ):
+        state.stable_rounds = 0
+    if (
+        state.last_metrics
+        and metrics.get("setpoint") != state.last_metrics.get("setpoint")
+    ):
+        state.best_result = None
     state.last_metrics = dict(metrics)
+    state.evaluated_pid = dict(current_pid)
+    state.evaluated_secondary_pid = current_secondary
+    experiment = {
+        "round": round_index,
+        "pid": dict(current_pid),
+        "secondary_pid": deepcopy(current_secondary),
+        "metrics": dict(metrics),
+    }
+    if is_retry and state.experiments:
+        state.experiments[-1] = experiment
+    else:
+        state.experiments.append(experiment)
     good_enough = is_good_enough(metrics, state.good_enough_rules)
     good_enough_detail = ""
     if not good_enough:
@@ -131,11 +168,6 @@ def evaluate_completed_round(
     else:
         state.stable_rounds = 0
 
-    current_secondary = (
-        dict(state.buffer.secondary_pid)
-        if state.buffer.secondary_pid is not None
-        else None
-    )
     previous_best = state.best_result
     state.best_result = maybe_update_best_result(
         state.best_result,
@@ -153,7 +185,10 @@ def evaluate_completed_round(
     completed_reason: Optional[str] = None
     if (
         state.best_result
-        and not pid_equals(current_pid, state.best_result["pid"])
+        and (
+            not pid_equals(current_pid, state.best_result["pid"])
+            or current_secondary != state.best_result.get("secondary_pid")
+        )
         and should_rollback_to_best(metrics, state.best_result["metrics"])
     ):
         rollback_pid = dict(state.best_result["pid"])
@@ -164,12 +199,6 @@ def evaluate_completed_round(
             completed_reason = "rollback_to_best"
     elif state.stable_rounds >= CONFIG["REQUIRED_STABLE_ROUNDS"]:
         completed_reason = "stable_rounds_reached"
-    elif (
-        not good_enough
-        and metrics["avg_error"] < CONFIG["MIN_ERROR_THRESHOLD"]
-        and metrics["status"] == "STABLE"
-    ):
-        completed_reason = "low_error_converged"
 
     return RoundEvaluation(
         round_index=round_index,
@@ -285,7 +314,7 @@ def finalize_decision(
     state.round_num += 1
     state.buffer.reset()
 
-    completed_reason = "llm_marked_done" if status == "DONE" else None
+    # DONE is advisory: only evaluated rounds can satisfy the convergence rules.
     return DecisionOutcome(
         safe_pid=safe_pid,
         action=action,
@@ -294,19 +323,33 @@ def finalize_decision(
         guardrail_notes=list(guardrail_notes),
         fallback_used=fallback_used,
         status=status,
-        completed_reason=completed_reason,
     )
 
 
 def build_tuning_result(
-    state: TuningSessionState, *, final_pid: Dict[str, float], stopped: bool
+    state: TuningSessionState, *, final_pid: Dict[str, float], stopped: bool,
+    final_secondary_pid: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
+    verified = (
+        state.evaluated_pid is not None
+        and pid_equals(final_pid, state.evaluated_pid)
+        and final_secondary_pid == state.evaluated_secondary_pid
+    )
     return {
         "provider": CONFIG["LLM_PROVIDER"],
         "model": CONFIG["LLM_MODEL_NAME"],
         "rounds_completed": state.last_round,
         "final_pid": dict(final_pid),
-        "final_metrics": dict(state.last_metrics),
+        "final_secondary_pid": deepcopy(final_secondary_pid),
+        "final_pid_verified": verified,
+        "final_metrics": dict(state.last_metrics) if verified else {},
+        "evaluated_pid": deepcopy(state.evaluated_pid),
+        "evaluated_secondary_pid": deepcopy(state.evaluated_secondary_pid),
+        "evaluated_metrics": dict(state.last_metrics),
+        "experiments": deepcopy(state.experiments),
+        "best_result": deepcopy(state.best_result),
+        "decision_requests": state.decision_requests,
+        "converged": verified and state.completed_reason == "stable_rounds_reached",
         "stopped": stopped,
         "fallback_count": state.fallback_count,
         "guardrail_count": state.guardrail_count,

@@ -295,9 +295,9 @@ def pid_equals(left: Dict[str, float], right: Dict[str, float], tolerance: float
 
 def score_metrics(metrics: Dict[str, float]) -> float:
     """将控制表现压缩成一个可比较的分数，越低越好。"""
-    avg_error          = float(metrics.get("avg_error", 1e9) or 1e9)
-    steady_state_error = float(metrics.get("steady_state_error", 1e9) or 1e9)
-    overshoot          = float(metrics.get("overshoot", 1e9) or 1e9)
+    avg_error          = _metric_value(metrics, "avg_error")
+    steady_state_error = _metric_value(metrics, "steady_state_error")
+    overshoot          = _metric_value(metrics, "overshoot")
     status             = str(metrics.get("status", "UNKNOWN")).upper()
 
     status_penalty = 0.0
@@ -309,6 +309,12 @@ def score_metrics(metrics: Dict[str, float]) -> float:
         status_penalty = 20.0
 
     return avg_error + steady_state_error * 1.2 + overshoot * 0.6 + status_penalty
+
+
+def _metric_value(metrics: Mapping[str, Any], key: str) -> float:
+    """Zero is a valid measurement; missing/invalid costs cannot win."""
+    value = _to_float(metrics.get(key), float("inf"))
+    return value if value >= 0.0 else float("inf")
 
 
 def is_better_metrics(candidate: Dict[str, float], baseline: Dict[str, float], epsilon: float = 1e-6) -> bool:
@@ -328,7 +334,10 @@ def maybe_update_best_result(
     ``secondary_pid`` is captured alongside the primary so that dual-loop
     rollback can restore both controllers together.
     """
-    if str(metrics.get("status", "UNKNOWN")).upper() != "STABLE":
+    if (
+        str(metrics.get("status", "UNKNOWN")).upper() != "STABLE"
+        or not math.isfinite(score_metrics(metrics))
+    ):
         return best_result
 
     candidate: Dict[str, Any] = {
@@ -379,12 +388,12 @@ def should_rollback_to_best(
     if best_status == "STABLE" and current_status != "STABLE":
         return True
 
-    current_avg       = float(current_metrics.get("avg_error", 1e9) or 1e9)
-    best_avg          = float(best_metrics.get("avg_error", 1e9) or 1e9)
-    current_steady    = float(current_metrics.get("steady_state_error", 1e9) or 1e9)
-    best_steady       = float(best_metrics.get("steady_state_error", 1e9) or 1e9)
-    current_overshoot = float(current_metrics.get("overshoot", 1e9) or 1e9)
-    best_overshoot    = float(best_metrics.get("overshoot", 1e9) or 1e9)
+    current_avg       = _metric_value(current_metrics, "avg_error")
+    best_avg          = _metric_value(best_metrics, "avg_error")
+    current_steady    = _metric_value(current_metrics, "steady_state_error")
+    best_steady       = _metric_value(best_metrics, "steady_state_error")
+    current_overshoot = _metric_value(current_metrics, "overshoot")
+    best_overshoot    = _metric_value(best_metrics, "overshoot")
 
     avg_regression    = current_avg > max(best_avg * rules["avg_error_ratio"], best_avg + rules["avg_error_margin"])
     steady_regression = current_steady > max(
