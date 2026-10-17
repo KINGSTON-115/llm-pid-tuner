@@ -108,15 +108,15 @@ class ControllerFormula:
             pending.extend(self.dependencies[name] & self.expressions.keys())
 
         def visit(name, path):
-            if len(path) > self.MAX_DEPTH:
-                raise ValueError("Controller dependency depth exceeds 48")
             if name in path:
                 raise ValueError(f"Algebraic cycle at {name}; use an explicit stateful operator")
-            if name in self.order:
+            if name in self.layers:
                 return
             for dependency in sorted(self.instant_dependencies[name] & self.expressions.keys()):
                 visit(dependency, path + [name])
             self.layers[name] = 1 + max((self.layers[d] for d in self.instant_dependencies[name] if d in self.layers), default=0)
+            if self.layers[name] > self.MAX_DEPTH:
+                raise ValueError("Controller dependency depth exceeds 48")
             self.order.append(name)
 
         for name in sorted(reachable):

@@ -196,6 +196,9 @@ class HardwareTuiLoopTests(unittest.TestCase):
                         _make_csv_line(0, 100.0),
                         _make_csv_line(1, 120.0),
                         _make_csv_line(2, 150.0),
+                        "3,200,100,200,100,1.2,0.1,0.05",
+                        "4,200,120,200,80,1.2,0.1,0.05",
+                        "5,200,150,200,50,1.2,0.1,0.05",
                     ]
                 )
 
@@ -262,7 +265,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
                     tuner.CONFIG,
                     {
                         "BUFFER_SIZE": 3,
-                        "MAX_TUNING_ROUNDS": 1,
+                        "MAX_TUNING_ROUNDS": 2,
                         "HARDWARE_PROFILE": "stm32f407_openmv",
                     },
                     clear=False,
@@ -317,6 +320,9 @@ class HardwareTuiLoopTests(unittest.TestCase):
                         "0,200,100,200,100,1.0,0.1,0.05,2.0,0.2,0.02",
                         "1,200,120,200,80,1.0,0.1,0.05,2.0,0.2,0.02",
                         "2,200,150,200,50,1.0,0.1,0.05,2.0,0.2,0.02",
+                        "3,200,100,200,100,1.3,0.15,0.06,2.4,0.25,0.03",
+                        "4,200,120,200,80,1.3,0.15,0.06,2.4,0.25,0.03",
+                        "5,200,150,200,50,1.3,0.15,0.06,2.4,0.25,0.03",
                     ]
                 )
 
@@ -362,7 +368,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
                     clear=False,
                 ):
                     tuner._run_hardware_tuning_loop(
@@ -389,6 +395,9 @@ class HardwareTuiLoopTests(unittest.TestCase):
                         "0,200,100,200,100,1.0,0.1,0.05,2.0,0.2,0.02",
                         "1,200,120,200,80,1.0,0.1,0.05,2.0,0.2,0.02",
                         "2,200,150,200,50,1.0,0.1,0.05,2.0,0.2,0.02",
+                        "3,200,100,200,100,1.3,0.15,0.06,6.0,0.8,0.08",
+                        "4,200,120,200,80,1.3,0.15,0.06,6.0,0.8,0.08",
+                        "5,200,150,200,50,1.3,0.15,0.06,6.0,0.8,0.08",
                     ]
                 )
 
@@ -434,7 +443,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
                     clear=False,
                 ):
                     tuner._run_hardware_tuning_loop(
@@ -492,7 +501,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
                     clear=False,
                 ):
                     result = tuner._run_hardware_tuning_loop(
@@ -774,7 +783,7 @@ class HardwareTuiLoopTests(unittest.TestCase):
             with patch.object(tuner, "LLMTuner", FakeTuner):
                 with patch.dict(
                     tuner.CONFIG,
-                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 1},
+                    {"BUFFER_SIZE": 3, "MAX_TUNING_ROUNDS": 2},
                     clear=False,
                 ):
                     result = tuner._run_hardware_tuning_loop(

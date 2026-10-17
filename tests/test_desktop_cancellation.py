@@ -29,7 +29,7 @@ def test_pause_while_model_is_analyzing_waits_before_applying(stop):
 
     tuner = SimpleNamespace(analyze=analyze)
     output = {}
-    with patch.dict(CONFIG, {**DEFAULT_CONFIG, "MAX_TUNING_ROUNDS": 1}, clear=True):
+    with patch.dict(CONFIG, {**DEFAULT_CONFIG, "MAX_TUNING_ROUNDS": 2}, clear=True):
         worker = threading.Thread(target=lambda: output.update(run_tuning_engine(env, tuner, "python_sim", controller=controller, emit_console=False)))
         worker.start()
         try:

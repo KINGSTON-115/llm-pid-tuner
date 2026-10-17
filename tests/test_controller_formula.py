@@ -42,6 +42,21 @@ def test_multilayer_graph_infers_parameters_signals_and_orders_forward_reference
     assert info["state_operator_depths"]["u"]["derivative"] == 2
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_dependency_depth_limit_is_independent_of_names_and_assignment_order(reverse):
+    def chain(length):
+        names = [f"n{i:03d}" for i in range(length)]
+        if reverse:
+            names.reverse()
+        equations = [f"{names[0]} = gain * error"]
+        equations.extend(f"{name} = {previous}" for previous, name in zip(names, names[1:]))
+        return specification("\n".join(reversed(equations)), output=names[-1])
+    formula = ControllerFormula(chain(48))
+    assert formula.layers[formula.output] == 48
+    with pytest.raises(ValueError, match="dependency depth"):
+        ControllerFormula(chain(49))
+
+
 def test_second_order_difference_equation_supports_delayed_feedback_and_cloned_state():
     formula = ControllerFormula(specification("u = 0.5 * delay(u) + 0.2 * delay(delay(u)) + gain * error"))
     runtime = formula.runtime()
@@ -155,6 +170,18 @@ def test_candidate_forecasts_use_the_runtime_guardrailed_values():
                         project=lambda candidate: apply_pid_guardrails(current, candidate, limits=limits)[0])
     assert len(captured) > 1
     assert all(p[key] <= current[key] * 1.1 + 1.e-10 for p in captured for key in current)
+
+
+def test_rejected_candidate_is_not_previewed_again_and_next_best_can_be_selected():
+    from core.local_search import parameter_signature
+    captured = []
+    def forecast(parameters):
+        captured.append(parameters["gain"])
+        return dict(avg_error=2. - parameters["gain"], steady_state_error=0., overshoot=0., status="STABLE")
+    plan = rank_candidates({"gain": 1.}, {"gain": dict(min=0., max=10., max_step=1.)}, forecast,
+                           rejected={parameter_signature({"gain": 1.5})})
+    assert 1.5 not in captured
+    assert plan["selected"]["parameters"] == {"gain": 1.125}
 
 
 def formula_env():
@@ -322,6 +349,8 @@ def test_formula_cancel_during_request_never_applies_a_parameter_update():
 
 
 def test_standard_pid_local_search_consults_model_after_two_local_steps_and_keeps_last_measurement():
+    from queue import Queue
+    from sim.runtime import QueueEventSink
     env = PythonSimEnv(HeatingSimulator(), 200.)
     env.sim.set_setpoint(200.)
     env.local_search_enabled = True
@@ -332,10 +361,13 @@ def test_standard_pid_local_search_consults_model_after_two_local_steps_and_keep
     env.preview_parameters = forecast
     tuner = Mock()
     tuner.analyze.return_value = None
-    result = run_tuning_engine(env, tuner, "python_sim", max_rounds=5, disable_early_exit=True, emit_console=False)
+    sink = QueueEventSink(Queue())
+    result = run_tuning_engine(env, tuner, "python_sim", max_rounds=5, disable_early_exit=True, emit_console=False, event_sink=sink)
     assert result["local_decisions"] == 3
     assert tuner.analyze.call_count == result["decision_requests"] == 1
     assert result["final_pid_verified"]
+    requests = [e for e in drain_event_queue(sink.event_queue) if e.get("phase") == "llm_request"]
+    assert len(requests) == tuner.analyze.call_count
 
 
 def test_formula_usage_survives_real_response_parser_and_negative_named_parameters():
@@ -383,7 +415,8 @@ def test_external_signal_alias_cannot_overwrite_measured_setpoint():
         BoundFormulaEnvironment(env, ControllerFormula(spec))
 
 
-def test_formula_path_uses_production_llm_prompt_parser_and_session_usage():
+@pytest.mark.parametrize("include_action", [False, True])
+def test_formula_path_uses_production_llm_prompt_parser_and_session_usage(include_action):
     from llm.client import LLMTuner
     from llm.providers import BaseLLMProvider
     from desktop.session import _LocalizedTuner
@@ -393,7 +426,10 @@ def test_formula_path_uses_production_llm_prompt_parser_and_session_usage():
             captured.append(kwargs["openai_msgs"])
             self.last_usage = {"input_tokens": 123, "output_tokens": 14}
             self.usage_final = True
-            kwargs["on_chunk"]('{"parameters":{"gain":1.2},"tuning_action":"ADJUST_PARAMETERS","status":"DONE","analysis_summary":"Test measured evidence."}')
+            response = dict(parameters={"gain": 1.2}, status="DONE", analysis_summary="Test measured evidence.")
+            if include_action:
+                response["tuning_action"] = "ADJUST_PARAMETERS"
+            kwargs["on_chunk"](json.dumps(response))
     provider = Provider("test", "https://test.invalid", "test", 5)
     with patch.object(LLMTuner, "_initialize_provider", return_value=provider):
         client = LLMTuner("test", "https://test.invalid", "test", emit_console=False)

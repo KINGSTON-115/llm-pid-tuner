@@ -9,7 +9,11 @@ import math
 from pid_safety import score_metrics
 
 
-def rank_candidates(current, bounds, preview, *, max_candidates=33, overshoot_limit=1., coordinate_offset=0, project=None):
+def parameter_signature(parameters):
+    return tuple(sorted(parameters.items()))
+
+
+def rank_candidates(current, bounds, preview, *, max_candidates=33, overshoot_limit=1., coordinate_offset=0, project=None, rejected=()):
     candidates = [dict(current)]
     keys = list(current)
     if keys:
@@ -24,7 +28,7 @@ def rank_candidates(current, bounds, preview, *, max_candidates=33, overshoot_li
             proposal[key] = max(spec["min"], min(spec["max"], value + max(-spec["max_step"], min(spec["max_step"], delta))))
             if project is not None:
                 proposal = project(proposal)
-            if proposal not in candidates:
+            if proposal not in candidates and parameter_signature(proposal) not in rejected:
                 candidates.append(proposal)
             if len(candidates) >= max_candidates:
                 break
