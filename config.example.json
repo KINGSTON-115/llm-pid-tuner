@@ -94,5 +94,7 @@
             }
         }
     },
-    "PID_MAX_INCREASE_RATIO": 0.0
+    "PID_MAX_INCREASE_RATIO": 0.0,
+    "CONTROLLER_SPEC": {},
+    "LOCAL_SEARCH_ENABLED": false
 }

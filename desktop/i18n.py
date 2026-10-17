@@ -7,6 +7,17 @@ from core.i18n import get_language
 
 # One entry owns both languages; identifiers and exported data remain language neutral.
 TEXT = {
+    "formula_title": ("自定义控制公式", "Custom controller formula"),
+    "formula_hint": ("可先输入公式识别符号，再用 JSON 声明参数范围。Python 仿真执行公式；外部设备需绑定已有参数。清空并保存后使用标准 PID。", "Inspect raw equations first, then declare parameter bounds in JSON. Python simulation executes the formula; external devices need existing parameter bindings. Clear and save to use standard PID."),
+    "formula_example": ("填入示例", "Use example"),
+    "formula_import": ("导入 JSON", "Import JSON"),
+    "formula_inspect": ("识别参数与信号", "Inspect dependencies"),
+    "formula_clear": ("恢复标准 PID", "Use standard PID"),
+    "formula_default": ("当前使用标准 PID。", "Standard PID is selected."),
+    "local_search": ("先在本地仿真筛选参数", "Screen candidates in local simulation"),
+    "formula_parameters": ("公式参数：{parameters}", "Formula parameters: {parameters}"),
+    "formula_summary": ("所需信号：{signals}\n参数范围与单轮步长：\n{parameters}\n计算层级 ← 参数依赖；状态算子嵌套深度：\n{layers}\n延迟反馈节点：{feedback}", "Required signals: {signals}\nParameter bounds and per-round steps:\n{parameters}\nLayers ← parameter dependencies; state operator nesting:\n{layers}\nDelayed feedback nodes: {feedback}"),
+    "formula_unresolved": ("待声明为参数（需范围）或绑定到测量信号：{symbols}", "Declare bounds for parameters or bind these measured signals: {symbols}"),
     "window": ("LLM PID Tuner · 桌面工作台", "LLM PID Tuner · Desktop workbench"),
     "eyebrow": ("控制实验室  /  实时工作台", "CONTROL LAB  /  LIVE WORKSPACE"),
     "title": ("让每一次调整，都清晰可见。", "See every adjustment unfold."),

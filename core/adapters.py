@@ -86,6 +86,34 @@ class PythonSimEnv(BaseTuningEnvironment):
     def reset_buffer_state(self) -> None:
         pass
 
+    def preview_parameters(self, parameters: Dict[str, float]) -> Dict[str, Any]:
+        """Run an isolated known plant clone; never advance the live environment."""
+        from copy import deepcopy
+        from core.buffer import AdvancedDataBuffer
+        from sim.model import HeatingSimulator
+        from sim.formula_model import FormulaHeatingSimulator
+        if type(self.sim) not in (HeatingSimulator, FormulaHeatingSimulator):
+            raise ValueError("No validated preview model for this simulator")
+        clone = deepcopy(self.sim)
+        if isinstance(clone, FormulaHeatingSimulator):
+            clone.parameters = dict(parameters)
+        else:
+            clone.set_pid(parameters["p"], parameters["i"], parameters["d"])
+        buffer = AdvancedDataBuffer(max(100, int(CONFIG["BUFFER_SIZE"]) * 3))
+        for _ in range(buffer.max_size):
+            if controller_requests_abort(self.controller):
+                raise ValueError("Preview cancelled")
+            clone.compute_pid()
+            clone.update()
+            buffer.add(clone.get_data())
+        return buffer.calculate_advanced_metrics()
+
+    def get_parameters(self) -> Dict[str, float]:
+        return dict(self.sim.parameters)
+
+    def apply_parameters(self, parameters: Dict[str, float]) -> None:
+        self.sim.parameters = dict(parameters)
+
 class SimulinkEnv(BaseTuningEnvironment):
     def __init__(self, bridge: Any, setpoint: float, controller: Any = None):
         self.bridge = bridge
@@ -128,6 +156,9 @@ class SimulinkEnv(BaseTuningEnvironment):
                     return samples
                 samples.append(data)
                 self.notify_sample(data)
+
+            if getattr(self, "single_run_per_round", False) and samples:
+                break
                 
             if len(samples) >= getattr(self.bridge, "target_steps", getattr(self.bridge, "target_buffer_size", CONFIG["BUFFER_SIZE"])):
                 break

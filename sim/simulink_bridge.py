@@ -116,6 +116,8 @@ class SimulinkBridge:
         self.control_domain = ""
         self.last_apply_issue = ""
         self._model_needs_update = False
+        self.allow_custom_controller = False
+        self.extra_output_signals: Dict[str, str] = {}
 
     @property
     def has_secondary_pid(self) -> bool:
@@ -162,7 +164,7 @@ class SimulinkBridge:
         self._controller_io = self._create_controller_io()
         self._apply_model_setpoint()
         self._autodiscover_controller_paths()
-        if not self._has_primary_controller_config():
+        if not self._has_primary_controller_config() and not self.allow_custom_controller:
             raise RuntimeError(
                 "[SimulinkBridge] Could not auto-detect a PID controller. "
                 "Set block Tag to 'llm_pid_tuner_primary' or configure MATLAB_PID_BLOCK_PATH."
@@ -806,6 +808,11 @@ class SimulinkBridge:
 
         # 清理可能残留的工作区变量，防止 fallback 吃到旧数据
         self._try_engine_method("eval", "clear tout time Time yout y_out u_out", nargout=0)
+        if self.extra_output_signals:
+            from core.controller_formula import valid_name
+            if any(not valid_name(name) for name in self.extra_output_signals.values()):
+                raise ValueError("Extra output signals must be plain identifiers")
+            self._try_engine_method("eval", "clear " + " ".join(sorted(set(self.extra_output_signals.values()))), nargout=0)
 
         self._call_engine_method(
             "set_param",
@@ -872,6 +879,14 @@ class SimulinkBridge:
                     )
                 pwm_values = []
 
+        extra_values = {}
+        for field, signal_name in self.extra_output_signals.items():
+            _, container = self._resolve_named_signal(sim_out, signal_name, candidates=[signal_name])
+            extra_times, values = controller_io.extract_signal_series(container, sim_out)
+            if len(values) != len(output_values) or len(extra_times) != len(time_values) or any(abs(a - b) > 1.e-9 for a, b in zip(extra_times, time_values)):
+                raise RuntimeError(f"Signal {signal_name} is not aligned with the output time axis")
+            extra_values[field] = values
+
         self._current_sim_time = self.sim_step_time
         self._last_data = []
         for index, (current_time, output) in enumerate(zip(time_values, output_values)):
@@ -895,6 +910,7 @@ class SimulinkBridge:
                         "d2": self.secondary_kd,
                     }
                 )
+            sample.update({field: values[index] for field, values in extra_values.items()})
             self._last_data.append(sample)
 
     def get_data(self) -> List[dict]:

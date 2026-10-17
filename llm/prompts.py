@@ -44,33 +44,14 @@ _BASE_SYSTEM_PROMPT = """
 - 双控制器下，默认不要把 `controller_1` 与 `controller_2` 机械设置为完全相同参数；只有在证据明确显示两回路动态等价时才允许同参，并在 `analysis_summary` 里写明理由。
 - 若证据不足以调整第二控制器，可以让 `controller_2` 保持接近当前值，但字段必须存在。
 
-## 调参顺序（必须严格遵守）
-
-**第一阶段：单独整定 P（比例项）**
-- 将 I 和 D 保持在极小值（I 接近 0、D=0），只调整 P。
-- 大步提升 P，直到响应速度满意（上升时间短）且超调量在 5% 以内为止。
-- 在此阶段找到「合适的 P 区间」是首要目标，不要同时动 I 和 D。
-- 若 P 过大导致超调超过 5%，适当回退 P；若响应仍慢，继续提升 P。
-
-**第二阶段：在 P 稳定后引入 I（积分项）**
-- 只有当 P 已经使响应速度达到满意水平后，才开始调整 I。
-- I 的作用是消除稳态误差，从小值逐步提升，直到稳态误差趋近于零。
-- 若加 I 后产生超调或振荡，说明 I 过大，需减小 I。
-- 在此阶段 D 仍保持 0 或极小值，不要同时动 D。
-
-**第三阶段：必要时引入 D（微分项）**
-- 只有当 P+I 组合仍存在明显超调或振荡时，才引入 D 来抑制。
-- D 从小值开始（如 0.1～1），逐步增大，观察超调是否减小。
-- 若 D 过大会导致响应变慢（过度阻尼），需减小 D。
-- 若 P+I 已达到理想效果（超调 <5%、稳态误差≈0），D 可保持 0。
-
-## 核心原则
-1. **严格按阶段调参**：不得跳跃阶段，不得在 P 未稳定时大幅调整 I 或 D，三个参数同时大幅变动是错误行为。
-2. **稳定性第一**：等幅或发散振荡不可接受，超调须严格控制在 5% 以内。
-3. **P 要大步探索**：P 阶段响应明显不足时，可一次提升 2-5 倍，快速找到有效增益区间，切勿过于保守。
-4. **循证调参**：每次参数变化必须有数据依据；历史中已证明无效的方向不得重复。
-5. **大步探索，小步精调**：离目标远时大幅调整，接近目标时切换为小幅微调。
-6. **可信信号原则**：仅依赖明确提供的信号；若模式说明指出某字段为占位符，不得将其作为推理依据。
+## 循证调参策略
+- 优先保留已验证有效的参数，不机械重置 I/D，也不强制每个系统按 P→I→D 顺序重新整定。
+- 根据尾部误差、超调、振荡和真实控制量选择需要调整的参数。仅当证据表明积分饱和或阻尼不足时才针对性处理。
+- 每轮优先改变证据最充分的一项；有独立模型或实测敏感度支持时才联合调整，避免不可归因的大幅变化。
+- local_predictions 是独立仿真预测，不能当作实测结果。比较基准预测、候选预测和历史实测，失配时缩小步长并恢复模型分析。
+- 历史已证明恶化的方向不得重复；接近目标时小步精调，证据不足时 OBSERVE。
+- 用户约束和运行时护栏优先于默认超调目标（5%）；等幅或发散振荡不可接受。
+- 只使用明确提供的信号，忽略占位控制量；真实硬件必须保守调整。
 
 ## 输出要求
 必须严格输出一个合法的 JSON 对象，不包含任何 Markdown 标记或额外文字。
@@ -131,6 +112,21 @@ def get_system_prompt(
     prompt_context: Mapping[str, Any] | None = None,
 ) -> str:
     resolved_mode = normalize_tuning_mode(mode)
+    if (prompt_context or {}).get("controller_formula"):
+        import json
+        language = (prompt_context or {}).get("response_language", "zh")
+        return (
+            "You tune the supplied controller expression graph using measured evidence. "
+            "Follow its actual parameter dependencies and stateful discretization; do not assume PID stages or gain signs. "
+            "Tune only declared parameter names within min/max and max_step. Missing signals are missing evidence; never invent them. "
+            "Treat local_predictions as unverified forecasts, measured history as evidence. Respect user constraints and actuator limits. "
+            "Return one JSON object: parameters (mapping of declared names to finite numbers), tuning_action "
+            "(ADJUST_PARAMETERS or OBSERVE), status (TUNING or DONE), analysis_summary (one short sentence). "
+            "OBSERVE holds every parameter; DONE is advisory and measured convergence is required. No thought_process. "
+            "Do not emit p/i/d or controller_1/controller_2 unless they are the declared parameter names inside parameters. "
+            + ("Write analysis_summary in Simplified Chinese." if language == "zh" else "Write analysis_summary in English.")
+            + "\nController schema:\n" + json.dumps(prompt_context["controller_formula"], ensure_ascii=False, separators=(",", ":"))
+        )
     mode_notes = _MODE_NOTES.get(resolved_mode, _MODE_NOTES["generic"])
     guardrail_section = _build_pid_guardrail_section(prompt_context)
     sections = [_BASE_SYSTEM_PROMPT, mode_notes]
@@ -344,6 +340,14 @@ def build_user_prompt(
     prompt_context: Mapping[str, Any] | None = None,
 ) -> str:
     resolved_mode = normalize_tuning_mode(tuning_mode)
+    if (prompt_context or {}).get("controller_formula"):
+        import json
+        context = {key: value for key, value in prompt_context.items()
+                   if key not in {"pid_limits", "pid_limits_are_runtime_enforced", "response_language", "controller_formula"}}
+        return "\n\n".join(["Measured history:\n" + history_text,
+                              "Current measurements:\n" + prompt_data,
+                              "Controller and constraints:\n" + json.dumps(context, ensure_ascii=False, separators=(",", ":")),
+                              "Select a measured-evidence-based parameter update or OBSERVE. Return JSON only."])
     dual_controller = _requires_dual_controller_output(prompt_context)
     history_block = history_text.strip() or "暂无历史调参记录，请将本轮视为第一轮。"
     data_block = prompt_data.strip() or "本轮未提供响应数据。"

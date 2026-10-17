@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from copy import deepcopy
 from pathlib import Path
 from queue import Queue
 
@@ -43,6 +44,8 @@ class RunOptions:
     samples: int = 100
     speed: float = 10.0
     port: str = "DEMO"
+    controller_spec: dict | None = None
+    local_search: bool = False
 
     @property
     def pid(self) -> dict[str, float]:
@@ -53,6 +56,14 @@ class RunOptions:
             raise ValueError(t("invalid_mode"))
         if self.strategy not in {"offline", "ai"}:
             raise ValueError(t("invalid_strategy"))
+        if self.controller_spec:
+            from core.controller_formula import ControllerFormula
+            from sim.formula_model import FormulaHeatingSimulator
+            formula = ControllerFormula(self.controller_spec)
+            if self.mode == "python":
+                FormulaHeatingSimulator(formula)
+            elif set(self.controller_spec.get("parameter_bindings", {})) != set(formula.parameters):
+                raise ValueError("External controllers require parameter_bindings for every parameter")
         if not all(math.isfinite(v) for v in (*self.pid.values(), self.setpoint, self.speed)):
             raise ValueError(t("finite_values"))
         limits = get_pid_limits("python_sim" if self.mode == "python" else self.mode)
@@ -101,6 +112,7 @@ class DesktopSession:
     def __init__(self, options: RunOptions):
         options.validate()
         self.options = options
+        self.controller_spec = deepcopy(options.controller_spec)
         self.controller = SimulationController()
         self.events: Queue = Queue()
         self.sink = QueueEventSink(self.events)
@@ -123,7 +135,12 @@ class DesktopSession:
             options = self.options
             self.sink.publish("lifecycle", phase="connecting", message="正在准备调参环境…")
             if options.mode == "python":
-                sim = HeatingSimulator(**dict(zip(("kp", "ki", "kd"), options.pid.values())), setpoint=options.setpoint)
+                if self.controller_spec:
+                    from core.controller_formula import ControllerFormula
+                    from sim.formula_model import FormulaHeatingSimulator
+                    sim = FormulaHeatingSimulator(ControllerFormula(self.controller_spec), setpoint=options.setpoint)
+                else:
+                    sim = HeatingSimulator(**dict(zip(("kp", "ki", "kd"), options.pid.values())), setpoint=options.setpoint)
                 sim.set_setpoint(options.setpoint)
                 env = PythonSimEnv(sim, options.setpoint, self.controller)
                 env.prompt_context = build_python_sim_prompt_context()
@@ -146,10 +163,27 @@ class DesktopSession:
                     raise ValueError(issue or t("missing_simulink"))
                 sim = create_simulink_bridge(settings)
                 cleanup = sim.disconnect
+                if self.controller_spec and all(isinstance(binding, dict) for binding in self.controller_spec.get("parameter_bindings", {}).values()):
+                    sim.allow_custom_controller = True
+                if self.controller_spec:
+                    sim.extra_output_signals = {field: field for field in self.controller_spec.get("signal_bindings", {}).values()
+                                                if field not in {"input", "setpoint", "error", "pwm", "timestamp", "p", "i", "d", "p2", "i2", "d2"}}
                 sim.connect()
                 env = SimulinkEnv(sim, options.setpoint, self.controller)
+                if self.controller_spec:
+                    env.single_run_per_round = True
                 env.prompt_context = build_simulink_initial_prompt_context(sim, settings)
                 llm_mode = "simulink"
+
+            if self.controller_spec:
+                from core.controller_formula import ControllerFormula
+                if options.mode == "python":
+                    env.controller_formula = sim.controller_formula
+                else:
+                    from core.formula_environment import BoundFormulaEnvironment
+                    env = BoundFormulaEnvironment(env, ControllerFormula(self.controller_spec))
+                env.formula_offline = options.strategy == "offline"
+            env.local_search_enabled = options.mode == "python" and (options.local_search or bool(self.controller_spec) and options.strategy == "offline")
 
             buffer = AdvancedDataBuffer(options.samples)
 
@@ -218,7 +252,7 @@ class _LocalizedTuner:
 
 class SessionArchive:
     """Spool complete numeric telemetry to disk; plots can keep a bounded window."""
-    fields = ("round", "timestamp", "setpoint", "input", "pwm", "error", "p", "i", "d", "p2", "i2", "d2")
+    fields = ("round", "timestamp", "setpoint", "input", "pwm", "error", "p", "i", "d", "p2", "i2", "d2", "parameters", "signals")
 
     def __init__(self):
         self.directory = tempfile.TemporaryDirectory(prefix="pid-session-")
@@ -232,7 +266,14 @@ class SessionArchive:
         self.result: dict = {}
 
     def sample(self, event: dict) -> None:
-        self.writer.writerow({**event, "round": self.round})
+        row = {**event, "round": self.round}
+        if isinstance(row.get("parameters"), dict):
+            row["parameters"] = json.dumps(row["parameters"], separators=(",", ":"))
+        extra = {key: value for key, value in event.items() if key not in self.fields and key not in {"type", "seq"}
+                 and isinstance(value, (int, float)) and not isinstance(value, bool)}
+        if extra:
+            row["signals"] = json.dumps(extra, separators=(",", ":"))
+        self.writer.writerow(row)
         self.count += 1
 
     def export_csv(self, path: str) -> None:

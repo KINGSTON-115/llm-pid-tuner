@@ -98,6 +98,34 @@ def test_close_waits_for_worker_cleanup(app, window):
     assert not worker.running
 
 
+def test_formula_editor_inspects_raw_symbols_and_saves_a_runnable_controller(app, window):
+    from desktop.formula_editor import FormulaEditor, EXAMPLE
+    editor = FormulaEditor(window)
+    editor.editor.setPlainText("outer = gain * error\nu = lowpass(outer, tau)")
+    assert not editor.inspect()  # Bounds are still required before saving.
+    assert editor.last_inspection["symbols_requiring_parameter_bounds_or_signal_bindings"] == ["gain", "tau"]
+    assert "gain" in editor.inspection.toPlainText()
+    editor.editor.setPlainText(json.dumps(EXAMPLE))
+    assert editor.inspect()
+    editor.save()
+    assert CONFIG["CONTROLLER_SPEC"] == EXAMPLE
+    editor.deleteLater()
+    window.samples.setValue(50)
+    window.rounds.setValue(2)
+    window.speed.setCurrentIndex(window.speed.findData(50))
+    window._mode_changed()
+    assert not window.gains["p"].isEnabled()
+    window.start_session()
+    assert not window.formula_button.isEnabled()
+    wait_for(app, lambda: window.session is None, timeout=10)
+    result = window.archive.result
+    assert result["final_parameters_verified"]
+    assert result["controller_kind"] == "formula"
+    assert result["final_pid"] is None
+    assert "Kp=" in window.current_pid.text()
+    assert window.archive.count == 100
+
+
 def test_controls_remain_readable_and_modes_are_explicit(app, window):
     for spin in window.gains.values():
         assert spin.lineEdit().width() >= 40

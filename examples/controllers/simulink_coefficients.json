@@ -1,0 +1,16 @@
+{
+  "equations": "e1 = setpoint - input\nstage1 = Kouter * e1\ne2 = stage1 - velocity\nu = Kinner * e2 + Kd * derivative(e2)",
+  "output": "u",
+  "parameters": {
+    "Kouter": {"value": 1.0, "min": 0.01, "max": 10.0, "max_step": 0.1},
+    "Kinner": {"value": 2.0, "min": 0.01, "max": 20.0, "max_step": 0.2},
+    "Kd": {"value": 0.1, "min": 0.0, "max": 2.0, "max_step": 0.02}
+  },
+  "parameter_bindings": {
+    "Kouter": {"block": "your_model/OuterGain", "field": "Gain"},
+    "Kinner": {"block": "your_model/InnerGain", "field": "Gain"},
+    "Kd": {"block": "your_model/DerivativeGain", "field": "Gain"}
+  },
+  "signal_bindings": {"velocity": "velocity_out"},
+  "output_limits": [-255.0, 255.0]
+}
