@@ -8,6 +8,7 @@ from llm.usage import usage_summary
 from core.tuning_session import create_tuning_session, evaluate_completed_round, finalize_decision, record_rollback_round, apply_rollback, build_tuning_result, record_observation_round
 from core.tuning_loop import publish_round_metrics, publish_decision, flatten_controller_result, publish_rollback
 from core.config import CONFIG
+from core.local_search import parameter_signature
 from hw.profiles import DEFAULT_HARDWARE_PROFILE, normalize_hardware_profile
 from sim.prompt_context import (
     build_hardware_prompt_context,
@@ -220,7 +221,7 @@ def run_tuning_engine(
             local_streak = 0
         local_target = evaluation.metrics["setpoint"]
         if pending_local and should_rollback_to_best(evaluation.metrics, pending_local):
-            local_rejected.add(tuple(evaluation.current_pid[k] for k in ("p", "i", "d")))
+            local_rejected.add(parameter_signature(evaluation.current_pid))
         pending_local = None
         observation_requested, observe_reference = observe_reference, None
         publish_round_metrics(event_sink, evaluation, round_index)
@@ -277,6 +278,10 @@ def run_tuning_engine(
             _emit_lifecycle(event_sink, start_time, "observing", message)
             continue
 
+        if round_index == max_rounds:
+            record_observation_round(session, evaluation, reason="Round budget exhausted; retain the last measured parameters.")
+            break
+
         if (
             observation_requested is not None
             and not disable_early_exit
@@ -304,11 +309,6 @@ def run_tuning_engine(
             )
             _console(emit_console, f"[Observe] {message}")
             _emit_lifecycle(event_sink, start_time, "observing_pending", message)
-
-        prompt_data = session.buffer.to_prompt_data()
-        history_text = session.history.to_prompt_text(best_result=session.best_result)
-        current_stream_round[0] = evaluation.round_index
-        _emit_lifecycle(event_sink, start_time, "llm_request", f"Requesting PID for round {evaluation.round_index}.")
 
         if llm_mode == "generic" and hasattr(env, "bridge"):
             bridge = env.bridge
@@ -365,22 +365,18 @@ def run_tuning_engine(
 
         result = None
         local_enabled = getattr(env, "local_search_enabled", False)
-        if local_enabled and evaluation.round_index >= max_rounds:
-            result = {**evaluation.current_pid, "tuning_action": "OBSERVE", "status": "TUNING",
-                      "analysis_summary": "Round budget exhausted; retain the last measured parameters."}
-        if local_enabled and result is None and session.buffer.secondary_pid is None:
+        if local_enabled and session.buffer.secondary_pid is None:
             from core.local_search import rank_candidates, pid_bounds, compact_predictions
             preview = getattr(env, "preview_parameters", None)
             if callable(preview):
                 plan = rank_candidates(evaluation.current_pid, pid_bounds(evaluation.current_pid, pid_limits), preview,
                                        overshoot_limit=session.good_enough_rules["overshoot_threshold"],
+                                       rejected=local_rejected,
                                        project=lambda candidate: apply_pid_guardrails(evaluation.current_pid, candidate, limits=pid_limits)[0])
                 publish_event(event_sink, "local_search", round=evaluation.round_index, prediction=plan)
                 prompt_context["local_predictions"] = compact_predictions(plan, evaluation.current_pid)
                 selected = plan["selected"]
-                if (selected and (local_streak < 2 or getattr(env, "local_only", False))
-                    and tuple(selected["parameters"][k] for k in ("p", "i", "d")) not in local_rejected
-                    and evaluation.round_index < max_rounds):
+                if selected and (local_streak < 2 or getattr(env, "local_only", False)):
                     result = {**selected["parameters"], "tuning_action": "ADJUST_PID", "status": "TUNING",
                               "analysis_summary": "Local model predicts lower error; verify the candidate with measured response."}
                     local_streak += 1
@@ -390,10 +386,12 @@ def run_tuning_engine(
             _mark_stopped_by_user(session, event_sink, start_time, emit_console)
             break
         if result is None:
+            current_stream_round[0] = evaluation.round_index
+            _emit_lifecycle(event_sink, start_time, "llm_request", f"Requesting PID for round {evaluation.round_index}.")
             session.decision_requests += 1
             result = tuner.analyze(
-                prompt_data,
-                history_text,
+                session.buffer.to_prompt_data(),
+                session.history.to_prompt_text(best_result=session.best_result),
                 tuning_mode=llm_mode,
                 prompt_context=prompt_context,
             )

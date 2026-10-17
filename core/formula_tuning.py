@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from core.buffer import AdvancedDataBuffer
 from core.config import CONFIG
 from core.env import controller_requests_abort
-from core.local_search import rank_candidates, compact_predictions
+from core.local_search import rank_candidates, compact_predictions, parameter_signature
 from core.tuning_loop import publish_round_metrics
 from pid_safety import is_good_enough, score_metrics, should_rollback_to_best
 from sim.runtime import publish_event
@@ -34,9 +34,6 @@ def run_formula_tuning(env, tuner, mode, event_sink=None, controller=None,
     stable, local_streak, local_count, calls, rollbacks, guards, failures = 0, 0, 0, 0, 0, 0, 0
     reason, error = "max_rounds_reached", ""
     last_parameters, last_metrics = None, {}
-
-    def signature(parameters):
-        return tuple(sorted(parameters.items()))
 
     def lifecycle(phase, message):
         publish_event(event_sink, "lifecycle", phase=phase, message=message)
@@ -101,14 +98,14 @@ def run_formula_tuning(env, tuner, mode, event_sink=None, controller=None,
         if not target_changes and metrics["status"] == "STABLE" and (best is None or score_metrics(metrics) < score_metrics(best["metrics"])):
             best = deepcopy(record)
         if previous and previous.get("source") == "local" and should_rollback_to_best(metrics, previous["metrics"]):
-            rejected.add(signature(parameters))
+            rejected.add(parameter_signature(parameters))
         observation, observe = observe, None
         previous = record
         if stable >= CONFIG["REQUIRED_STABLE_ROUNDS"] and not disable_early_exit:
             reason = "stable_rounds_reached"
             break
         if best and parameters != best["parameters"] and should_rollback_to_best(metrics, best["metrics"]) and not disable_early_exit:
-            rejected.add(signature(parameters))
+            rejected.add(parameter_signature(parameters))
             try:
                 env.apply_parameters(best["parameters"])
             except Exception as exc:
@@ -138,9 +135,9 @@ def run_formula_tuning(env, tuner, mode, event_sink=None, controller=None,
         bounds = {name: dict(min=spec.minimum, max=spec.maximum, max_step=spec.max_step) for name, spec in formula.parameters.items()}
         plan, suggestion, source = None, None, "model"
         if getattr(env, "local_search_enabled", False) and callable(getattr(env, "preview_parameters", None)):
-            plan = rank_candidates(parameters, bounds, env.preview_parameters, overshoot_limit=rules["overshoot_threshold"], coordinate_offset=(round_index - 1) * 8)
+            plan = rank_candidates(parameters, bounds, env.preview_parameters, overshoot_limit=rules["overshoot_threshold"], coordinate_offset=(round_index - 1) * 8, rejected=rejected)
             publish_event(event_sink, "local_search", round=round_index, prediction=plan)
-            if plan["selected"] and (local_streak < 2 or getattr(env, "formula_offline", False)) and signature(plan["selected"]["parameters"]) not in rejected:
+            if plan["selected"] and (local_streak < 2 or getattr(env, "formula_offline", False)):
                 suggestion = dict(parameters=plan["selected"]["parameters"], tuning_action="ADJUST_PARAMETERS",
                                   analysis_summary="Local model predicts lower error within the overshoot limit; verify with measurements.")
                 source = "local"
@@ -188,7 +185,7 @@ def run_formula_tuning(env, tuner, mode, event_sink=None, controller=None,
             candidate, notes = formula.project(parameters, suggestion.get("parameters", {})) if action != "OBSERVE" else (dict(parameters), [])
             if action != "OBSERVE" and not suggestion.get("parameters"):
                 raise ValueError("No controller parameters supplied")
-            if signature(candidate) in rejected:
+            if parameter_signature(candidate) in rejected:
                 raise ValueError("Candidate previously regressed at this target; hold parameters")
         except (ValueError, TypeError) as exc:
             candidate, action, notes = dict(parameters), "OBSERVE", [str(exc)]

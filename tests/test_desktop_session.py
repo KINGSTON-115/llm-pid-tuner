@@ -101,7 +101,8 @@ def test_demo_hardware_uses_telemetry_and_does_not_write_initial_gains():
     events = drain_event_queue(session.events)
     assert events[-1]["result"]["completed_reason"] == "max_rounds_reached"
     assert writes[0] == "STATUS"
-    assert writes.count("SET") == 1  # Only after evaluation, never during connection.
+    assert writes.count("SET") == 0  # One round measures only; no unverified final write.
+    tuner.return_value.analyze.assert_not_called()
     assert len([e for e in events if e["type"] == "sample"]) == 50
 
 
@@ -172,7 +173,7 @@ def test_archive_keeps_all_samples_and_exports_numeric_csv(tmp_path):
 
 
 def test_runtime_auth_failure_state_survives_session_cleanup():
-    session = DesktopSession(RunOptions(strategy="ai", samples=50, rounds=1, speed=50))
+    session = DesktopSession(RunOptions(strategy="ai", samples=50, rounds=2, speed=50))
 
     def analyze(*_args, **_kwargs):
         CONFIG["ORCAROUTER_AUTH_STATE"] = "needs_reauth"

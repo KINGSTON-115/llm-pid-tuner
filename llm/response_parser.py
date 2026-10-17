@@ -21,26 +21,29 @@ def extract_json_candidates(text: str) -> List[str]:
     if stripped:
         candidates.append(stripped)
 
-    fenced_matches = re.findall(
-        r"```(?:json)?\s*(\{.*?\})\s*```",
-        text,
-        re.DOTALL | re.IGNORECASE,
-    )
-    candidates.extend(fenced_matches)
-
-    for start in range(len(text)):
-        if text[start] != "{":
-            continue
-        depth = 0
-        for end in range(start, len(text)):
-            char = text[end]
-            if char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    candidates.append(text[start : end + 1])
-                    break
+    # One pass, respecting JSON strings and arrays. Nested objects are part
+    # of their parent response, never independent controller suggestions.
+    depth, start, quoted, escaped = 0, 0, False, False
+    for index, char in enumerate(text):
+        if depth and quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif depth and char == '"':
+            quoted = True
+        elif char in "{[":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char in "}]" and depth:
+            depth -= 1
+            if depth == 0:
+                candidate = text[start:index + 1]
+                if candidate != stripped:
+                    candidates.append(candidate)
 
     return candidates
 
@@ -49,9 +52,11 @@ def _sanitize_pid_mapping(mapping: Dict[str, Any]) -> Dict[str, float]:
     pid_values: Dict[str, float] = {}
     for key in ("p", "i", "d"):
         value = mapping.get(key)
+        if isinstance(value, bool):
+            continue
         try:
             numeric = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if math.isfinite(numeric) and numeric >= 0:
             pid_values[key] = numeric
@@ -62,17 +67,8 @@ def sanitize_result(data: Dict[str, Any]) -> Dict[str, Any]:
     sanitized = dict(data)
 
     for key in ("p", "i", "d"):
-        value = sanitized.get(key)
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError):
-            sanitized.pop(key, None)
-            continue
-
-        if not math.isfinite(numeric) or numeric < 0:
-            sanitized.pop(key, None)
-        else:
-            sanitized[key] = numeric
+        sanitized.pop(key, None)
+    sanitized.update(_sanitize_pid_mapping(data))
 
     for controller_key in ("controller_1", "controller_2"):
         controller_value = sanitized.get(controller_key)
@@ -96,7 +92,7 @@ def sanitize_result(data: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if not sanitized.get("tuning_action"):
-        sanitized["tuning_action"] = "ADJUST_PID"
+        sanitized["tuning_action"] = "ADJUST_PARAMETERS" if "parameters" in sanitized else "ADJUST_PID"
 
     return sanitized
 
@@ -158,23 +154,10 @@ def parse_structured_text_response(text: str) -> Optional[Dict[str, Any]]:
         result["controller_2"] = controller_2
 
     if "controller_1" not in result:
-        # 只在 Action 区或未标记区提取，避免在 Analysis 区误判旧 PID
-        # 如果有 Action 区，优先在 Action 区找；如果没有，在整段文本找
-        target_text = tuning_action if tuning_action else stripped
-        single_pid = _extract_pid_triplet(target_text)
-        # 如果 Action 区没找到，但文本里有 [PID] 标签，也应该提取
-        if not single_pid and tuning_action:
-            pid_section = _extract_labeled_section(stripped, ["PID"])
-            if pid_section:
-                single_pid = _extract_pid_triplet(pid_section)
-            else:
-                # 最后的 fallback：如果 Action 区没有，也没有 [PID] 标签，但文本里有 P=...
-                # 为了防止测试用例失败，我们还是允许在整段文本中查找，但排除 Analysis 区
-                text_without_analysis = stripped
-                if analysis:
-                    text_without_analysis = stripped.replace(analysis, "")
-                single_pid = _extract_pid_triplet(text_without_analysis)
-                
+        pid_section = _extract_labeled_section(stripped, ["PID"])
+        single_pid = _extract_pid_triplet(pid_section) or _extract_pid_triplet(tuning_action)
+        if not single_pid and _PID_TRIPLET_RE.fullmatch(stripped):
+            single_pid = _extract_pid_triplet(stripped)
         if single_pid:
             result.update(single_pid)
 
@@ -194,7 +177,7 @@ def parse_json_response(text: str) -> Optional[Dict[str, Any]]:
     for candidate in extract_json_candidates(text):
         try:
             data = json.loads(candidate)
-        except Exception:
+        except (ValueError, RecursionError):
             continue
         if not isinstance(data, dict):
             continue

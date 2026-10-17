@@ -222,7 +222,7 @@ class TuningEngineObservationTests(unittest.TestCase):
         }
         _result, tuner, _events = self._run(
             [slow_samples()],
-            MAX_TUNING_ROUNDS=1,
+            MAX_TUNING_ROUNDS=2,
             PID_LIMITS=custom_limits,
             PID_MAX_INCREASE_RATIO=2.0,
         )

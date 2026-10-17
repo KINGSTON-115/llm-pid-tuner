@@ -111,11 +111,25 @@ def test_last_candidate_is_not_paired_with_previous_response():
         {"p": p, "i": .1, "d": .05, "status": "TUNING"} for p in [2., 3.]
     ]
     result = run_tuning_engine(env, tuner, "python_sim", emit_console=False)
-    assert result["final_pid"]["p"] == 3.
-    assert not result["final_pid_verified"]
-    assert result["final_metrics"] == {}
+    assert tuner.analyze.call_count == 1
+    assert len(env.applied) == 1
+    assert result["final_pid"]["p"] == 2.
+    assert result["final_pid_verified"]
+    assert result["final_metrics"]["avg_error"] == 30.
     assert result["evaluated_pid"]["p"] == 2.
     assert result["evaluated_metrics"]["avg_error"] == 30.
+
+
+@pytest.mark.parametrize("local_search", [False, True])
+def test_one_round_budget_never_buys_or_writes_an_unmeasurable_suggestion(local_search):
+    env, tuner = MeasuredEnv([60.]), Mock()
+    env.local_search_enabled = local_search
+    env.preview_parameters = Mock(side_effect=AssertionError("No remaining measurements"))
+    result = run_tuning_engine(env, tuner, "python_sim", max_rounds=1, emit_console=False)
+    tuner.analyze.assert_not_called()
+    env.preview_parameters.assert_not_called()
+    assert not env.applied and result["final_pid_verified"]
+    assert result["decision_requests"] == 0
 
 
 def test_failed_write_reports_device_gains_instead_of_candidate():
@@ -242,10 +256,10 @@ def test_observe_skips_at_most_one_call_and_never_rewrites_or_changes_either_pid
 
 @pytest.mark.parametrize("outputs", [[60., 20.], [60., 110.]])
 def test_observe_is_cancelled_when_error_or_overshoot_worsens(outputs):
-    env = MeasuredEnv(outputs)
+    env = MeasuredEnv(outputs + [outputs[-1]])
     tuner = Mock()
     tuner.analyze.return_value = {"tuning_action": "OBSERVE", **env.primary}
-    result = run_tuning_engine(env, tuner, "python_sim", emit_console=False)
+    result = run_tuning_engine(env, tuner, "python_sim", max_rounds=3, emit_console=False)
     assert tuner.analyze.call_count == 2
     assert not result["converged"]
 
@@ -256,18 +270,18 @@ def test_observe_is_cancelled_when_device_parameters_change():
             self.primary["p"] += .1
             return super().collect_samples()
 
-    env = ExternallyChangedEnv([60., 65.])
+    env = ExternallyChangedEnv([60., 65., 70.])
     tuner = Mock()
     tuner.analyze.return_value = {"tuning_action": "OBSERVE"}
-    run_tuning_engine(env, tuner, "python_sim", emit_console=False)
+    run_tuning_engine(env, tuner, "python_sim", max_rounds=3, emit_console=False)
     assert tuner.analyze.call_count == 2
 
 
 def test_observe_with_invalid_measurements_never_skips_analysis():
-    env = MeasuredEnv([float("nan"), float("nan")])
+    env = MeasuredEnv([float("nan")] * 3)
     tuner = Mock()
     tuner.analyze.return_value = {"tuning_action": "OBSERVE"}
-    result = run_tuning_engine(env, tuner, "python_sim", emit_console=False)
+    result = run_tuning_engine(env, tuner, "python_sim", max_rounds=3, emit_console=False)
     assert tuner.analyze.call_count == 2
     assert not result["converged"]
 
@@ -300,16 +314,16 @@ def test_session_usage_survives_localization_and_excludes_previous_requests():
     with patch.object(LLMTuner, "_initialize_provider", return_value=provider):
         client = LLMTuner("test", "https://test.invalid", "test", emit_console=False)
     client.request_json(system_prompt="before session", user_prompt="test")
-    env = MeasuredEnv([60., 65., 70.])
+    env = MeasuredEnv([60., 65., 70., 75.])
     sink = QueueEventSink(Queue())
-    result = run_tuning_engine(env, _LocalizedTuner(client), "python_sim", max_rounds=3,
+    result = run_tuning_engine(env, _LocalizedTuner(client), "python_sim", max_rounds=4,
                                event_sink=sink, emit_console=False)
     usage = result["llm_usage"]
     assert usage["transport_attempts"] == usage["logical_requests"] == 2
     assert usage["reported_tokens"]["input_tokens"] == 20
     assert usage["reported_tokens"]["output_tokens"] == 4
     assert usage["usage_complete"]
-    assert len(result["experiments"]) == 3
+    assert len(result["experiments"]) == 4
     events = drain_event_queue(sink.event_queue)
     usage_events = [event for event in events if event["type"] == "llm_usage"]
     assert len(usage_events) == 2
