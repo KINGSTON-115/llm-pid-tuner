@@ -2,12 +2,17 @@ import json
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional
 
+from llm.usage import normalize_usage
+
 class BaseLLMProvider(ABC):
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
         self.timeout = timeout
+        self.last_usage: Dict[str, Any] = {}
+        self.include_stream_usage = True
+        self.usage_final = False
 
     @abstractmethod
     def execute_request(
@@ -34,15 +39,23 @@ class OpenAISDKProvider(BaseLLMProvider):
         on_chunk: Callable[[str], None],
         abort_check: Optional[Callable[[], bool]] = None,
     ) -> None:
+        self.last_usage = {}
+        self.usage_final = False
+        options = {"stream_options": {"include_usage": True}} if self.include_stream_usage else {}
         resp = self.client.chat.completions.create(
             model=self.model,
             messages=openai_msgs,
             temperature=0.3,
             stream=True,
+            **options,
         )
         accumulated = ""
         try:
             for chunk in resp:
+                raw_usage = getattr(chunk, "usage", None)
+                if raw_usage is not None:
+                    self.last_usage = normalize_usage(raw_usage)
+                    self.usage_final = True
                 if abort_check and abort_check():
                     break
                 content_chunk = self._extract_chunk(chunk, accumulated)
@@ -87,6 +100,8 @@ class AnthropicSDKProvider(BaseLLMProvider):
         on_chunk: Callable[[str], None],
         abort_check: Optional[Callable[[], bool]] = None,
     ) -> None:
+        self.last_usage = {}
+        self.usage_final = False
         with self.client.messages.stream(
             model=self.model,
             system=system_prompt,
@@ -99,6 +114,9 @@ class AnthropicSDKProvider(BaseLLMProvider):
                     on_chunk(text)
                     if abort_check and abort_check():
                         break
+            if not (abort_check and abort_check()):
+                self.last_usage = normalize_usage(stream.get_final_message().usage, anthropic=True)
+                self.usage_final = True
 
 class HTTPFallbackProvider(BaseLLMProvider):
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float, is_anthropic: bool, requests_module=None):
@@ -132,6 +150,8 @@ class HTTPFallbackProvider(BaseLLMProvider):
         on_chunk: Callable[[str], None],
         abort_check: Optional[Callable[[], bool]] = None,
     ) -> None:
+        self.last_usage = {}
+        self.usage_final = False
         if self.is_anthropic:
             self._request_anthropic(anthropic_msgs, system_prompt, on_chunk, abort_check)
         else:
@@ -175,6 +195,8 @@ class HTTPFallbackProvider(BaseLLMProvider):
             "temperature": 0.3,
             "stream": True,
         }
+        if self.include_stream_usage:
+            payload["stream_options"] = {"include_usage": True}
         session = self.session if self.session else self.requests
         with session.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=self.timeout, stream=True) as resp:
             resp.raise_for_status()
@@ -187,7 +209,10 @@ class HTTPFallbackProvider(BaseLLMProvider):
         return ""
 
     def _parse_stream(self, resp, on_chunk, abort_check, extract_fn):
+        anthropic_usage = {}
         for line in resp.iter_lines():
+            if abort_check and abort_check():
+                break
             if not line: continue
             line_str = line.decode("utf-8")
             if not line_str.startswith("data: "): continue
@@ -197,6 +222,18 @@ class HTTPFallbackProvider(BaseLLMProvider):
                 data = json.loads(data_str)
             except json.JSONDecodeError:
                 continue
+            if self.is_anthropic:
+                raw_usage = data.get("message", {}).get("usage") if data.get("type") == "message_start" else data.get("usage")
+                if isinstance(raw_usage, dict):
+                    # Message delta output counts are cumulative, not increments.
+                    anthropic_usage.update({k: v for k, v in raw_usage.items() if v is not None})
+                    normalized = normalize_usage(anthropic_usage, anthropic=True)
+                    self.last_usage.update({k: v for k, v in normalized.items() if v is not None})
+                if data.get("type") == "message_stop":
+                    self.usage_final = True
+            elif isinstance(data.get("usage"), dict):
+                self.last_usage = normalize_usage(data["usage"])
+                self.usage_final = True
             chunk = extract_fn(data)
             if chunk:
                 on_chunk(chunk)

@@ -20,6 +20,7 @@ from core.i18n import tr
 from core.adapters import PythonSimEnv
 from core.tuning_engine import run_tuning_engine
 from llm.client import LLMTuner
+from llm.usage import usage_summary
 from sim.model import HeatingSimulator, SETPOINT
 from sim.prompt_context import build_python_sim_prompt_context
 from sim.runtime import EVENT_ROUND_METRICS
@@ -61,6 +62,9 @@ class _OfflineStrategy:
         primary, _ = self.env.get_current_pid()
         return {**primary, "tuning_action": "HOLD", "status": "TUNING",
                 "analysis_summary": "Fixed-parameter baseline."}
+
+    def get_usage_summary(self, start_attempt: int = 0) -> Dict[str, Any]:
+        return usage_summary([])
 
 
 class _ProgressSink:
@@ -166,6 +170,10 @@ def print_summary(results: List[Dict[str, Any]]):
             f"{pid['p']:>{W_PID}.4f}  {pid['i']:>{W_PID}.4f}  {pid['d']:>{W_PID}.4f}  "
             f"{result['fallback_count']:>{W_FDBK}}  {elapsed_str:>{W_ELAPSED}}"
         )
+        usage = result["llm_usage"]
+        tokens = usage["reported_tokens"]
+        print(f"    Reported tokens: input={tokens['input_tokens']}, output={tokens['output_tokens']}; "
+              f"attempts={usage['transport_attempts']}, complete={usage['usage_complete']}")
     print(bar)
 
 

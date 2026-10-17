@@ -1,8 +1,10 @@
+import math
 import time
 from typing import Any, Dict, Optional
 
 from core.env import BaseTuningEnvironment, controller_requests_abort
 from llm.client import LLMTuner
+from llm.usage import usage_summary
 from core.tuning_session import create_tuning_session, evaluate_completed_round, finalize_decision, record_rollback_round, apply_rollback, build_tuning_result, record_observation_round
 from core.tuning_loop import publish_round_metrics, publish_decision, flatten_controller_result, publish_rollback
 from core.config import CONFIG
@@ -24,10 +26,23 @@ from pid_safety import (
     adapt_simulink_pid_limits,
     apply_pid_guardrails,
     get_pid_limits,
+    should_rollback_to_best,
+    pid_equals,
+    score_metrics,
 )
 
 def _stop_requested(controller: Any) -> bool:
     return controller is not None and getattr(controller, "should_stop", False)
+
+
+def _tuner_usage(tuner: Any, start_attempt: int = 0) -> Dict[str, Any]:
+    getter = getattr(tuner, "get_usage_summary", None)
+    summary = getter(start_attempt=start_attempt) if callable(getter) else None
+    if isinstance(summary, dict):
+        return summary
+    empty = usage_summary([])
+    return {**empty, "tracking_available": False, "usage_complete": False,
+            "reported_tokens": {k: None for k in empty["reported_tokens"]}}
 
 def _mark_stopped_by_user(
     session: Any,
@@ -144,6 +159,8 @@ def run_tuning_engine(
         pid_limits = base_pid_limits
 
     prompt_context = _attach_pid_guardrail_context(prompt_context, pid_limits)
+    usage_start = _tuner_usage(tuner)["transport_attempts"]
+    observe_reference: Optional[Dict[str, Any]] = None
 
     while session.round_num < max_rounds:
         if controller_requests_abort(controller):
@@ -188,6 +205,7 @@ def run_tuning_engine(
         _console(emit_console, f"[Round {round_index}] Collected {len(samples)} samples.")
 
         evaluation = evaluate_completed_round(session, dict(session.buffer.current_pid))
+        observation_requested, observe_reference = observe_reference, None
         publish_round_metrics(event_sink, evaluation, round_index)
 
         if evaluation.best_result_updated and evaluation.best_result is not None:
@@ -243,6 +261,23 @@ def run_tuning_engine(
             continue
 
         if (
+            observation_requested is not None
+            and not disable_early_exit
+            and evaluation.metrics["status"] in {"STABLE", "SLOW_RESPONSE"}
+            and math.isfinite(score_metrics(evaluation.metrics))
+            and math.isfinite(score_metrics(observation_requested))
+            and evaluation.metrics["overshoot"] <= session.good_enough_rules["overshoot_threshold"]
+            and evaluation.metrics["setpoint"] == observation_requested.get("setpoint")
+            and pid_equals(evaluation.current_pid, observation_requested["_pid"])
+            and session.buffer.secondary_pid == observation_requested["_secondary_pid"]
+            and not should_rollback_to_best(evaluation.metrics, observation_requested)
+        ):
+            message = "OBSERVE requested: held gains for one additional measured round without a model call."
+            record_observation_round(session, evaluation, reason=message)
+            _emit_lifecycle(event_sink, start_time, "observing", message)
+            continue
+
+        if (
             str(evaluation.metrics.get("status", "")).upper() == "STABLE"
             and evaluation.good_enough_detail
         ):
@@ -254,7 +289,7 @@ def run_tuning_engine(
             _emit_lifecycle(event_sink, start_time, "observing_pending", message)
 
         prompt_data = session.buffer.to_prompt_data()
-        history_text = session.history.to_prompt_text()
+        history_text = session.history.to_prompt_text(best_result=session.best_result)
         current_stream_round[0] = evaluation.round_index
         _emit_lifecycle(event_sink, start_time, "llm_request", f"Requesting PID for round {evaluation.round_index}.")
 
@@ -318,6 +353,9 @@ def run_tuning_engine(
             tuning_mode=llm_mode,
             prompt_context=prompt_context,
         )
+        usage = _tuner_usage(tuner, usage_start)
+        publish_event(event_sink, "llm_usage", round=evaluation.round_index,
+                      usage={k: v for k, v in usage.items() if k != "attempts"})
 
         if controller_requests_abort(controller):
             _mark_stopped_by_user(session, event_sink, start_time, emit_console)
@@ -330,6 +368,14 @@ def run_tuning_engine(
         secondary_result = None
         if result:
             result, _primary_result, secondary_result = flatten_controller_result(result, evaluation.current_pid)
+        if result and str(result.get("tuning_action", "")).upper() == "OBSERVE":
+            result = {**result, **evaluation.current_pid, "tuning_action": "OBSERVE"}
+            secondary_result = None
+            observe_reference = dict(evaluation.metrics)
+            observe_reference["_pid"] = dict(evaluation.current_pid)
+            observe_reference["_secondary_pid"] = (
+                dict(session.buffer.secondary_pid) if session.buffer.secondary_pid is not None else None
+            )
         # finalize_decision builds the guardrailed fallback suggestion itself
         # when ``result`` is still empty.
         decision = finalize_decision(session, evaluation, result, limits=pid_limits)
@@ -338,6 +384,10 @@ def run_tuning_engine(
         _console(emit_console, f"\n[Action] {decision.action} -> P={decision.safe_pid['p']}, I={decision.safe_pid['i']}, D={decision.safe_pid['d']}")
         if decision.status == "DONE":
             _emit_log(event_sink, start_time, "verify", "LLM suggested DONE; measured convergence criteria still require verification.")
+
+        if decision.action == "OBSERVE":
+            # Avoid resetting device integrators by rewriting unchanged gains.
+            continue
 
         safe_primary = decision.safe_pid
         safe_secondary = None
@@ -372,6 +422,7 @@ def run_tuning_engine(
     final_primary, final_secondary = env.get_current_pid()
     return {
         "elapsed_sec": time.time() - start_time,
+        "llm_usage": _tuner_usage(tuner, usage_start),
         **build_tuning_result(
             session,
             final_pid=dict(final_primary),

@@ -20,6 +20,7 @@ from desktop.i18n import t
 from core.tuning_engine import run_tuning_engine
 from hw.bridge import SerialBridge
 from llm.client import LLMTuner
+from llm.usage import usage_summary
 from pid_safety import build_fallback_suggestion, get_pid_limits
 from sim.model import CONTROL_INTERVAL, HeatingSimulator
 from sim.prompt_context import build_hardware_prompt_context, build_python_sim_prompt_context
@@ -91,6 +92,9 @@ class OfflineTuner:
         )
         result["thought_process"] = "本次使用项目内置的保守控制规则，未调用 AI。"
         return result
+
+    def get_usage_summary(self, start_attempt=0):
+        return usage_summary([])
 
 
 class DesktopSession:
@@ -207,6 +211,9 @@ class _LocalizedTuner:
 
     def analyze(self, *args, prompt_context=None, **kwargs):
         return self.tuner.analyze(*args, prompt_context={**(prompt_context or {}), "response_language": get_language()}, **kwargs)
+
+    def get_usage_summary(self, start_attempt=0):
+        return self.tuner.get_usage_summary(start_attempt=start_attempt)
 
 
 class SessionArchive:

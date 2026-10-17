@@ -16,6 +16,7 @@ from llm.prompts import SYSTEM_PROMPT, build_user_prompt, get_system_prompt
 from llm.response_parser import parse_json_response
 from llm.stream_formatter import JSONStreamFormatter
 from llm.providers import BaseLLMProvider, OpenAISDKProvider, AnthropicSDKProvider, HTTPFallbackProvider
+from llm.usage import rejects_stream_usage, usage_summary
 
 
 class LLMTuner:
@@ -50,6 +51,8 @@ class LLMTuner:
         self.stream_callback = stream_callback
         self.log_callback = log_callback
         self.abort_check = abort_check
+        self.usage_attempts: List[Dict[str, Any]] = []
+        self._request_index = 0
 
         self.llm_client: BaseLLMProvider = self._initialize_provider()
         # For backward compatibility in tests
@@ -212,6 +215,46 @@ class LLMTuner:
             raise last_exception
         return ""
 
+    def get_usage_summary(self, start_attempt: int = 0) -> Dict[str, Any]:
+        return usage_summary(self.usage_attempts[start_attempt:])
+
+    def _invoke_provider(
+        self, openai_msgs: List[Dict[str, Any]], anthropic_msgs: List[Dict[str, Any]],
+        system_prompt: str, on_chunk: Callable[[str], None],
+    ) -> None:
+        provider = self.llm_client
+        provider.last_usage = {}
+        provider.usage_final = False
+        output_chars = 0
+        started = time.monotonic()
+        completed = False
+
+        def measured_chunk(chunk: str) -> None:
+            nonlocal output_chars
+            output_chars += len(chunk)
+            on_chunk(chunk)
+
+        try:
+            provider.execute_request(
+                openai_msgs=openai_msgs, anthropic_msgs=anthropic_msgs,
+                system_prompt=system_prompt, on_chunk=measured_chunk,
+                abort_check=self.abort_check,
+            )
+            completed = not (self.abort_check and self.abort_check())
+        finally:
+            self.usage_attempts.append({
+                "request": self._request_index, "transport": type(provider).__name__,
+                "model": self.model, "completed": bool(completed),
+                "input_chars": (
+                    len(system_prompt) + sum(len(str(m.get("content", ""))) for m in anthropic_msgs)
+                    if self.provider == "anthropic"
+                    else sum(len(str(m.get("content", ""))) for m in openai_msgs)
+                ),
+                "output_chars": output_chars, "elapsed_sec": time.monotonic() - started,
+                "usage": dict(provider.last_usage),
+                "usage_final": provider.usage_final,
+            })
+
     def _execute_request(
         self,
         openai_msgs: List[Dict[str, Any]],
@@ -226,14 +269,19 @@ class LLMTuner:
             full_content.append(chunk)
             self._emit_stream_update("".join(full_content), formatter=formatter)
 
+        def invoke() -> None:
+            try:
+                self._invoke_provider(openai_msgs, anthropic_msgs, system_prompt, on_chunk)
+            except Exception as exc:
+                if self.llm_client.include_stream_usage and not full_content and rejects_stream_usage(exc):
+                    self.llm_client.include_stream_usage = False
+                    self._emit_log("usage", "Provider rejected streaming usage; continuing without that option.")
+                    self._invoke_provider(openai_msgs, anthropic_msgs, system_prompt, on_chunk)
+                else:
+                    raise
+
         try:
-            self.llm_client.execute_request(
-                openai_msgs=openai_msgs,
-                anthropic_msgs=anthropic_msgs,
-                system_prompt=system_prompt,
-                on_chunk=on_chunk,
-                abort_check=self.abort_check,
-            )
+            invoke()
         except Exception as sdk_error:
             if self.orcarouter is not None and getattr(sdk_error, "status_code", None) == 401:
                 raise
@@ -252,13 +300,7 @@ class LLMTuner:
                 self.use_sdk = False
                 self.requests = self.llm_client.requests
                 full_content.clear()
-                self.llm_client.execute_request(
-                    openai_msgs=openai_msgs,
-                    anthropic_msgs=anthropic_msgs,
-                    system_prompt=system_prompt,
-                    on_chunk=on_chunk,
-                    abort_check=self.abort_check,
-                )
+                invoke()
             else:
                 raise
 
@@ -276,6 +318,7 @@ class LLMTuner:
         system_prompt: str,
         user_prompt: str,
     ) -> Optional[Dict[str, Any]]:
+        self._request_index += 1
         openai_msgs: List[Any] = [{"role": "system", "content": system_prompt}]
         anthropic_msgs: List[Any] = [{"role": "user", "content": user_prompt}]
         openai_msgs.append({"role": "user", "content": user_prompt})
