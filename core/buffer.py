@@ -92,13 +92,38 @@ class AdvancedDataBuffer:
             "setpoint"          : self.setpoint,
         }
 
+    def _prompt_samples(self, limit: int = 20) -> list[Dict[str, float]]:
+        """Retain target changes and bucket extrema instead of blind decimation."""
+        data = list(self.buffer)
+        if len(data) <= limit:
+            return data
+        selected = {0, len(data) - 1}
+        for i in range(1, len(data)):
+            if any(data[i].get(k) != data[i - 1].get(k) for k in ("setpoint", "target_x", "target_y")):
+                selected.update((i - 1, i))
+        # Always retain output/error/control extrema, including narrow spikes.
+        for key in ("input", "error", "pwm", "offset_x", "offset_y", "servo_x", "servo_y"):
+            candidates = [i for i, sample in enumerate(data) if key in sample]
+            if candidates:
+                selected.add(min(candidates, key=lambda i: data[i][key]))
+                selected.add(max(candidates, key=lambda i: data[i][key]))
+        # A pair of output extrema per bucket preserves local oscillation shape.
+        buckets = max(1, (limit - len(selected)) // 2)
+        for bucket in range(buckets):
+            indices = range(bucket * len(data) // buckets, (bucket + 1) * len(data) // buckets)
+            selected.add(min(indices, key=lambda i: data[i].get("input", 0.)))
+            selected.add(max(indices, key=lambda i: data[i].get("input", 0.)))
+        for i in (j * (len(data) - 1) // (limit - 1) for j in range(limit)):
+            if len(selected) >= limit:
+                break
+            selected.add(i)
+        # Many target changes may exceed the nominal limit; never hide them.
+        return [data[i] for i in sorted(selected)]
+
     def to_prompt_data(self) -> str:
         metrics = self.calculate_advanced_metrics()
 
-        # 下采样：如果数据太多，每隔几个点取一个
-        all_data     = list(self.buffer)
-        step         = max(1, len(all_data) // 30)
-        sampled_data = all_data[::step]
+        sampled_data = self._prompt_samples()
 
         lines = []
         lines.append("## Current Status")
@@ -121,7 +146,7 @@ class AdvancedDataBuffer:
             f"- 震荡检测: 过零点 {metrics.get('zero_crossings', 0)} 次 (状态: {metrics.get('status', 'UNKNOWN')})"
         )
         lines.append("")
-        lines.append(f"## 时间序列数据摘要 (采样 {len(sampled_data)} 点):")
+        lines.append(f"## 时间序列数据摘要 (采样 {len(sampled_data)}/{len(self.buffer)} 点; extrema and target changes, nonuniform times):")
         dual_axis_keys = (
             "target_x",
             "target_y",
@@ -135,17 +160,18 @@ class AdvancedDataBuffer:
         )
         if include_dual_axis:
             lines.append(
-                "SimTime(ms), Input, PWM, Error, TargetX, TargetY, OffsetX, OffsetY, ServoX, ServoY"
+                "SimTime(ms), Setpoint, Input, PWM, Error, TargetX, TargetY, OffsetX, OffsetY, ServoX, ServoY"
             )
         else:
-            lines.append("SimTime(ms), Input, PWM, Error")
+            lines.append("SimTime(ms), Setpoint, Input, PWM, Error")
 
         for d in sampled_data:
             base_values = (
-                f"{d.get('timestamp', 0):.0f}, "
-                f"{d.get('input', 0):.2f}, "
-                f"{d.get('pwm', 0):.1f}, "
-                f"{d.get('error', 0):.2f}"
+                f"{d.get('timestamp', 0):.8g},"
+                f"{d.get('setpoint', self.setpoint):.8g},"
+                f"{d.get('input', 0):.8g},"
+                f"{d.get('pwm', 0):.8g},"
+                f"{d.get('error', d.get('setpoint', self.setpoint) - d.get('input', 0)):.8g}"
             )
             if include_dual_axis:
                 lines.append(

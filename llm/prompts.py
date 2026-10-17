@@ -40,7 +40,7 @@ _BASE_SYSTEM_PROMPT = """
 - 双控制器输出时，使用：
   - `controller_1`: {`p`,`i`,`d`}
   - `controller_2`: {`p`,`i`,`d`}
-- 同时保留顶层字段：`analysis_summary`、`thought_process`、`tuning_action`、`status`。
+- 同时保留顶层字段：`analysis_summary`、`tuning_action`、`status`。
 - 双控制器下，默认不要把 `controller_1` 与 `controller_2` 机械设置为完全相同参数；只有在证据明确显示两回路动态等价时才允许同参，并在 `analysis_summary` 里写明理由。
 - 若证据不足以调整第二控制器，可以让 `controller_2` 保持接近当前值，但字段必须存在。
 
@@ -74,8 +74,11 @@ _BASE_SYSTEM_PROMPT = """
 
 ## 输出要求
 必须严格输出一个合法的 JSON 对象，不包含任何 Markdown 标记或额外文字。
-单控制器时必填字段：thought_process、analysis_summary、tuning_action、p、i、d、status。
-双控制器时必填字段：thought_process、analysis_summary、tuning_action、controller_1、controller_2、status。
+单控制器时必填字段：analysis_summary、tuning_action、p、i、d、status。
+双控制器时必填字段：analysis_summary、tuning_action、controller_1、controller_2、status。
+analysis_summary 仅用一句话说明数据依据与调整目的，不输出 thought_process 或展开推导。
+tuning_action 可用 ADJUST_PID 或 OBSERVE。证据不足、需要继续观察时用 OBSERVE 并保持当前参数。
+OBSERVE 最多跳过下一轮的一次模型调用；若指标恶化则恢复分析。DONE 仅是建议，程序按实测指标验收。
 status 只能是 \"TUNING\" 或 \"DONE\"。
 """.strip()
 
@@ -266,6 +269,8 @@ def _format_prompt_context(prompt_context: Mapping[str, Any] | None) -> str:
 
     lines = ["## 模型上下文信息"]
     for key, value in prompt_context.items():
+        if key in {"pid_limits", "pid_limits_are_runtime_enforced", "user_preference_summary"}:
+            continue  # Already included in the system/preference section.
         if value is None:
             continue
         if isinstance(value, str) and not value.strip():
@@ -344,9 +349,9 @@ def build_user_prompt(
     data_block = prompt_data.strip() or "本轮未提供响应数据。"
     context_block = _format_prompt_context(prompt_context)
     output_fields = (
-        "thought_process、analysis_summary、tuning_action、controller_1、controller_2、status"
+        "analysis_summary、tuning_action、controller_1、controller_2、status"
         if dual_controller
-        else "thought_process、analysis_summary、tuning_action、p、i、d、status"
+        else "analysis_summary、tuning_action、p、i、d、status"
     )
 
     sections = [history_block, data_block]

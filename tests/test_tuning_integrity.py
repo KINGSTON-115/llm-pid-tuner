@@ -7,7 +7,7 @@ import pytest
 import benchmark
 from core.config import CONFIG, DEFAULT_CONFIG
 from core.tuning_engine import run_tuning_engine
-from core.tuning_session import create_tuning_session, evaluate_completed_round
+from core.tuning_session import create_tuning_session, evaluate_completed_round, finalize_decision
 from pid_safety import (
     is_better_metrics, maybe_update_best_result, score_metrics, should_rollback_to_best,
 )
@@ -221,3 +221,97 @@ def test_invalid_benchmark_fails_before_constructing_model(case, rounds):
     with patch.object(benchmark, "create_llm_tuner", side_effect=AssertionError("No API")):
         with pytest.raises(ValueError):
             benchmark.run_case(case, rounds, 42)
+
+
+def test_observe_skips_at_most_one_call_and_never_rewrites_or_changes_either_pid():
+    env = MeasuredEnv([60., 65., 70., 75.], secondary={"p": 2., "i": .2, "d": 0.})
+    tuner = Mock()
+    tuner.analyze.return_value = {
+        "tuning_action": "OBSERVE", "controller_1": {"p": 99., "i": 20., "d": 1.},
+        "controller_2": {"p": 99., "i": 20., "d": 1.},
+    }
+    result = run_tuning_engine(env, tuner, "python_sim", max_rounds=4, emit_console=False)
+    assert tuner.analyze.call_count == 2
+    assert result["rounds_completed"] == 4
+    assert env.applied == []
+    assert result["final_pid"]["p"] == 1.
+    assert result["final_secondary_pid"]["p"] == 2.
+    assert result["final_pid_verified"]
+    assert not result["converged"]
+
+
+@pytest.mark.parametrize("outputs", [[60., 20.], [60., 110.]])
+def test_observe_is_cancelled_when_error_or_overshoot_worsens(outputs):
+    env = MeasuredEnv(outputs)
+    tuner = Mock()
+    tuner.analyze.return_value = {"tuning_action": "OBSERVE", **env.primary}
+    result = run_tuning_engine(env, tuner, "python_sim", emit_console=False)
+    assert tuner.analyze.call_count == 2
+    assert not result["converged"]
+
+
+def test_observe_is_cancelled_when_device_parameters_change():
+    class ExternallyChangedEnv(MeasuredEnv):
+        def collect_samples(self):
+            self.primary["p"] += .1
+            return super().collect_samples()
+
+    env = ExternallyChangedEnv([60., 65.])
+    tuner = Mock()
+    tuner.analyze.return_value = {"tuning_action": "OBSERVE"}
+    run_tuning_engine(env, tuner, "python_sim", emit_console=False)
+    assert tuner.analyze.call_count == 2
+
+
+def test_observe_with_invalid_measurements_never_skips_analysis():
+    env = MeasuredEnv([float("nan"), float("nan")])
+    tuner = Mock()
+    tuner.analyze.return_value = {"tuning_action": "OBSERVE"}
+    result = run_tuning_engine(env, tuner, "python_sim", emit_console=False)
+    assert tuner.analyze.call_count == 2
+    assert not result["converged"]
+
+
+def test_observe_reports_actual_gains_even_when_outside_adjustment_limits():
+    state = create_tuning_session(initial_pid={"p": 1.e6, "i": .1, "d": .05})
+    for _ in range(10):
+        state.buffer.add({"input": 60., "setpoint": 100.})
+    evaluation = evaluate_completed_round(state, state.buffer.current_pid)
+    decision = finalize_decision(state, evaluation, {"tuning_action": "OBSERVE"})
+    assert decision.safe_pid == evaluation.current_pid
+    assert state.buffer.current_pid == evaluation.current_pid
+    assert not decision.guardrail_notes
+
+
+def test_session_usage_survives_localization_and_excludes_previous_requests():
+    from llm.client import LLMTuner
+    from llm.providers import BaseLLMProvider
+    from desktop.session import _LocalizedTuner
+    from sim.runtime import QueueEventSink, drain_event_queue
+    from queue import Queue
+
+    class MeteredProvider(BaseLLMProvider):
+        def execute_request(self, **kwargs):
+            self.last_usage = {"input_tokens": 10, "output_tokens": 2}
+            self.usage_final = True
+            kwargs["on_chunk"]('{"tuning_action":"OBSERVE"}')
+
+    provider = MeteredProvider("test", "https://test.invalid", "test", 5)
+    with patch.object(LLMTuner, "_initialize_provider", return_value=provider):
+        client = LLMTuner("test", "https://test.invalid", "test", emit_console=False)
+    client.request_json(system_prompt="before session", user_prompt="test")
+    env = MeasuredEnv([60., 65., 70.])
+    sink = QueueEventSink(Queue())
+    result = run_tuning_engine(env, _LocalizedTuner(client), "python_sim", max_rounds=3,
+                               event_sink=sink, emit_console=False)
+    usage = result["llm_usage"]
+    assert usage["transport_attempts"] == usage["logical_requests"] == 2
+    assert usage["reported_tokens"]["input_tokens"] == 20
+    assert usage["reported_tokens"]["output_tokens"] == 4
+    assert usage["usage_complete"]
+    assert len(result["experiments"]) == 3
+    events = drain_event_queue(sink.event_queue)
+    usage_events = [event for event in events if event["type"] == "llm_usage"]
+    assert len(usage_events) == 2
+    assert usage_events[-1]["usage"]["reported_tokens"] == usage["reported_tokens"]
+    assert "attempts" not in usage_events[-1]["usage"]

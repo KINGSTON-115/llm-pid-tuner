@@ -118,6 +118,7 @@ def evaluate_completed_round(
         and metrics.get("setpoint") != state.last_metrics.get("setpoint")
     ):
         state.best_result = None
+        state.history = TuningHistory(max_history=state.history.history.maxlen)
     state.last_metrics = dict(metrics)
     state.evaluated_pid = dict(current_pid)
     state.evaluated_secondary_pid = current_secondary
@@ -218,13 +219,16 @@ def evaluate_completed_round(
 def record_observation_round(
     state: TuningSessionState,
     evaluation: RoundEvaluation,
+    reason: str = "Good-enough round observed; PID held for stability verification.",
 ) -> None:
     state.history.add_record(
         evaluation.round_index,
         evaluation.current_pid,
         evaluation.metrics,
-        "Good-enough round observed; PID held for stability verification.",
-        "Skipped LLM adjustment because the current response already met the good-enough criteria.",
+        reason,
+        "",
+        secondary_pid=state.evaluated_secondary_pid,
+        next_action="OBSERVE",
     )
     state.round_num += 1
     state.buffer.reset()
@@ -270,6 +274,8 @@ def record_rollback_round(
         evaluation.metrics,
         analysis,
         thought,
+        secondary_pid=state.evaluated_secondary_pid,
+        next_action="ROLLBACK",
     )
     return analysis
 
@@ -288,14 +294,18 @@ def finalize_decision(
             limits=limits,
         )
 
-    safe_pid, guardrail_notes = apply_pid_guardrails(
-        evaluation.current_pid,
-        result,
-        limits=limits,
-    )
+    action = str(result.get("tuning_action", "UNKNOWN"))
+    if action == "OBSERVE":
+        # Holding is not a write: telemetry must show the actual measured gains.
+        safe_pid, guardrail_notes = dict(evaluation.current_pid), []
+    else:
+        safe_pid, guardrail_notes = apply_pid_guardrails(
+            evaluation.current_pid,
+            result,
+            limits=limits,
+        )
     analysis = str(result.get("analysis_summary", "No analysis summary was provided."))
     thought = str(result.get("thought_process", ""))
-    action = str(result.get("tuning_action", "UNKNOWN"))
     fallback_used = bool(result.get("fallback_used"))
     status = str(result.get("status", "TUNING")).upper()
 
@@ -305,6 +315,8 @@ def finalize_decision(
         evaluation.metrics,
         analysis,
         thought,
+        secondary_pid=state.evaluated_secondary_pid,
+        next_action="FALLBACK" if fallback_used else action,
     )
     state.buffer.current_pid = dict(safe_pid)
     if fallback_used:
