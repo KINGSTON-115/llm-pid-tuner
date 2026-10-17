@@ -110,7 +110,11 @@ def run_tuning_engine(
     disable_early_exit: bool = False,
     start_time: float = 0.0,
     current_stream_round: Optional[list] = None,
+    max_rounds: Optional[int] = None,
 ) -> Dict[str, Any]:
+    max_rounds = int(CONFIG["MAX_TUNING_ROUNDS"] if max_rounds is None else max_rounds)
+    if max_rounds < 0:
+        raise ValueError("max_rounds must be non-negative")
     if current_stream_round is None:
         current_stream_round = [0]
     if start_time == 0.0:
@@ -141,7 +145,7 @@ def run_tuning_engine(
 
     prompt_context = _attach_pid_guardrail_context(prompt_context, pid_limits)
 
-    while session.round_num < CONFIG["MAX_TUNING_ROUNDS"]:
+    while session.round_num < max_rounds:
         if controller_requests_abort(controller):
             _mark_stopped_by_user(session, event_sink, start_time, emit_console)
             break
@@ -227,12 +231,6 @@ def run_tuning_engine(
             _emit_lifecycle(event_sink, start_time, "completed", f"Reached {evaluation.stable_rounds} stable rounds.")
             break
 
-        if evaluation.completed_reason == "low_error_converged" and not disable_early_exit:
-            session.completed_reason = "low_error_converged"
-            _console(emit_console, "\n[SUCCESS] Converged with low error.")
-            _emit_lifecycle(event_sink, start_time, "completed", "Converged with low error.")
-            break
-
         if evaluation.good_enough and not disable_early_exit:
             record_observation_round(session, evaluation)
             message = (
@@ -313,6 +311,7 @@ def run_tuning_engine(
             })
             prompt_context = _attach_pid_guardrail_context(prompt_context, pid_limits)
 
+        session.decision_requests += 1
         result = tuner.analyze(
             prompt_data,
             history_text,
@@ -337,16 +336,8 @@ def run_tuning_engine(
         publish_decision(event_sink, evaluation.round_index, decision)
 
         _console(emit_console, f"\n[Action] {decision.action} -> P={decision.safe_pid['p']}, I={decision.safe_pid['i']}, D={decision.safe_pid['d']}")
-        if decision.completed_reason == "llm_marked_done" and not disable_early_exit:
-            session.completed_reason = "llm_marked_done"
-            _console(emit_console, "\n[SUCCESS] LLM marked the tuning run as done.")
-            _emit_lifecycle(
-                event_sink,
-                start_time,
-                "completed",
-                "LLM marked the tuning run as done.",
-            )
-            break
+        if decision.status == "DONE":
+            _emit_log(event_sink, start_time, "verify", "LLM suggested DONE; measured convergence criteria still require verification.")
 
         safe_primary = decision.safe_pid
         safe_secondary = None
@@ -372,17 +363,19 @@ def run_tuning_engine(
         _console(emit_console, "[CMD] Applied new PID parameters.")
 
     if (
-        session.round_num >= CONFIG["MAX_TUNING_ROUNDS"]
+        session.round_num >= max_rounds
         and session.completed_reason == "max_rounds_reached"
     ):
         _console(emit_console, "\n[INFO] Reached maximum tuning rounds.")
         _emit_lifecycle(event_sink, start_time, "completed", "Reached maximum tuning rounds.")
 
+    final_primary, final_secondary = env.get_current_pid()
     return {
         "elapsed_sec": time.time() - start_time,
         **build_tuning_result(
             session,
-            final_pid=dict(session.buffer.current_pid),
+            final_pid=dict(final_primary),
+            final_secondary_pid=final_secondary,
             stopped=session.completed_reason == "stopped_by_user",
         )
     }

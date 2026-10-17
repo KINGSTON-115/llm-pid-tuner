@@ -13,25 +13,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
-import time
 from typing import Any, Dict, List
 
 from core.config import CONFIG, initialize_runtime_config
 from core.i18n import tr
-from core.buffer import AdvancedDataBuffer
-from core.history import TuningHistory
+from core.adapters import PythonSimEnv
+from core.tuning_engine import run_tuning_engine
 from llm.client import LLMTuner
 from sim.model import HeatingSimulator, SETPOINT
-from pid_safety import (
-    DEFAULT_CONVERGENCE_RULES,
-    apply_pid_guardrails,
-    build_fallback_suggestion,
-    is_good_enough,
-    maybe_update_best_result,
-    pid_equals,
-    should_rollback_to_best,
-)
+from sim.prompt_context import build_python_sim_prompt_context
+from sim.runtime import EVENT_ROUND_METRICS
 
 
 DEFAULT_CASES = ("baseline", "fallback", "llm")
@@ -58,159 +49,75 @@ def create_llm_tuner() -> LLMTuner:
     )
 
 
+class _OfflineStrategy:
+    def __init__(self, env: PythonSimEnv, hold: bool):
+        self.env = env
+        self.hold = hold
+
+    def analyze(self, *_args: Any, **_kwargs: Any) -> Dict[str, Any] | None:
+        if not self.hold:
+            # Exercise exactly the production fallback path and its limits.
+            return None
+        primary, _ = self.env.get_current_pid()
+        return {**primary, "tuning_action": "HOLD", "status": "TUNING",
+                "analysis_summary": "Fixed-parameter baseline."}
+
+
+class _ProgressSink:
+    def __init__(self, case_name: str):
+        self.case_name = case_name
+
+    def publish(self, event_type: str, **payload: Any) -> None:
+        if event_type == EVENT_ROUND_METRICS:
+            print(
+                f"  [{self.case_name}] Round {payload['round']}: "
+                f"AvgErr={payload['avg_error']:.3f} "
+                f"Steady={payload['steady_state_error']:.3f} "
+                f"Overshoot={payload['overshoot']:.2f}% "
+                f"Status={payload['status']}"
+            )
+
+
 def run_case(
     case_name: str, rounds: int, seed: int, stop_on_done: bool = True
 ) -> Dict[str, Any]:
-    random.seed(seed)
-
-    sim = HeatingSimulator()
-    sim.set_pid(1.0, 0.1, 0.05)  # 重置为初始 PID
-    history = TuningHistory(max_history=5)
-    llm = create_llm_tuner() if case_name == "llm" else None
-    fallback_count = 0
-    best_result = None
-    records: List[Dict[str, Any]] = []
-    start_time = time.time()
-    print(
-        tr(
-            f"\n{case_name.upper()} 开始运行，最多 {rounds} 轮...",
-            f"\n{case_name.upper()} starting, max {rounds} rounds...",
-        )
+    if case_name not in DEFAULT_CASES:
+        raise ValueError(f"Unknown benchmark case: {case_name}")
+    if rounds < 1:
+        raise ValueError("rounds must be positive")
+    sim = HeatingSimulator(random_seed=seed)
+    # Use an explicit, identical single-step task for all strategies.
+    sim.set_setpoint(SETPOINT)
+    sim.set_pid(1.0, 0.1, 0.05)
+    env = PythonSimEnv(sim, SETPOINT)
+    env.prompt_context = build_python_sim_prompt_context()
+    strategy = create_llm_tuner() if case_name == "llm" else _OfflineStrategy(
+        env, hold=case_name == "baseline"
     )
-    rnd_w = len(str(rounds))  # 轮次数字宽度，保证对齐
-
-    for round_num in range(1, rounds + 1):
-        buffer = AdvancedDataBuffer(max_size=CONFIG["BUFFER_SIZE"])
-        buffer.current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-        buffer.setpoint = SETPOINT
-
-        while not buffer.is_full():
-            sim.compute_pid()
-            sim.update()
-            buffer.add(sim.get_data())
-
-        metrics = buffer.calculate_advanced_metrics()
-        print(
-            tr(
-                f"\n  [{case_name}] 第 {round_num:{rnd_w}}/{rounds} 轮: "
-                f"AvgErr={metrics['avg_error']:>7.3f}  "
-                f"Steady={metrics['steady_state_error']:>7.3f}  "
-                f"Overshoot={metrics['overshoot']:>6.2f}%  "
-                f"Status={metrics['status']:<13}",
-                f"\n  [{case_name}] Round {round_num:{rnd_w}}/{rounds}: "
-                f"AvgErr={metrics['avg_error']:>7.3f}  "
-                f"Steady={metrics['steady_state_error']:>7.3f}  "
-                f"Overshoot={metrics['overshoot']:>6.2f}%  "
-                f"Status={metrics['status']:<13}",
-            )
-        )
-        record = {
-            "round": round_num,
-            "avg_error": metrics["avg_error"],
-            "steady_state_error": metrics["steady_state_error"],
-            "overshoot": metrics["overshoot"],
-            "status": metrics["status"],
-            "pid": {"p": sim.kp, "i": sim.ki, "d": sim.kd},
-        }
-        records.append(record)
-
-        current_pid = {"p": sim.kp, "i": sim.ki, "d": sim.kd}
-        best_result = maybe_update_best_result(
-            best_result, current_pid, metrics, round_num
-        )
-
-        if (
-            best_result
-            and not pid_equals(current_pid, best_result["pid"])
-            and should_rollback_to_best(metrics, best_result["metrics"])
-        ):
-            sim.set_pid(
-                best_result["pid"]["p"],
-                best_result["pid"]["i"],
-                best_result["pid"]["d"],
-            )
-            print(
-                f"  [{case_name}] "
-                + tr(
-                    f"回滚到第 {best_result['round']} 轮最佳参数",
-                    f"Rolling back to best params at round {best_result['round']}",
-                )
-            )
-            if is_good_enough(best_result["metrics"], DEFAULT_CONVERGENCE_RULES):
-                break
-            continue
-
-        if case_name == "baseline":
-            continue
-
-        if case_name == "fallback":
-            result = build_fallback_suggestion(buffer.current_pid, metrics)
-        else:
-            assert llm is not None, "llm case 下 LLMTuner 未初始化"
-            print(
-                tr(
-                    f"  [llm] 第 {round_num:{rnd_w}}/{rounds} 轮: 正在请求 LLM...",
-                    f"  [llm] Round {round_num:{rnd_w}}/{rounds}: Requesting LLM...",
-                ),
-                end="",
-                flush=True,
-            )
-            result = llm.analyze(
-                buffer.to_prompt_data(),
-                history.to_prompt_text(),
-                tuning_mode="python_sim",
-                prompt_context={
-                    "source": "built_in_python_heating_simulator",
-                    "controller_output_signal": "PWM",
-                    "pwm_signal_available": True,
-                    "per_round_guardrail_hint": "Keep P within about 3x the current value, and keep I/D within about 4x unless there is overwhelming evidence.",
-                },
-            )
-            if not result:
-                result = build_fallback_suggestion(buffer.current_pid, metrics)
-                print(
-                    tr(
-                        " 超时/失败，使用兜底策略",
-                        " Timeout/failure, using fallback rules",
-                    )
-                )
-
-        if result.get("fallback_used"):
-            fallback_count += 1
-
-        safe_pid, _ = apply_pid_guardrails(buffer.current_pid, result)
-        sim.set_pid(safe_pid["p"], safe_pid["i"], safe_pid["d"])
-        history.add_record(
-            round_num,
-            safe_pid,
-            metrics,
-            result.get("analysis_summary", ""),
-            result.get("thought_process", ""),
-        )
-
-        if stop_on_done and result.get("status") == "DONE":
-            break
-
-    elapsed = time.time() - start_time
-    print(
-        tr(
-            f"\n{case_name.upper()} 完成，共 {len(records)} 轮，耗时 {elapsed:.1f}s",
-            f"\n{case_name.upper()} done, {len(records)} rounds, elapsed {elapsed:.1f}s",
-        )
+    result = run_tuning_engine(
+        env, strategy, "python_sim", event_sink=_ProgressSink(case_name),
+        emit_console=False, disable_early_exit=not stop_on_done, max_rounds=rounds,
     )
-    final_metrics = records[-1]
-
+    records = [
+        {"round": record["round"], "pid": record["pid"], **record["metrics"]}
+        for record in result["experiments"]
+    ]
     return {
+        **result,
         "case": case_name,
-        "rounds_executed": len(records),
-        "fallback_count": fallback_count,
-        "elapsed_sec": elapsed,
+        "seed": seed,
+        "scenario": "fixed_setpoint_continuous_state",
+        "rounds_executed": result["rounds_completed"],
+        "llm_calls": result["decision_requests"] if case_name == "llm" else 0,
         "final": {
-            "avg_error": final_metrics["avg_error"],
-            "steady_state_error": final_metrics["steady_state_error"],
-            "overshoot": final_metrics["overshoot"],
-            "status": final_metrics["status"],
-            "pid": {"p": sim.kp, "i": sim.ki, "d": sim.kd},
+            **{key: result["final_metrics"].get(key) for key in (
+                "avg_error", "steady_state_error", "overshoot", "status"
+            )},
+            "pid": result["final_pid"],
+            "verified": result["final_pid_verified"],
+        },
+        "last_evaluated": {
+            **result["evaluated_metrics"], "pid": result["evaluated_pid"],
         },
         "history": records,
     }
@@ -243,12 +150,12 @@ def print_summary(results: List[Dict[str, Any]]):
     bar = "=" * len(header)
 
     print(bar)
-    print("  LLM PID Benchmark Summary")
+    print("  LLM PID Benchmark: last evaluated response and PID")
     print(bar)
     print(header)
     print(sep)
     for result in results:
-        final = result["final"]
+        final = result["last_evaluated"]
         pid = final["pid"]
         overshoot_str = f"{final['overshoot']:.2f}%"
         elapsed_str = f"{result['elapsed_sec']:.1f}s"
@@ -280,7 +187,7 @@ def main():
     parser.add_argument(
         "--no-stop-on-done",
         action="store_true",
-        help="即使模型判定 DONE 也继续跑满轮数",
+        help="关闭程序提前停止和回滚，跑满指定轮数；模型 DONE 不作为验收条件",
     )
     parser.add_argument("--json-out", type=str, help="将结果写入 JSON 文件")
     parser.add_argument(
