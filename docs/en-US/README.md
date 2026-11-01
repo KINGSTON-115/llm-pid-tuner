@@ -1,5 +1,7 @@
 # LLM-PID-Tuner
 
+> **Side story · PID Tuning Skill DLC v1.0.0**: Bring evidence-based tuning, bounded experiments, verification and rollback to your existing agent. A standalone folder with Python standard-library tools; no main application required. [Download DLC](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/skill-pid-tuning-v1.0.0) · [Install and use](SKILL_DLC.md)
+
 > **v2.5.0 native desktop**: [download the Windows x64 bundle](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0), extract the entire ZIP and open `llm-pid-tuner-desktop.exe`. Includes live plots, Light / Dark / System themes, global Chinese / English switching and CSV / JSON export. Offline simulation needs no API key. See the [desktop guide](DESKTOP_GUIDE.md). For source use, check out `v2.5.0` or a newer `dev` revision.
 
 An LLM-assisted PID tuning tool focused on reducing the painful trial-and-error process of real controller tuning.
