@@ -1,5 +1,7 @@
 # LLM-PID-Tuner
 
+> **番外 · PID Tuning Skill DLC v1.0.0**：把循证调参、参数边界、复测和回退方法交给你正在使用的 agent。独立文件夹，附零第三方依赖的 Python 工具，无需安装主程序。[下载 DLC](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/skill-pid-tuning-v1.0.0) · [安装与使用](docs/zh-CN/SKILL_DLC.md)
+
 > **v2.5.0 原生桌面版**：[下载 Windows x64 桌面包](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0)，完整解压后双击 `llm-pid-tuner-desktop.exe`。支持实时曲线、白昼 / 暗黑 / 跟随系统、中英文全局切换和 CSV / JSON 导出；离线体验无需 API Key。详见 [桌面工作台指南](docs/zh-CN/DESKTOP_GUIDE.md)。源码请使用 `v2.5.0` 标签或更新的 `dev` 分支。
 
 一个用大语言模型辅助 PID 调参的实用工具。
