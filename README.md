@@ -5,6 +5,16 @@
 
 **[下载桌面版 v2.5.0](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/v2.5.0)** · **[下载 Agent Skill DLC v1.0.0](https://github.com/KINGSTON-115/llm-pid-tuner/releases/tag/skill-pid-tuning-v1.0.0)** · [English](docs/en-US/README.md)
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=KINGSTON-115%2Fllm-pid-tuner&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&theme=dark&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
+ </picture>
+</a>
+
 ## 选择你的用法
 
 | 你想做什么 | 从这里开始 |
@@ -107,16 +117,3 @@ python doctor.py                 # 检查配置与连接
 QQ 1 群：**1082281492** · [B 站教程](https://b23.tv/WVUuIFb) · [YouTube 教程](https://youtu.be/Giruc9kN53Y)
 
 [MIT License](LICENSE)
-
-<details>
-<summary>Star History</summary>
-
-<a href="https://www.star-history.com/?repos=KINGSTON-115%2Fllm-pid-tuner&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&theme=dark&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=KINGSTON-115/llm-pid-tuner&type=date&legend=top-left&sealed_token=-jtUW5cYPUGqtvzDDldf5jRjkZ9FU85x0zaizpza3zjIAlZIoIUNaY6zI2Y-P_qec8vzQV1SHDj4IrEjoEy5AXn45k_NshJEaS54lWWwWs0cH82DHkARXQ" />
- </picture>
-</a>
-
-</details>
