@@ -1,0 +1,4 @@
+interface:
+  display_name: "PID Tuning"
+  short_description: "Evidence-based PID tuning with portable offline tools"
+  default_prompt: "Use $pid-tuning to inspect my controller and response data, propose a bounded experiment, and verify the result."
