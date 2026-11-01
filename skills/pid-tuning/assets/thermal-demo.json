@@ -1,0 +1,11 @@
+{
+  "plant": {"gain": 2.0, "tau_s": 10.0, "ambient": 20.0},
+  "controller": {"kp": 1.0, "ki": 0.1, "kd": 0.0},
+  "experiment": {
+    "initial_output": 20.0,
+    "setpoint": 60.0,
+    "dt_s": 0.2,
+    "duration_s": 120.0,
+    "output_limits": [0.0, 100.0]
+  }
+}

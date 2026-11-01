@@ -1,0 +1,2 @@
+# Keep the portable DLC byte-identical across Windows and Unix checkouts.
+skills/pid-tuning/** text=auto eol=lf

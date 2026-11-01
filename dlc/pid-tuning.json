@@ -1,0 +1,14 @@
+{
+  "name": "pid-tuning",
+  "version": "1.0.0",
+  "files": [
+    "SKILL.md",
+    "LICENSE",
+    "agents/openai.yaml",
+    "assets/thermal-demo.json",
+    "references/controller-semantics.md",
+    "references/experiment-loop.md",
+    "references/telemetry.md",
+    "scripts/pid_lab.py"
+  ]
+}
